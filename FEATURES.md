@@ -20,10 +20,3 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   APIs.
 - Proxima consumed from its GitHub source, with Prime as the default runtime
   path and Tokio compatibility supplied by the dependency configuration.
-
-## Not implemented yet
-
-Forwarding safety, caching, per-client metadata, capture backends, GeoIP
-policy, admission limits, circuit breaking, admin surfaces, encrypted DNS,
-production telemetry, and honeypot retention controls are roadmap work. See
-[ROADMAP.md](ROADMAP.md) for the intended product scope.

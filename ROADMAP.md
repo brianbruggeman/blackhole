@@ -10,94 +10,53 @@ prototype or a substitute for engineering verification.
 Every item is a target capability; implementation details and verification
 evidence stay in the engineering workflow rather than this product roadmap.
 
-## Core resolver
+The current baseline is documented in [FEATURES.md](FEATURES.md). The items
+below are future capabilities, grouped by the dependency layer they extend.
 
-- UDP and TCP DNS service with validated queries and bounded responses.
-- Deterministic policy matching, precedence, explanations, and explicit
-  actions.
-- Sans-IO parser/decision core with listener integration tests.
-- Safe forwarding, bounded caching, failure handling, and loop prevention.
-- Basic query/error/action telemetry and privacy-safe defaults.
+## Resolver completion
 
-## Operations and access control
+- Make the borrowed sans-IO query/decision path the executable listener path.
+- Complete DNS QR-bit, question/name, ID, response, and truncation validation.
+- Define transport semantics for every policy action, including pass, reject,
+  drop, NXDOMAIN, sink, honeypot, forward, and observe.
+- Add bounded forwarding with matching-question checks, transaction checks,
+  timeout behavior, TCP fallback, loop prevention, and fail-closed errors.
+- Add bounded positive, negative, and stale caching.
 
-- Per-client and network policy, local rewrites, service profiles, and an
-  authenticated control API.
-- Admission limits, amplification resistance, and an upstream circuit breaker.
-- Optional country/region/ASN policy with allow, deny, and observe-only modes.
-- Capture adapters with ownership, rollback, crash recovery, and platform
-  smoke evidence.
-- Reloadable snapshots with bounded retirement and measured reader impact.
+## Policy and operator controls
+
+- Ingest Pi-hole-compatible blocklists with bounded parsing, normalization,
+  deduplication, and safe reload.
+- Add per-client and network scopes, local rewrites, service profiles, and
+  authenticated administration.
+- Add global/per-client admission limits, amplification controls, `ANY`
+  handling, bounded outstanding work, and an upstream circuit breaker.
+- Add optional country/region/ASN access policy with allow, deny, and
+  observe-only (“snitch”) modes; keep GeoIP uncertainty and database lifecycle
+  explicit.
+- Add reloadable snapshots with bounded retirement and concurrent-reader
+  guarantees.
+
+## Interception and deployment
+
+- Complete Linux nftables and macOS packet-filter capture adapters with
+  ownership, rollback, crash recovery, and platform smoke evidence.
+- Keep client and original-destination metadata adapter-owned.
+- Support unprivileged DNS operation with privilege isolated to capture setup.
+- Add cross-platform native deployment adapters.
 
 ## Incumbent parity and extensions
 
-- Encrypted upstreams and optional DoH/DoT/DoQ server endpoints.
-- Query statistics, latency histograms, an admin UI, and optional DHCP adapter.
-- A separately isolated honeypot terminal with explicit retention and access
-  controls.
-- Prime-native operation plus supported Tokio compatibility.
-- Cross-platform native adapters and a measured policy/codec WASM edge.
-
-## Incumbent parity
-
-The baseline is the feature surface users reasonably expect from a modern
-network DNS blocker. Pi-hole documents allowlists, denylists, regex filters,
-groups, query logging, statistics, and an API. AdGuard Home additionally
-documents encrypted upstreams, per-client settings, access controls, DNS
-rewrites, built-in DHCP, query logging, statistics, parental controls, safe
-search, and safe browsing.
-
-| Capability | Pi-hole | AdGuard Home | Blackhole target |
-| --- | --- | --- | --- |
-| DNS service over UDP and TCP | yes | yes | yes |
-| Allowlist and denylist | yes | yes | yes |
-| Wildcard and suffix rules | yes | yes | yes |
-| Regex/domain-pattern rules | yes | yes | yes, bounded and explicit |
-| Per-client policy | groups | clients/groups | client and network scopes |
-| Rule precedence and explanations | database precedence | filter/rewrite precedence | deterministic priority, specificity, and decision explanation |
-| Upstream DNS resolution | yes | yes | yes, explicit and loop-safe |
-| Encrypted upstream DNS | optional integrations | DoH, DoT, DNSCrypt, DoQ | target: reuse a Proxima-supported transport |
-| DNS caching | yes | yes | bounded positive, negative, and stale cache |
-| Local DNS rewrites | custom records | rewrites | target: typed A, AAAA, CNAME, and policy responses |
-| Query log | yes | yes | target: bounded, redactable, access-controlled |
-| Statistics and latency reporting | yes | yes | target: action, error, and latency telemetry |
-| DNS abuse protection | rate limiting and blocking `ANY` | rate limiting and blocking `ANY` | bounded global/per-client limits, `ANY` policy, amplification controls |
-| Upstream failure protection | resolver failure handling | resolver failure handling | target: bounded concurrency, timeout budget, and upstream circuit breaker |
-| Service blocking | blocklists/groups | blocked services | target: named service profiles |
-| Built-in DHCP | yes | yes | explicit non-goal for the DNS core; adapter may follow |
-| Admin API | yes | yes | target: small authenticated control API |
-| Admin web UI | yes | yes | target: separate product surface, not required by the core |
-| Client access control | network/group policy | allowlist/denylist clients | target: fail-closed access policy |
-| Geographic access policy | no core feature | no core feature | optional country/region/ASN allow, deny, or observe-only policy |
-| DoH/DoT/DoQ server endpoints | no native parity | yes | target only after the UDP/TCP core is proven |
-| Cross-platform operation | Linux-first | cross-platform | Linux and macOS native adapters |
-| Runs without broad root privileges | limited by deployment | yes | target: unprivileged DNS core; privilege isolated to capture adapters |
-| Privacy controls | local operation and query-log controls | local operation and retention controls | no payload retention by default; explicit redaction, retention, access, deletion |
-
-## Blackhole-specific capabilities
-
-- Explicit actions: pass, reject, drop, NXDOMAIN, sink, honeypot, forward, and
-  observe, with transport behavior defined independently from policy.
-- Deterministic matching by priority, exact/deep wildcard specificity,
-  qclass, qtype, client/network scope, and stable rule identity.
-- Optional geographic access policy: classify the adapter-owned client IP by
-  country, region, or ASN and apply allow, deny, or observe-only (“snitch”)
-  rules. GeoIP database version, lookup result, and uncertainty are explicit
-  telemetry fields; location is never inferred from DNS names.
-- DNS interception as a first-class deployment mode, with original-destination
-  and client metadata kept in the capture adapter.
-- Bounded transparent forwarding with QR/question validation, transaction
-  matching, timeout/failure policy, loop prevention, and cache safety.
-- DNS abuse resistance: global and per-client/subnet admission limits, bounded
-  outstanding work, optional refusal of `ANY`, response-size limits, and an
-  upstream circuit breaker. This protects the resolver process; it is not a
-  substitute for upstream network DDoS mitigation.
-- A controlled honeypot terminal as a separate capability from synthetic DNS
-  sink answers; no credential or payload collection by default.
-- Prime-native operation with Tokio compatibility where the Proxima runtime
-  provides it.
-- A sans-IO parser and decision core that can be tested independently of
-  sockets, executors, filesystem state, and privileged operating-system APIs.
+- Add encrypted upstreams and optional DoH, DoT, and DoQ server endpoints.
+- Add bounded query logs, statistics, action/error/latency histograms, and
+  privacy controls for retention, redaction, access, and deletion.
+- Add an authenticated admin API, optional web UI, and optional DHCP adapter.
+- Add named service-blocking profiles and the remaining Pi-hole/AdGuard Home
+  policy features.
+- Add a separately isolated honeypot terminal with explicit retention and
+  access controls.
+- Add a measured policy/codec WASM edge experiment while retaining scalar
+  fallback.
 
 ## Explicit non-goals
 
