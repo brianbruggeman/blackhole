@@ -7,9 +7,11 @@ license = "MIT OR Apache-2.0"
 description = "A fast, policy-driven DNS sinkhole and honeypot built on Proxima"
 
 [dependencies]
+bytes = "1"
 proxima = { git = "https://github.com/brianbruggeman/proxima.git", default-features = false, features = ["dns-listener", "serve-prime", "macros"] }
 proxima-core = { git = "https://github.com/brianbruggeman/proxima.git", default-features = false, features = ["live", "std"], version = "0.1.0" }
 proxima-dns = { git = "https://github.com/brianbruggeman/proxima.git", default-features = false, features = ["client", "listen"], version = "0.1.0" }
+proxima-net = { git = "https://github.com/brianbruggeman/proxima.git", default-features = false, features = ["prime"], version = "0.1.0" }
 proxima-primitives = { git = "https://github.com/brianbruggeman/proxima.git", default-features = false, features = ["alloc", "std"] }
 proxima-protocols = { git = "https://github.com/brianbruggeman/proxima.git", default-features = false, features = ["dns", "alloc", "std"] }
 serde = { version = "1", features = ["derive"] }

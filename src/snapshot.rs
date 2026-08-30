@@ -28,7 +28,7 @@ impl PolicyStore {
 
     /// Validate off the request path, then publish one whole snapshot.
     pub fn reload(&self, rules: &[RuleConfig]) -> Result<ReloadState, PolicyError> {
-        let next = ReferencePolicy::new(rules).map_err(|error| error)?;
+        let next = ReferencePolicy::new(rules)?;
         self.control.replace(next);
         Ok(ReloadState::Published)
     }

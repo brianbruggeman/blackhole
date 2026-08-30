@@ -10,8 +10,10 @@ use proxima_core::ProximaError;
 use proxima_dns::{DnsAnswer, DnsAnswerRecord, DnsClientUpstream, DnsPipeReply, DnsPipeRequest};
 use proxima_primitives::pipe::SendPipe;
 use proxima_primitives::stream::DatagramFactory;
+use proxima_primitives::sync::Semaphore;
 use serde::Deserialize;
 use std::net::{Ipv4Addr, Ipv6Addr};
+use std::sync::Arc;
 
 pub mod fsm;
 pub mod linux_capture;
@@ -19,7 +21,8 @@ pub mod pf_capture;
 pub mod policy;
 pub mod query;
 pub mod snapshot;
-use policy::{Action, QueryContext, ReferencePolicy, RuleConfig};
+pub use policy::{Action, RuleConfig};
+use policy::{QueryContext, ReferencePolicy};
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct Config {
@@ -29,6 +32,34 @@ pub struct Config {
     pub policy: PolicyConfig,
     #[serde(default)]
     pub honeypot: HoneypotConfig,
+    #[serde(default)]
+    pub upstream: Option<UpstreamConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpstreamConfig {
+    #[serde(default = "default_resolver_ip")]
+    pub resolver_ip: String,
+    #[serde(default = "default_resolver_port")]
+    pub port: u16,
+    #[serde(default = "default_query_timeout_ms")]
+    pub query_timeout_ms: u64,
+    #[serde(default = "default_max_attempts")]
+    pub max_attempts: u32,
+    #[serde(default = "default_max_outstanding")]
+    pub max_outstanding: usize,
+}
+
+impl Default for UpstreamConfig {
+    fn default() -> Self {
+        Self {
+            resolver_ip: default_resolver_ip(),
+            port: default_resolver_port(),
+            query_timeout_ms: default_query_timeout_ms(),
+            max_attempts: default_max_attempts(),
+            max_outstanding: default_max_outstanding(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -52,6 +83,8 @@ pub struct PolicyConfig {
     pub domains: Vec<String>,
     #[serde(default)]
     pub rules: Vec<RuleConfig>,
+    #[serde(default = "default_action")]
+    pub default_action: Action,
 }
 impl Default for PolicyConfig {
     fn default() -> Self {
@@ -59,6 +92,7 @@ impl Default for PolicyConfig {
             mode: default_mode(),
             domains: Vec::new(),
             rules: Vec::new(),
+            default_action: default_action(),
         }
     }
 }
@@ -104,6 +138,24 @@ fn default_ipv6() -> Ipv6Addr {
 fn default_ttl() -> u32 {
     60
 }
+fn default_action() -> Action {
+    Action::Pass
+}
+fn default_resolver_ip() -> String {
+    "1.1.1.1".into()
+}
+fn default_resolver_port() -> u16 {
+    53
+}
+fn default_query_timeout_ms() -> u64 {
+    2_000
+}
+fn default_max_attempts() -> u32 {
+    2
+}
+fn default_max_outstanding() -> usize {
+    64
+}
 
 impl Config {
     pub fn from_file(path: &std::path::Path) -> Result<Self, Box<dyn std::error::Error>> {
@@ -120,18 +172,24 @@ pub struct Policy {
     reference: ReferencePolicy,
     telemetry: Option<TelemetryHandle>,
     upstream: Option<DnsClientUpstream>,
+    upstream_slots: Option<Arc<Semaphore>>,
 }
 
 impl Policy {
     pub fn new(mut config: Config) -> Result<Self, policy::PolicyError> {
         config.policy.domains = config.policy.domains.into_iter().map(normalize).collect();
         let reference = ReferencePolicy::new(&config.policy.rules)?;
-        Ok(Self {
+        let policy = Self {
             config,
             reference,
             telemetry: None,
             upstream: None,
-        })
+            upstream_slots: None,
+        };
+        if let Some(upstream) = policy.config.upstream.as_ref() {
+            policy.validate_upstream(upstream)?;
+        }
+        Ok(policy)
     }
 
     #[must_use]
@@ -148,9 +206,66 @@ impl Policy {
         mut self,
         factory: std::sync::Arc<dyn DatagramFactory>,
         config: proxima_dns::DnsResolverConfig,
+        max_outstanding: usize,
     ) -> Self {
         self.upstream = Some(DnsClientUpstream::new(factory, config));
+        self.upstream_slots = Some(Arc::new(Semaphore::new(max_outstanding.max(1))));
         self
+    }
+
+    fn validate_upstream(&self, upstream: &UpstreamConfig) -> Result<(), policy::PolicyError> {
+        let resolver_ip = upstream
+            .resolver_ip
+            .parse::<std::net::IpAddr>()
+            .map_err(|_| policy::PolicyError::InvalidUpstream {
+                reason: "resolver_ip must be an IP address literal".into(),
+            })?;
+        if upstream.port == 0 {
+            return Err(policy::PolicyError::InvalidUpstream {
+                reason: "port must be non-zero".into(),
+            });
+        }
+        if upstream.query_timeout_ms == 0 {
+            return Err(policy::PolicyError::InvalidUpstream {
+                reason: "query_timeout_ms must be non-zero".into(),
+            });
+        }
+        if upstream.max_attempts == 0 || upstream.max_outstanding == 0 {
+            return Err(policy::PolicyError::InvalidUpstream {
+                reason: "max_attempts and max_outstanding must be non-zero".into(),
+            });
+        }
+        let broadcast = matches!(resolver_ip, std::net::IpAddr::V4(ip) if ip.is_broadcast());
+        if resolver_ip.is_unspecified() || resolver_ip.is_multicast() || broadcast {
+            return Err(policy::PolicyError::InvalidUpstream {
+                reason: "resolver must not be unspecified or multicast".into(),
+            });
+        }
+        let resolver = std::net::SocketAddr::new(resolver_ip, upstream.port);
+        let listener = self
+            .config
+            .server
+            .listen
+            .parse::<std::net::SocketAddr>()
+            .map_err(|_| policy::PolicyError::InvalidUpstream {
+                reason: "server.listen must be a socket address before configuring upstream".into(),
+            })?;
+        if resolver == listener {
+            return Err(policy::PolicyError::InvalidUpstream {
+                reason: "upstream must not equal server.listen".into(),
+            });
+        }
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn resolver_config(upstream: &UpstreamConfig) -> proxima_dns::DnsResolverConfig {
+        proxima_dns::DnsResolverConfig {
+            resolver_ip: upstream.resolver_ip.clone(),
+            port: upstream.port,
+            query_timeout_ms: upstream.query_timeout_ms,
+            max_attempts: upstream.max_attempts,
+        }
     }
 
     fn decision(&self, query: &proxima_dns::DnsQuery) -> Option<policy::Decision> {
@@ -176,7 +291,10 @@ impl Policy {
         if self.config.policy.rules.is_empty() {
             return self.evaluate_legacy(query);
         }
-        match decision.map(|decision| decision.action) {
+        match decision
+            .map(|decision| decision.action)
+            .or(Some(self.config.policy.default_action))
+        {
             Some(Action::Ignore | Action::Drop | Action::Forward | Action::Honeypot) => None,
             Some(Action::Nxdomain) => Some(DnsAnswer::name_error()),
             Some(Action::Reject) => Some(DnsAnswer::name_error()),
@@ -217,7 +335,24 @@ impl SendPipe for Policy {
         // Decide exactly once.  In particular, do not run the rule table to
         // discover forwarding and then run it again to render the outcome.
         let decision = self.decision(&query);
-        if decision.is_some_and(|decision| decision.action == Action::Forward) {
+        let action = if self.config.policy.rules.is_empty() {
+            None
+        } else {
+            Some(
+                decision.map_or(self.config.policy.default_action, |decision| {
+                    decision.action
+                }),
+            )
+        };
+        if action == Some(Action::Forward) {
+            let Some(slots) = self.upstream_slots.as_ref() else {
+                self.observe(Action::Forward);
+                return Ok(DnsPipeReply::typed(204, DnsAnswer::ok(Vec::new())));
+            };
+            let Ok(_slot) = slots.try_acquire() else {
+                self.observe(Action::Forward);
+                return Ok(DnsPipeReply::typed(204, DnsAnswer::ok(Vec::new())));
+            };
             let Some(upstream) = self.upstream.as_ref() else {
                 self.observe(Action::Forward);
                 return Ok(DnsPipeReply::typed(204, DnsAnswer::ok(Vec::new())));
@@ -235,7 +370,7 @@ impl SendPipe for Policy {
         let outcome = if self.config.policy.rules.is_empty() {
             self.evaluate_legacy(&query)
         } else {
-            match decision.map(|decision| decision.action) {
+            match action {
                 Some(Action::Ignore | Action::Drop) => None,
                 Some(Action::Nxdomain | Action::Reject) => Some(DnsAnswer::name_error()),
                 Some(Action::Honeypot) => None,
@@ -246,7 +381,7 @@ impl SendPipe for Policy {
                 Some(Action::Forward) => unreachable!("forwarding handled above"),
             }
         };
-        self.observe(decision.map_or(Action::Pass, |decision| decision.action));
+        self.observe(action.unwrap_or(Action::Pass));
         match outcome {
             Some(answer) => Ok(DnsPipeReply::typed(200, answer)),
             // Compatibility mapping only: semantic policy results are typed;
@@ -298,7 +433,7 @@ fn normalize(value: impl AsRef<str>) -> String {
 mod tests {
     use super::*;
 
-    #[derive(Debug, PartialEq, Eq)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum ProofAction {
         Ignore,
         Nxdomain,
@@ -328,12 +463,7 @@ mod tests {
         rules
             .iter()
             .find(|rule| proof_matches(rule.pattern, query))
-            .map(|rule| match rule.action {
-                ProofAction::Ignore => ProofAction::Ignore,
-                ProofAction::Nxdomain => ProofAction::Nxdomain,
-                ProofAction::Honeypot => ProofAction::Honeypot,
-                ProofAction::Pass => ProofAction::Pass,
-            })
+            .map(|rule| rule.action)
             .unwrap_or(ProofAction::Pass)
     }
 
@@ -423,6 +553,34 @@ mod tests {
         );
         assert!(policy.evaluate(&query).is_none());
         assert!(policy.upstream.is_none());
+    }
+
+    #[test]
+    fn upstream_configuration_is_validated_before_listener_use() {
+        let config = Config {
+            upstream: Some(UpstreamConfig {
+                resolver_ip: "255.255.255.255".into(),
+                ..UpstreamConfig::default()
+            }),
+            ..Config::default()
+        };
+        assert!(matches!(
+            Policy::new(config),
+            Err(policy::PolicyError::InvalidUpstream { .. })
+        ));
+
+        let config = Config {
+            upstream: Some(UpstreamConfig {
+                resolver_ip: "127.0.0.1".into(),
+                port: 5353,
+                ..UpstreamConfig::default()
+            }),
+            ..Config::default()
+        };
+        assert!(matches!(
+            Policy::new(config),
+            Err(policy::PolicyError::InvalidUpstream { .. })
+        ));
     }
 
     #[test]

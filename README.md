@@ -24,6 +24,6 @@ The default configuration binds only to loopback. An explicitly supplied
 configuration path must exist and parse successfully before the listener is
 created. `ignore` is represented as a silent response by the current Proxima
 DNS edge. When `policy.rules` is configured, it is authoritative and legacy
-`mode`/`domains` are ignored; unmatched queries receive NODATA for
-compatibility. Explicit `forward` rules use the opt-in Proxima upstream pipe
-and fail closed when no upstream is attached.
+`mode`/`domains` are ignored; unmatched queries use `policy.default_action`.
+Explicit forwarding uses the opt-in Proxima upstream pipe and fails closed
+when no upstream is attached.

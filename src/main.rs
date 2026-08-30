@@ -1,7 +1,23 @@
 use blackhole::{Config, Policy};
+use bytes::Bytes;
+use proxima::pipe::into_handle;
 use proxima::{Listener, ListenerBuilderEntry, ListenerProtocolExt, ProximaError};
+use proxima::{Request, Response, SendPipe};
 use proxima_dns::into_dns_handle;
-use std::{env, net::SocketAddr, path::Path};
+use proxima_net::prime::PrimeDatagramFactory;
+use std::{env, net::SocketAddr, path::Path, sync::Arc};
+
+struct Passthrough;
+
+impl SendPipe for Passthrough {
+    type In = Request<Bytes>;
+    type Out = Response<Bytes>;
+    type Err = ProximaError;
+
+    async fn call(&self, request: Self::In) -> Result<Self::Out, Self::Err> {
+        Ok(Response::ok(request.payload))
+    }
+}
 
 #[proxima::main]
 async fn main() -> Result<(), ProximaError> {
@@ -18,11 +34,21 @@ async fn main() -> Result<(), ProximaError> {
         .parse()
         .map_err(|error| ProximaError::Config(format!("invalid server.listen: {error}")))?;
     let mode = config.policy.mode;
-    let policy = Policy::new(config)
+    let upstream = config.upstream.clone();
+    let mut policy = Policy::new(config)
         .map_err(|error| ProximaError::Config(format!("invalid policy rule: {error}")))?;
+    if let Some(upstream) = upstream {
+        let resolver = Policy::resolver_config(&upstream);
+        policy = policy.with_upstream(
+            Arc::new(PrimeDatagramFactory),
+            resolver,
+            upstream.max_outstanding,
+        );
+    }
     let server = Listener::builder()
         .bind(bind)
         .dns(into_dns_handle(policy))
+        .handle(into_handle(Passthrough))
         .serve()
         .await?;
     println!("blackhole listening on {bind} (mode={mode:?}, UDP+TCP DNS)");

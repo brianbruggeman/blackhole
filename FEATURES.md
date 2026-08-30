@@ -15,6 +15,8 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   silently take over.
 - Synthetic IPv4/IPv6 honeypot answers with configurable TTL.
 - Explicit fail-closed behavior when a forward rule has no upstream attached.
+- Configured UDP upstream forwarding through Proxima's `DnsClientUpstream`,
+  with timeout/retry settings and a bounded outstanding-query limit.
 - Optional action counters through Proxima telemetry.
 - A tested policy/FSM/snapshot core that does not require privileged capture
   APIs.

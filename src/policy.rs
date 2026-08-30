@@ -56,6 +56,7 @@ pub enum PolicyError {
     DuplicateRule { id: u32 },
     TooManyRules { max: usize },
     DomainTooLong { id: u32 },
+    InvalidUpstream { reason: String },
 }
 
 impl core::fmt::Display for PolicyError {
@@ -68,6 +69,7 @@ impl core::fmt::Display for PolicyError {
             Self::DuplicateRule { id } => write!(formatter, "duplicate rule id: {id}"),
             Self::TooManyRules { max } => write!(formatter, "rule count exceeds {max}"),
             Self::DomainTooLong { id } => write!(formatter, "rule {id} domain is too long"),
+            Self::InvalidUpstream { reason } => write!(formatter, "invalid upstream: {reason}"),
         }
     }
 }

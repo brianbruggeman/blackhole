@@ -6,6 +6,17 @@ listen = "127.0.0.1:5353"
 # ignore drops the DNS response, nxdomain denies it, honeypot returns the configured address.
 mode = "nxdomain"
 domains = ["ads.example", "telemetry.example"]
+# With explicit rules, unmatched queries use this action. Set to "forward"
+# for a resolver deployment with the [upstream] section below.
+default_action = "pass"
+
+[upstream]
+# IP literal only; no hostname lookup is performed.
+resolver_ip = "1.1.1.1"
+port = 53
+query_timeout_ms = 2000
+max_attempts = 2
+max_outstanding = 64
 
 [honeypot]
 ipv4 = "192.0.2.1"
