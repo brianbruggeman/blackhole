@@ -3,12 +3,14 @@ use std::sync::Arc;
 
 use blackhole::{Action, Config, Policy, RuleConfig, UpstreamConfig};
 use bytes::Bytes;
+use futures::io::{AsyncReadExt, AsyncWriteExt};
 use proxima::pipe::into_handle;
 use proxima::{Listener, ListenerBuilderEntry, ListenerProtocolExt};
 use proxima::{ProximaError, Request, Response, SendPipe};
 use proxima_dns::into_dns_handle;
-use proxima_net::prime::PrimeDatagramFactory;
+use proxima_net::prime::{PrimeDatagramFactory, PrimeTcpUpstream};
 use proxima_primitives::stream::DatagramFactory;
+use proxima_primitives::stream::StreamUpstreamExt;
 use proxima_protocols::dns::{Flags, encode, parse_message};
 
 struct Passthrough;
@@ -28,41 +30,43 @@ async fn listener_forwards_allowed_query_to_loopback_upstream() {
     let upstream_socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind upstream");
     let upstream_addr = upstream_socket.local_addr().expect("upstream address");
     let upstream_thread = std::thread::spawn(move || {
-        let mut query = [0u8; 4096];
-        let (len, peer) = upstream_socket
-            .recv_from(&mut query)
-            .expect("receive upstream query");
-        let message = parse_message(&query[..len]).expect("parse upstream query");
-        let question = message
-            .questions()
-            .next()
-            .expect("question present")
-            .expect("valid question");
-        let name = question.name.to_dotted();
-        let rdata = encode::ipv4_rdata(Ipv4Addr::new(192, 0, 2, 42));
-        let answer = encode::AnswerRecord {
-            name: &name,
-            rtype: 1,
-            rclass: 1,
-            ttl: 30,
-            rdata: &rdata,
-        };
-        let mut response = Vec::new();
-        encode::encode_response(
-            message.header.id,
-            Flags::for_response(true, false, true, 0),
-            encode::EncodeQuestion {
+        for _ in 0..2 {
+            let mut query = [0u8; 4096];
+            let (len, peer) = upstream_socket
+                .recv_from(&mut query)
+                .expect("receive upstream query");
+            let message = parse_message(&query[..len]).expect("parse upstream query");
+            let question = message
+                .questions()
+                .next()
+                .expect("question present")
+                .expect("valid question");
+            let name = question.name.to_dotted();
+            let rdata = encode::ipv4_rdata(Ipv4Addr::new(192, 0, 2, 42));
+            let answer = encode::AnswerRecord {
                 name: &name,
-                qtype: question.qtype,
-                qclass: question.qclass,
-            },
-            &[answer],
-            &mut response,
-        )
-        .expect("encode upstream response");
-        upstream_socket
-            .send_to(&response, peer)
-            .expect("send upstream response");
+                rtype: 1,
+                rclass: 1,
+                ttl: 30,
+                rdata: &rdata,
+            };
+            let mut response = Vec::new();
+            encode::encode_response(
+                message.header.id,
+                Flags::for_response(true, false, true, 0),
+                encode::EncodeQuestion {
+                    name: &name,
+                    qtype: question.qtype,
+                    qclass: question.qclass,
+                },
+                &[answer],
+                &mut response,
+            )
+            .expect("encode upstream response");
+            upstream_socket
+                .send_to(&response, peer)
+                .expect("send upstream response");
+        }
     });
 
     let mut config = Config::default();
@@ -131,6 +135,39 @@ async fn listener_forwards_allowed_query_to_loopback_upstream() {
         .expect("receive client response");
     let message = parse_message(&response[..len]).expect("parse client response");
     assert_eq!(message.header.id, 0x1234);
+    assert_eq!(message.header.flags.rcode(), 0);
+    assert_eq!(message.answers().count(), 1);
+
+    let tcp_client = PrimeTcpUpstream::new(listener_addr);
+    let mut tcp = tcp_client.connect().await.expect("connect TCP listener");
+    let mut tcp_query = Vec::new();
+    encode::encode_query(
+        0x1235,
+        true,
+        encode::EncodeQuestion {
+            name: "tcp.example.",
+            qtype: 1,
+            qclass: 1,
+        },
+        &mut tcp_query,
+    )
+    .expect("encode TCP query");
+    let frame_len = u16::try_from(tcp_query.len()).expect("DNS query fits TCP frame");
+    tcp.write_all(&frame_len.to_be_bytes())
+        .await
+        .expect("write TCP frame length");
+    tcp.write_all(&tcp_query).await.expect("write TCP query");
+    let mut response_len = [0u8; 2];
+    tcp.read_exact(&mut response_len)
+        .await
+        .expect("read TCP response length");
+    let response_len = usize::from(u16::from_be_bytes(response_len));
+    let mut tcp_response = vec![0u8; response_len];
+    tcp.read_exact(&mut tcp_response)
+        .await
+        .expect("read TCP response");
+    let message = parse_message(&tcp_response).expect("parse TCP response");
+    assert_eq!(message.header.id, 0x1235);
     assert_eq!(message.header.flags.rcode(), 0);
     assert_eq!(message.answers().count(), 1);
 

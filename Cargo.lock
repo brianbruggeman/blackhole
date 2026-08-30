@@ -235,6 +235,7 @@ name = "blackhole"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "futures",
  "proxima",
  "proxima-core",
  "proxima-dns",

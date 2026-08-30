@@ -8,6 +8,7 @@ description = "A fast, policy-driven DNS sinkhole and honeypot built on Proxima"
 
 [dependencies]
 bytes = "1"
+futures = "0.3"
 proxima = { git = "https://github.com/brianbruggeman/proxima.git", default-features = false, features = ["dns-listener", "serve-prime", "macros"] }
 proxima-core = { git = "https://github.com/brianbruggeman/proxima.git", default-features = false, features = ["live", "std"], version = "0.1.0" }
 proxima-dns = { git = "https://github.com/brianbruggeman/proxima.git", default-features = false, features = ["client", "listen"], version = "0.1.0" }
