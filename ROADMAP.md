@@ -1,12 +1,42 @@
-# Blackhole feature list
+# Blackhole roadmap
 
 Blackhole is a privacy-first, policy-driven DNS interceptor for operators who
 need the familiar capabilities of Pi-hole and AdGuard Home plus explicit
 traffic interception, forwarding, and honeypot controls.
 
-This is the product feature list, not an implementation plan. A feature listed
-here is a target capability and is not a claim that the current prototype
-already provides it. Implementation work and evidence belong in `TODO.md`.
+This roadmap describes the product surface Blackhole is intended to deliver.
+It is organized by delivery horizon, not by the current implementation state.
+A feature listed here is a target capability and is not a claim that the
+current prototype already provides it. Implementation work and evidence belong
+in `TODO.md`.
+
+## Now: prove the DNS core
+
+- UDP and TCP DNS service with validated queries and bounded responses.
+- Deterministic policy matching, precedence, explanations, and explicit
+  actions.
+- Sans-IO parser/decision core with listener integration tests.
+- Safe forwarding, bounded caching, failure handling, and loop prevention.
+- Basic query/error/action telemetry and privacy-safe defaults.
+
+## Next: operate it safely
+
+- Per-client and network policy, local rewrites, service profiles, and an
+  authenticated control API.
+- Admission limits, amplification resistance, and an upstream circuit breaker.
+- Optional country/region/ASN policy with allow, deny, and observe-only modes.
+- Capture adapters with ownership, rollback, crash recovery, and platform
+  smoke evidence.
+- Reloadable snapshots with bounded retirement and measured reader impact.
+
+## Later: incumbent parity and expanded edges
+
+- Encrypted upstreams and optional DoH/DoT/DoQ server endpoints.
+- Query statistics, latency histograms, an admin UI, and optional DHCP adapter.
+- A separately isolated honeypot terminal with explicit retention and access
+  controls.
+- Prime-native operation plus supported Tokio compatibility.
+- Cross-platform native adapters and a measured policy/codec WASM edge.
 
 ## Incumbent parity
 
