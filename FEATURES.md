@@ -1,0 +1,29 @@
+# Blackhole features
+
+This is the current, deliberately small prototype surface. It records what is
+implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
+
+## Implemented
+
+- DNS service over UDP and TCP through Proxima, sharing one configured bind.
+- Loopback-only default listener at `127.0.0.1:5353`.
+- TOML configuration with bounded file size and fail-fast parsing.
+- Legacy domain matching with `ignore`, `nxdomain`, and `honeypot` modes.
+- Rule-table matching with explicit actions, stable rule identity, priority,
+  exact/deep-wildcard specificity, client scope, qtype, and qclass filters.
+- Rule-table authority when rules are configured; legacy settings do not
+  silently take over.
+- Synthetic IPv4/IPv6 honeypot answers with configurable TTL.
+- Explicit fail-closed behavior when a forward rule has no upstream attached.
+- Optional action counters through Proxima telemetry.
+- A tested policy/FSM/snapshot core that does not require privileged capture
+  APIs.
+- Proxima consumed from its GitHub source, with Prime as the default runtime
+  path and Tokio compatibility supplied by the dependency configuration.
+
+## Not implemented yet
+
+Forwarding safety, caching, per-client metadata, capture backends, GeoIP
+policy, admission limits, circuit breaking, admin surfaces, encrypted DNS,
+production telemetry, and honeypot retention controls are roadmap work. See
+[ROADMAP.md](ROADMAP.md) for the intended product scope.

@@ -5,32 +5,16 @@ need the familiar capabilities of Pi-hole and AdGuard Home plus explicit
 traffic interception, forwarding, and honeypot controls.
 
 This roadmap describes the product surface Blackhole is intended to deliver.
-It is organized by capability area and shows implementation maturity separately.
+It is organized by capability area. It is not a claim about the current
+prototype or a substitute for engineering verification.
 A feature listed here is a target capability and is not a claim that the
-current prototype already provides it. Implementation details and verification
-evidence stay in the engineering workflow rather than this product roadmap.
+current implementation already provides it. Implementation details and
+verification evidence stay in the engineering workflow rather than this
+product roadmap.
 
 ## Delivery map
 
-The roadmap is the product-level map. “Prototype” means a capability exists in
-the current experimental core; it does not mean it is production-ready.
-
-| Workstream | Capability area | Current position |
-| --- | --- | --- |
-| UDP/TCP DNS listener | core resolver | prototype |
-| Query parsing and validation | core resolver | prototype |
-| Policy precedence and action identity | policy engine | prototype |
-| Sans-IO FSM and listener integration | core resolver | partial prototype |
-| Forwarding, caching, and upstream safety | upstream resolution | planned |
-| Core telemetry and privacy defaults | operations | partial prototype |
-| Admission limits and DDoS/circuit-breaker controls | abuse resistance | planned |
-| Client/network scopes and local rewrites | policy engine | planned |
-| GeoIP country/region/ASN policy | access control | planned |
-| Capture ownership, rollback, and recovery | traffic interception | partial prototype |
-| Reloadable snapshots | operations | partial prototype |
-| Encrypted DNS and admin surfaces | incumbent parity | planned |
-| Honeypot terminal and retention controls | interception extensions | planned |
-| Cross-platform adapters and WASM experiment | deployment and performance | planned |
+The roadmap is the product-level map of the capabilities we intend to deliver.
 
 ## Core resolver
 
