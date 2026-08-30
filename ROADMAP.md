@@ -58,18 +58,6 @@ below are future capabilities, grouped by the dependency layer they extend.
 - Add a measured policy/codec WASM edge experiment while retaining scalar
   fallback.
 
-## Explicit non-goals
-
-- Browser-content or URL filtering after DNS resolution.
-- TLS interception or decryption.
-- Silent forwarding of unknown protocols.
-- An open resolver by default.
-- Unbounded query, payload, cache, log, or honeypot retention.
-- Treating GeoIP classification as exact identity, attribution, or a substitute
-  for authentication and network-level DDoS protection.
-- Calling the prototype zero-copy, production-grade, or high-performance
-  without end-to-end measurements.
-
 ## Reference sources
 
 - Pi-hole overview and feature documentation: <https://docs.pi-hole.net/>
