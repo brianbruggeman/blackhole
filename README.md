@@ -6,6 +6,9 @@ Rust and the wire/runtime edge uses Proxima from
 default Prime path has no Tokio dependency. DNS over UDP and TCP share one
 bind.
 
+See [FEATURES.md](FEATURES.md) for the intended product surface and parity
+target with Pi-hole and AdGuard Home.
+
 This first slice intercepts DNS, the portable boundary used by Pi-hole and
 AdGuard. It does not claim to transparently capture all IP traffic: that needs
 OS firewall/TProxy setup and is deliberately a separate adapter boundary.

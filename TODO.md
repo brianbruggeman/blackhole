@@ -49,7 +49,8 @@ source maps, threat models, and gate reports are intentionally not shipped.
 - [ ] Add upstream configuration to `Config` and `main`, using only
   `proxima_dns::DnsClientUpstream`.
 - [ ] Define bounded timeout, retries, response size, and outstanding-request
-  behavior; prevent forwarded traffic from looping back into Blackhole.
+  behavior; prevent forwarded traffic from looping back into Blackhole. Add
+  global/per-client admission limits and an upstream circuit breaker.
 - [ ] Add deterministic fake-upstream tests for success, timeout, malformed
   reply, oversized reply, spoofed sender, ID mismatch, cache hit, stale entry,
   negative caching, and fail-closed behavior.
@@ -78,6 +79,11 @@ source maps, threat models, and gate reports are intentionally not shipped.
 
 - [ ] Add rebinding, amplification, malformed-name, wildcard-bypass, and
   client-metadata spoofing tests.
+- [ ] Add optional GeoIP country/region/ASN policy with an observe-only mode;
+  define database provenance, update/expiry behavior, unknown-location
+  handling, privacy controls, and tests for proxy/VPN/unknown classifications.
+- [ ] Add DNS abuse-resistance tests for rate limits, `ANY` refusal,
+  amplification bounds, concurrent outstanding work, and circuit recovery.
 - [ ] Either implement IDNA/confusable-name policy or explicitly reject
   unsupported IDNA with a typed error.
 - [ ] Define credential and payload retention, redaction, access control, and
