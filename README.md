@@ -1,6 +1,6 @@
 # blackhole
 
-A fast DNS sinkhole/honeypot for Linux and macOS. The policy engine is pure
+A DNS sinkhole/honeypot for Linux and macOS. The policy engine is pure
 Rust and the wire/runtime edge uses Proxima from
 [`brianbruggeman/proxima`](https://github.com/brianbruggeman/proxima); the
 default Prime path has no Tokio dependency. DNS over UDP and TCP share one
