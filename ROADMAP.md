@@ -7,14 +7,8 @@ traffic interception, forwarding, and honeypot controls.
 This roadmap describes the product surface Blackhole is intended to deliver.
 It is organized by capability area. It is not a claim about the current
 prototype or a substitute for engineering verification.
-A feature listed here is a target capability and is not a claim that the
-current implementation already provides it. Implementation details and
-verification evidence stay in the engineering workflow rather than this
-product roadmap.
-
-## Delivery map
-
-The roadmap is the product-level map of the capabilities we intend to deliver.
+Every item is a target capability; implementation details and verification
+evidence stay in the engineering workflow rather than this product roadmap.
 
 ## Core resolver
 
