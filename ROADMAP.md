@@ -7,8 +7,8 @@ traffic interception, forwarding, and honeypot controls.
 This roadmap describes the product surface Blackhole is intended to deliver.
 It is organized by delivery horizon, not by the current implementation state.
 A feature listed here is a target capability and is not a claim that the
-current prototype already provides it. Implementation work and evidence belong
-in `TODO.md`.
+current prototype already provides it. Implementation details and verification
+evidence stay in the engineering workflow rather than this product roadmap.
 
 ## Now: prove the DNS core
 
