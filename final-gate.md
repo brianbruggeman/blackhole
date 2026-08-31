@@ -9,7 +9,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | --- | --- |
 | Formatting | `cargo fmt --all -- --check` passed on the current Blackhole changes. |
 | Compilation | `cargo check --offline --all-targets` passed with Proxima from GitHub revision `0652a0c0`. |
-| Unit and integration tests | `cargo test --offline --all-targets` passed: 79 library tests, 1 real HTTP admin fixture, 3 real loopback UDP/TCP resolver fixture tests, and 8 fake-upstream tests against GitHub Proxima revision `0652a0c0`; verified at Blackhole commit `ec5dd44` with Rust `1.98.0` and Cargo `1.98.0`. |
+| Unit and integration tests | `cargo test --offline --all-targets` passed: 79 library tests, 1 real HTTP admin fixture, 3 real loopback UDP/TCP resolver fixture tests, and 8 fake-upstream tests against GitHub Proxima revision `0652a0c0`; verified at Blackhole commit `6a81bb6` with Rust `1.98.0` and Cargo `1.98.0`. |
 | Cache failure behavior | `fake_upstream_servfail_is_not_cached` passed at `3e463c8`; SERVFAIL caused two upstream exchanges. |
 | Nextest | `cargo nextest run --offline --workspace` passed: 84 tests, 84 passed, 0 skipped, against GitHub Proxima revision `0652a0c0`. |
 | Doctests | `cargo test --doc --offline` passed: 1 doctest. |
