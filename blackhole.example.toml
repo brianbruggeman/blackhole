@@ -57,6 +57,8 @@ breaker_cooldown_secs = 30
 [cache]
 # Bound memory used by positive and negative upstream answers.
 max_entries = 1024
+# Never retain an answer beyond this protocol-TTL ceiling.
+max_ttl_secs = 86400
 # Permit cached answers to serve during a bounded upstream outage.
 stale_ttl_secs = 30
 # TTL for negative answers that carry no record TTL.

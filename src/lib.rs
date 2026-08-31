@@ -75,6 +75,8 @@ mod runtime {
     pub struct CacheConfig {
         #[serde(default = "default_cache_entries")]
         pub max_entries: usize,
+        #[serde(default = "default_max_cache_ttl_secs")]
+        pub max_ttl_secs: u64,
         #[serde(default = "default_stale_ttl_secs")]
         pub stale_ttl_secs: u64,
         #[serde(default = "default_negative_ttl_secs")]
@@ -160,7 +162,7 @@ mod runtime {
                 .map(|record| u64::from(record.ttl))
                 .min()
                 .unwrap_or(self.config.negative_ttl_secs);
-            let ttl = Duration::from_secs(ttl_secs);
+            let ttl = Duration::from_secs(ttl_secs.min(self.config.max_ttl_secs));
             let stale = Duration::from_secs(self.config.stale_ttl_secs);
             self.entries.insert(
                 key,
@@ -253,6 +255,7 @@ mod runtime {
         fn default() -> Self {
             Self {
                 max_entries: default_cache_entries(),
+                max_ttl_secs: default_max_cache_ttl_secs(),
                 stale_ttl_secs: default_stale_ttl_secs(),
                 negative_ttl_secs: default_negative_ttl_secs(),
             }
@@ -578,6 +581,10 @@ mod runtime {
     }
     fn default_cache_entries() -> usize {
         1024
+    }
+
+    fn default_max_cache_ttl_secs() -> u64 {
+        86_400
     }
     fn default_stale_ttl_secs() -> u64 {
         30
@@ -987,6 +994,11 @@ mod runtime {
 
     impl Policy {
         pub fn new(mut config: Config) -> Result<Self, policy::PolicyError> {
+            if config.cache.max_ttl_secs == 0 {
+                return Err(policy::PolicyError::InvalidCache {
+                    reason: "max_ttl_secs must be non-zero".into(),
+                });
+            }
             if config.admission.max_name_bytes == 0 || config.admission.max_name_bytes > 253 {
                 return Err(policy::PolicyError::InvalidAdmission {
                     reason: "max_name_bytes must be between 1 and 253".into(),
@@ -2310,6 +2322,7 @@ mod runtime {
         fn cache_bounds_entries_and_serves_positive_and_negative_answers() {
             let config = CacheConfig {
                 max_entries: 1,
+                max_ttl_secs: 60,
                 stale_ttl_secs: 30,
                 negative_ttl_secs: 30,
             };
@@ -2352,6 +2365,47 @@ mod runtime {
             entry.stale_until = Instant::now() - Duration::from_secs(1);
             assert!(cache.stale(&key).is_none());
             assert!(!cache.entries.contains_key(&key));
+        }
+
+        #[test]
+        fn cache_clamps_protocol_ttl_to_the_configured_bound() {
+            let config = CacheConfig {
+                max_entries: 4,
+                max_ttl_secs: 60,
+                stale_ttl_secs: 30,
+                negative_ttl_secs: 120,
+            };
+            let mut cache = DnsCache::new(&config);
+            let key = CacheKey {
+                name: "long.example".into(),
+                qtype: 1,
+                qclass: 1,
+            };
+            let now = Instant::now();
+            cache.insert(
+                key.clone(),
+                DnsAnswer::ok(vec![DnsAnswerRecord {
+                    name: "long.example.".into(),
+                    rtype: 1,
+                    rclass: 1,
+                    ttl: u32::MAX,
+                    rdata: vec![192, 0, 2, 1],
+                }]),
+                now,
+            );
+            let entry = cache.entries.get(&key).expect("cache entry");
+            assert!(entry.expires_at <= now + Duration::from_secs(60));
+            assert!(entry.expires_at > now + Duration::from_secs(59));
+        }
+
+        #[test]
+        fn cache_rejects_a_zero_ttl_ceiling() {
+            let mut config = Config::default();
+            config.cache.max_ttl_secs = 0;
+            assert!(matches!(
+                Policy::new(config),
+                Err(policy::PolicyError::InvalidCache { .. })
+            ));
         }
 
         #[test]
