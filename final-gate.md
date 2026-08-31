@@ -40,6 +40,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | Upstream CNAME validation | Upstream CNAME targets are parsed through Proxima’s DNS name parser and rejected on pointer loops, trailing bytes, or invalid names; valid targets pass. Focused and full all-target tests pass. |
 | Upstream loop prevention | Upstream configuration rejects exact listener endpoints and same-family unspecified listener binds that overlap the upstream address and port; IPv4 and IPv6 proofs pass. |
 | Bounded upstream records | Upstream answers exceeding the configured `max_response_records` are rejected before validation can reach cache insertion; focused and full all-target suites pass. |
+| Upstream pass-through | `pass` and `observe` actions use the configured upstream after local rewrites, while explicit `forward` remains distinct and fail-closed without an upstream; deterministic fake-upstream proofs pass. |
 
 ## Evidence still required
 

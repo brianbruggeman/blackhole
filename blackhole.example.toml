@@ -23,8 +23,8 @@ original_destination = "127.0.0.1:53"
 # ignore drops the DNS response, nxdomain denies it, honeypot returns the configured address.
 mode = "nxdomain"
 domains = ["ads.example", "telemetry.example"]
-# With explicit rules, unmatched queries use this action. Set to "forward"
-# for a resolver deployment with the [upstream] section below.
+# With explicit rules, unmatched queries use this action. Pass and observe use
+# the [upstream] section below when configured; forward is always explicit.
 default_action = "pass"
 
 # Optional Pi-hole-compatible hosts/domain lists. Every entry becomes a

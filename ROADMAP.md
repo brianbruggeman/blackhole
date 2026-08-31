@@ -17,8 +17,8 @@ below are future capabilities, grouped by the dependency layer they extend.
 
 - Complete DNS response, truncation, and transaction validation at the
   forwarding boundary.
-- Extend the action contract with upstream-aware pass-through and isolated
-  honeypot terminal behavior.
+- Isolate the synthetic honeypot answer from any future payload-collection
+  terminal and preserve its bounded DNS-only contract.
 - Add bounded forwarding with matching-question checks, transaction checks,
   timeout behavior, TCP fallback, loop prevention, and fail-closed errors.
 - Expand the bounded cache with richer TTL telemetry.

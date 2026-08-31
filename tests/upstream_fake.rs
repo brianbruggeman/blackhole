@@ -176,11 +176,15 @@ fn resolver_addr() -> SocketAddr {
 }
 
 fn policy(mode: ReplyMode) -> (Policy, FakeSocket) {
+    policy_with_action(mode, Action::Forward)
+}
+
+fn policy_with_action(mode: ReplyMode, action: Action) -> (Policy, FakeSocket) {
     let mut config = Config::default();
     config.policy.rules = vec![RuleConfig {
         id: 1,
         domain: "example.com".into(),
-        action: Action::Forward,
+        action,
         priority: 0,
         qtype: None,
         qclass: None,
@@ -237,6 +241,24 @@ async fn fake_upstream_success_flows_through_policy() {
     let answer = policy.call(request()).await.unwrap();
     assert_eq!(answer.payload.rcode, 0);
     assert_eq!(answer.payload.records.len(), 1);
+}
+
+#[proxima::test]
+async fn pass_through_uses_the_configured_upstream() {
+    let (policy, socket) = policy_with_action(ReplyMode::Valid, Action::Pass);
+    let answer = policy.call(request()).await.expect("pass-through exchange");
+    assert_eq!(answer.payload.rcode, 0);
+    assert_eq!(answer.payload.records.len(), 1);
+    assert_eq!(socket.state.lock().expect("fake state").sent.len(), 1);
+}
+
+#[proxima::test]
+async fn observe_pass_through_uses_the_configured_upstream() {
+    let (policy, socket) = policy_with_action(ReplyMode::Valid, Action::Observe);
+    let answer = policy.call(request()).await.expect("observe exchange");
+    assert_eq!(answer.payload.rcode, 0);
+    assert_eq!(answer.payload.records.len(), 1);
+    assert_eq!(socket.state.lock().expect("fake state").sent.len(), 1);
 }
 
 #[proxima::test]

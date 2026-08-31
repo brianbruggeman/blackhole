@@ -34,8 +34,9 @@ configuration path must exist and parse successfully before the listener is
 created. `ignore` is represented as a silent response by the current Proxima
 DNS edge. When `policy.rules` is configured, it is authoritative and legacy
 `mode`/`domains` are ignored; unmatched queries use `policy.default_action`.
-Explicit forwarding uses the opt-in Proxima upstream pipe and fails closed
-when no upstream is attached. Forwarded positive and negative answers are
+Pass and observe queries use the configured Proxima upstream after local
+rewrites; explicit forward rules use the same bounded upstream path and fail
+closed when it is not configured. Forwarded positive and negative answers are
 cached within configured bounds; timeout is bounded to 60 seconds and retries
 to eight attempts per exchange, while an upstream circuit breaker limits
 repeated failures and permits stale answers only during its configured stale

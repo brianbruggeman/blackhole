@@ -4,8 +4,8 @@ Policy actions have one transport meaning at the DNS boundary:
 
 | Action | Result |
 | --- | --- |
-| `pass` | Return `NOERROR` with no synthetic records. |
-| `observe` | Same wire result as `pass`, while preserving the observation identity. |
+| `pass` | Use a local rewrite when configured; otherwise pass through the configured upstream, or return empty `NOERROR` when no upstream is attached. |
+| `observe` | Same pass-through behavior as `pass`, while preserving the observation identity. |
 | `ignore` | Send no DNS response. |
 | `drop` | Send no DNS response and record a policy drop. |
 | `reject` | Return `REFUSED` (RCODE 5). |

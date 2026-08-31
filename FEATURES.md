@@ -21,6 +21,8 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Named service-blocking profiles compile into the authoritative rule table,
   with bounded domains, stable generated IDs, and duplicate-name rejection.
 - Synthetic IPv4/IPv6 honeypot answers with configurable TTL.
+- Configured upstream pass-through for `pass` and `observe`, after local
+  rewrites; explicit `forward` remains a distinct fail-closed action.
 - Explicit fail-closed behavior when a forward rule has no upstream attached.
 - Configured UDP upstream forwarding through Proxima's `DnsClientUpstream`,
   with timeout bounded to 60 seconds, at most eight attempts per exchange, and

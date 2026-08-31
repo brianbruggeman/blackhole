@@ -1801,7 +1801,17 @@ mod runtime {
             // facade passes None and performs the single policy lookup itself.
             let action = selected_action.or_else(|| {
                 if !self.rules_configured.load(Ordering::Acquire) {
-                    None
+                    if self.matches(&query.name) {
+                        Some(match self.config.policy.mode {
+                            Mode::Ignore => Action::Ignore,
+                            Mode::Nxdomain => Action::Nxdomain,
+                            Mode::Honeypot => Action::Honeypot,
+                        })
+                    } else if self.upstream.is_some() {
+                        Some(self.config.policy.default_action)
+                    } else {
+                        None
+                    }
                 } else {
                     Some(
                         self.decision(&query, client)
@@ -1817,26 +1827,34 @@ mod runtime {
                     return Ok(DnsPipeReply::typed(200, self.cap_answer(&query, answer)));
                 }
             }
-            if action == Some(Action::Forward) {
+            let forwarding_action = match action {
+                Some(Action::Pass | Action::Observe | Action::Forward) => action,
+                _ => None,
+            };
+            if let Some(forwarding_action) = forwarding_action {
                 let Some(slots) = self.upstream_slots.as_ref() else {
-                    self.observe_failure("upstream_unconfigured");
-                    self.observe(Action::Forward);
+                    if forwarding_action == Action::Forward {
+                        self.observe_failure("upstream_unconfigured");
+                    }
+                    self.observe(forwarding_action);
                     return Ok(DnsPipeReply::typed(204, DnsAnswer::ok(Vec::new())));
                 };
                 let Ok(_slot) = slots.try_acquire() else {
                     self.observe_failure("upstream_overflow");
-                    self.observe(Action::Forward);
+                    self.observe(forwarding_action);
                     return Ok(DnsPipeReply::typed(204, DnsAnswer::ok(Vec::new())));
                 };
                 let Some(upstream) = self.upstream.as_ref() else {
-                    self.observe_failure("upstream_unconfigured");
-                    self.observe(Action::Forward);
+                    if forwarding_action == Action::Forward {
+                        self.observe_failure("upstream_unconfigured");
+                    }
+                    self.observe(forwarding_action);
                     return Ok(DnsPipeReply::typed(204, DnsAnswer::ok(Vec::new())));
                 };
                 let key = CacheKey::from_query(&query);
                 if let Some(answer) = self.cache.lock().expect("cache lock").fresh(&key) {
                     self.observe_cache("fresh_hit");
-                    self.observe(Action::Forward);
+                    self.observe(forwarding_action);
                     return Ok(DnsPipeReply::typed(200, self.cap_answer(&query, answer)));
                 }
                 self.observe_cache("miss");
@@ -1848,11 +1866,11 @@ mod runtime {
                 {
                     if let Some(answer) = self.cache.lock().expect("cache lock").stale(&key) {
                         self.observe_cache("stale_hit");
-                        self.observe(Action::Forward);
+                        self.observe(forwarding_action);
                         return Ok(DnsPipeReply::typed(200, self.cap_answer(&query, answer)));
                     }
                     self.observe_failure("upstream_circuit_open");
-                    self.observe(Action::Forward);
+                    self.observe(forwarding_action);
                     return Err(ProximaError::Io(std::io::Error::new(
                         std::io::ErrorKind::TimedOut,
                         "upstream circuit breaker is open",
@@ -1867,7 +1885,7 @@ mod runtime {
                                 .expect("breaker lock")
                                 .failure(Instant::now());
                             self.observe_failure(cause);
-                            self.observe(Action::Forward);
+                            self.observe(forwarding_action);
                             return Ok(DnsPipeReply::typed(200, server_failure_answer()));
                         }
                         self.breaker.lock().expect("breaker lock").success();
@@ -1891,15 +1909,15 @@ mod runtime {
                             .failure(Instant::now());
                         if let Some(answer) = self.cache.lock().expect("cache lock").stale(&key) {
                             self.observe_cache("stale_hit");
-                            self.observe(Action::Forward);
+                            self.observe(forwarding_action);
                             return Ok(DnsPipeReply::typed(200, self.cap_answer(&query, answer)));
                         }
                         self.observe_failure("upstream_error");
-                        self.observe(Action::Forward);
+                        self.observe(forwarding_action);
                         return Err(ProximaError::Io(std::io::Error::other(error.to_string())));
                     }
                 };
-                self.observe(Action::Forward);
+                self.observe(forwarding_action);
                 return Ok(DnsPipeReply::typed(200, self.cap_answer(&query, answer)));
             }
             let outcome = if !self.rules_configured.load(Ordering::Acquire) {
