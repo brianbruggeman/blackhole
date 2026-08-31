@@ -20,6 +20,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | Capture lifecycle | Planner, rollback, ownership, recovery, and cleanup tests pass. Capture is explicitly opt-in and wired through the shared controller. |
 | Per-client admission | The configured per-client concurrent-request cap rejects a second in-flight request at the limit, releases on completion, and passes the focused unit test. |
 | Response amplification cap | The configured response-ratio cap is validated and applied below the absolute response ceiling; the focused cap test and full 62-test library suite pass. |
+| Per-client rate limiting | The configured per-second client rate cap sheds the third request in a deterministic focused test, while unidentified callers remain unkeyed and the rate-state table is bounded. |
 
 ## Evidence still required
 

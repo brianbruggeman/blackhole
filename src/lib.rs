@@ -217,6 +217,13 @@ mod runtime {
         client: IpAddr,
     }
 
+    struct ClientRate {
+        window_started: Instant,
+        requests: usize,
+    }
+
+    const MAX_CLIENT_RATE_ENTRIES: usize = 4096;
+
     impl Drop for ClientPermit {
         fn drop(&mut self) {
             let mut active = self.active.lock().expect("client admission lock");
@@ -256,6 +263,8 @@ mod runtime {
         pub max_inflight_requests: usize,
         #[serde(default = "default_max_inflight_per_client")]
         pub max_inflight_per_client: usize,
+        #[serde(default = "default_max_queries_per_client_per_second")]
+        pub max_queries_per_client_per_second: usize,
     }
 
     impl Default for AdmissionConfig {
@@ -268,6 +277,7 @@ mod runtime {
                 max_response_amplification: default_max_response_amplification(),
                 max_inflight_requests: default_max_inflight_requests(),
                 max_inflight_per_client: default_max_inflight_per_client(),
+                max_queries_per_client_per_second: default_max_queries_per_client_per_second(),
             }
         }
     }
@@ -492,6 +502,9 @@ mod runtime {
     fn default_max_inflight_per_client() -> usize {
         64
     }
+    fn default_max_queries_per_client_per_second() -> usize {
+        100
+    }
     const MAX_BLOCKLIST_BYTES: u64 = 16 * 1024 * 1024;
     const MAX_BLOCKLIST_LINE_BYTES: usize = 4096;
 
@@ -602,6 +615,7 @@ mod runtime {
         breaker: Arc<Mutex<CircuitBreaker>>,
         request_slots: Arc<Semaphore>,
         client_admission: Arc<Mutex<HashMap<IpAddr, usize>>>,
+        client_rates: Arc<Mutex<HashMap<IpAddr, ClientRate>>>,
     }
 
     impl Policy {
@@ -636,6 +650,11 @@ mod runtime {
                     reason: "max_inflight_per_client must be non-zero".into(),
                 });
             }
+            if config.admission.max_queries_per_client_per_second == 0 {
+                return Err(policy::PolicyError::InvalidAdmission {
+                    reason: "max_queries_per_client_per_second must be non-zero".into(),
+                });
+            }
             let blocklist_rules = load_blocklists(&config.policy.blocklists)?;
             config.policy.rules.extend(blocklist_rules);
             config.policy.domains = config.policy.domains.into_iter().map(normalize).collect();
@@ -668,6 +687,7 @@ mod runtime {
                 breaker,
                 request_slots: Arc::new(Semaphore::new(max_inflight_requests)),
                 client_admission: Arc::new(Mutex::new(HashMap::new())),
+                client_rates: Arc::new(Mutex::new(HashMap::new())),
             };
             if let Some(upstream) = policy.config.upstream.as_ref() {
                 policy.validate_upstream(upstream)?;
@@ -804,6 +824,43 @@ mod runtime {
                 active: Arc::clone(&self.client_admission),
                 client,
             })
+        }
+
+        fn allow_client_rate(&self, client: Option<IpAddr>) -> bool {
+            let Some(client) = client else {
+                return true;
+            };
+            let now = Instant::now();
+            let mut rates = self.client_rates.lock().expect("client rate lock");
+            if let Some(rate) = rates.get_mut(&client) {
+                if now.duration_since(rate.window_started) >= Duration::from_secs(1) {
+                    rate.window_started = now;
+                    rate.requests = 1;
+                    return true;
+                }
+                if rate.requests >= self.config.admission.max_queries_per_client_per_second {
+                    return false;
+                }
+                rate.requests += 1;
+                return true;
+            }
+            if rates.len() >= MAX_CLIENT_RATE_ENTRIES {
+                if let Some(oldest) = rates
+                    .iter()
+                    .min_by_key(|(_, rate)| rate.window_started)
+                    .map(|(client, _)| *client)
+                {
+                    rates.remove(&oldest);
+                }
+            }
+            rates.insert(
+                client,
+                ClientRate {
+                    window_started: now,
+                    requests: 1,
+                },
+            );
+            true
         }
 
         fn admission_allows(&self, query: &proxima_dns::DnsQuery) -> bool {
@@ -1051,6 +1108,11 @@ mod runtime {
             let _client_slot = self.try_client_admission(client);
             if client.is_some() && _client_slot.is_none() {
                 self.observe_failure("client_admission_overflow");
+                self.observe(Action::Reject);
+                return Ok(DnsPipeReply::typed(200, server_failure_answer()));
+            }
+            if !self.allow_client_rate(client) {
+                self.observe_failure("client_rate_overflow");
                 self.observe(Action::Reject);
                 return Ok(DnsPipeReply::typed(200, server_failure_answer()));
             }
@@ -1802,6 +1864,14 @@ mod runtime {
                 })
                 .is_err()
             );
+            assert!(
+                Policy::new({
+                    let mut config = Config::default();
+                    config.admission.max_queries_per_client_per_second = 0;
+                    config
+                })
+                .is_err()
+            );
         }
 
         #[test]
@@ -1822,6 +1892,18 @@ mod runtime {
                     .is_some()
             );
             assert!(policy.try_client_admission(None).is_none());
+        }
+
+        #[test]
+        fn per_client_rate_limit_sheds_repeated_requests() {
+            let mut config = Config::default();
+            config.admission.max_queries_per_client_per_second = 2;
+            let policy = Policy::new(config).expect("valid admission config");
+            let client = Some("192.0.2.10".parse().expect("client address"));
+            assert!(policy.allow_client_rate(client));
+            assert!(policy.allow_client_rate(client));
+            assert!(!policy.allow_client_rate(client));
+            assert!(policy.allow_client_rate(None));
         }
 
         #[test]
