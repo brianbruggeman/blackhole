@@ -31,6 +31,9 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   optionally reject `ANY`, cap emitted answer records and approximate wire
   size, cap response amplification relative to the query, and shed excess
   in-flight work with bounded global and per-client limits.
+- A bounded per-client abuse breaker that temporarily sheds clients which
+  repeatedly exceed the configured query-rate limit, without affecting
+  unidentified callers.
 - Upstream rebinding protection for private, local, link-local, unspecified,
   multicast, and IPv6 unique-local A/AAAA answers, with fail-closed SERVFAIL.
 - Optional country deny and observe-only (“snitch”) policy from a bounded,

@@ -227,6 +227,13 @@ mod runtime {
         requests: usize,
     }
 
+    #[derive(Debug, Clone, Copy)]
+    struct ClientAbuse {
+        window_started: Instant,
+        violations: usize,
+        blocked_until: Option<Instant>,
+    }
+
     const MAX_CLIENT_RATE_ENTRIES: usize = 4096;
 
     impl Drop for ClientPermit {
@@ -270,6 +277,12 @@ mod runtime {
         pub max_inflight_per_client: usize,
         #[serde(default = "default_max_queries_per_client_per_second")]
         pub max_queries_per_client_per_second: usize,
+        #[serde(default = "default_max_client_abuse_violations")]
+        pub max_client_abuse_violations: usize,
+        #[serde(default = "default_client_abuse_window_secs")]
+        pub client_abuse_window_secs: u64,
+        #[serde(default = "default_client_abuse_cooldown_secs")]
+        pub client_abuse_cooldown_secs: u64,
     }
 
     impl Default for AdmissionConfig {
@@ -283,6 +296,9 @@ mod runtime {
                 max_inflight_requests: default_max_inflight_requests(),
                 max_inflight_per_client: default_max_inflight_per_client(),
                 max_queries_per_client_per_second: default_max_queries_per_client_per_second(),
+                max_client_abuse_violations: default_max_client_abuse_violations(),
+                client_abuse_window_secs: default_client_abuse_window_secs(),
+                client_abuse_cooldown_secs: default_client_abuse_cooldown_secs(),
             }
         }
     }
@@ -579,6 +595,18 @@ mod runtime {
     }
     fn default_max_inflight_per_client() -> usize {
         64
+    }
+
+    fn default_max_client_abuse_violations() -> usize {
+        8
+    }
+
+    fn default_client_abuse_window_secs() -> u64 {
+        10
+    }
+
+    fn default_client_abuse_cooldown_secs() -> u64 {
+        30
     }
     fn default_max_queries_per_client_per_second() -> usize {
         100
@@ -877,6 +905,7 @@ mod runtime {
         request_slots: Arc<Semaphore>,
         client_admission: Arc<Mutex<HashMap<IpAddr, usize>>>,
         client_rates: Arc<Mutex<HashMap<IpAddr, ClientRate>>>,
+        client_abuse: Arc<Mutex<HashMap<IpAddr, ClientAbuse>>>,
     }
 
     impl Policy {
@@ -914,6 +943,14 @@ mod runtime {
             if config.admission.max_queries_per_client_per_second == 0 {
                 return Err(policy::PolicyError::InvalidAdmission {
                     reason: "max_queries_per_client_per_second must be non-zero".into(),
+                });
+            }
+            if config.admission.max_client_abuse_violations == 0
+                || config.admission.client_abuse_window_secs == 0
+                || config.admission.client_abuse_cooldown_secs == 0
+            {
+                return Err(policy::PolicyError::InvalidAdmission {
+                    reason: "client abuse limits must be non-zero".into(),
                 });
             }
             let base_rules = config.policy.rules.clone();
@@ -955,6 +992,7 @@ mod runtime {
                 request_slots: Arc::new(Semaphore::new(max_inflight_requests)),
                 client_admission: Arc::new(Mutex::new(HashMap::new())),
                 client_rates: Arc::new(Mutex::new(HashMap::new())),
+                client_abuse: Arc::new(Mutex::new(HashMap::new())),
             };
             if let Some(upstream) = policy.config.upstream.as_ref() {
                 policy.validate_upstream(upstream)?;
@@ -1142,6 +1180,68 @@ mod runtime {
                 },
             );
             true
+        }
+
+        fn allow_client_abuse(&self, client: Option<IpAddr>) -> bool {
+            let Some(client) = client else {
+                return true;
+            };
+            let now = Instant::now();
+            let mut abuse = self.client_abuse.lock().expect("client abuse lock");
+            let Some(state) = abuse.get_mut(&client) else {
+                return true;
+            };
+            if state.blocked_until.is_some_and(|until| until > now) {
+                return false;
+            }
+            if state.blocked_until.is_some_and(|until| until <= now) {
+                state.blocked_until = None;
+                state.violations = 0;
+                state.window_started = now;
+            }
+            true
+        }
+
+        fn record_client_abuse(&self, client: Option<IpAddr>) -> bool {
+            let Some(client) = client else {
+                return false;
+            };
+            let now = Instant::now();
+            let window = Duration::from_secs(self.config.admission.client_abuse_window_secs);
+            let mut abuse = self.client_abuse.lock().expect("client abuse lock");
+            if let Some(state) = abuse.get_mut(&client) {
+                if now.duration_since(state.window_started) >= window {
+                    state.window_started = now;
+                    state.violations = 0;
+                    state.blocked_until = None;
+                }
+                state.violations += 1;
+                if state.violations >= self.config.admission.max_client_abuse_violations {
+                    state.blocked_until = Some(
+                        now + Duration::from_secs(self.config.admission.client_abuse_cooldown_secs),
+                    );
+                    return true;
+                }
+                return false;
+            }
+            if abuse.len() >= MAX_CLIENT_RATE_ENTRIES {
+                if let Some(oldest) = abuse
+                    .iter()
+                    .min_by_key(|(_, state)| state.window_started)
+                    .map(|(client, _)| *client)
+                {
+                    abuse.remove(&oldest);
+                }
+            }
+            abuse.insert(
+                client,
+                ClientAbuse {
+                    window_started: now,
+                    violations: 1,
+                    blocked_until: None,
+                },
+            );
+            false
         }
 
         fn admission_allows(&self, query: &proxima_dns::DnsQuery) -> bool {
@@ -1418,8 +1518,16 @@ mod runtime {
                 self.observe(Action::Reject);
                 return Ok(DnsPipeReply::typed(200, server_failure_answer()));
             }
+            if !self.allow_client_abuse(client) {
+                self.observe_failure("client_abuse_breaker_open");
+                self.observe(Action::Reject);
+                return Ok(DnsPipeReply::typed(200, server_failure_answer()));
+            }
             if !self.allow_client_rate(client) {
                 self.observe_failure("client_rate_overflow");
+                if self.record_client_abuse(client) {
+                    self.observe_failure("client_abuse_breaker_open");
+                }
                 self.observe(Action::Reject);
                 return Ok(DnsPipeReply::typed(200, server_failure_answer()));
             }
@@ -2409,6 +2517,24 @@ mod runtime {
             assert!(policy.allow_client_rate(client));
             assert!(!policy.allow_client_rate(client));
             assert!(policy.allow_client_rate(None));
+        }
+
+        #[test]
+        fn repeated_rate_overflow_opens_bounded_client_abuse_breaker() {
+            let mut config = Config::default();
+            config.admission.max_queries_per_client_per_second = 1;
+            config.admission.max_client_abuse_violations = 2;
+            config.admission.client_abuse_cooldown_secs = 60;
+            let policy = Policy::new(config).expect("valid abuse config");
+            let client = Some("192.0.2.44".parse().unwrap());
+            assert!(policy.allow_client_rate(client));
+            assert!(!policy.allow_client_rate(client));
+            assert!(!policy.record_client_abuse(client));
+            assert!(policy.allow_client_abuse(client));
+            assert!(!policy.allow_client_rate(client));
+            assert!(policy.record_client_abuse(client));
+            assert!(!policy.allow_client_abuse(client));
+            assert!(policy.allow_client_abuse(None));
         }
 
         #[test]

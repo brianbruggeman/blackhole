@@ -31,6 +31,8 @@ Explicit forwarding uses the opt-in Proxima upstream pipe and fails closed
 when no upstream is attached. Forwarded positive and negative answers are
 cached within configured bounds; an upstream circuit breaker limits repeated
 failures and permits stale answers only during its configured stale window.
+Repeated per-client rate-limit violations open a bounded temporary abuse
+breaker; unidentified callers are not assigned a shared abuse identity.
 Local A/AAAA rewrites are bounded and apply to `pass`/`observe` queries;
 explicit policy actions take precedence. The `[capture]` section is disabled
 by default; when enabled, it installs and recovers only the platform-native,

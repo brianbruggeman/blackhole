@@ -67,6 +67,10 @@ max_response_amplification = 4
 max_inflight_requests = 1024
 # Bound concurrent requests attributed to one client address.
 max_inflight_per_client = 64
+# Temporarily shed a client after repeated rate-limit violations.
+max_client_abuse_violations = 8
+client_abuse_window_secs = 10
+client_abuse_cooldown_secs = 30
 
 [security]
 # Prevent forwarded answers from rebinding clients to private/local networks.
