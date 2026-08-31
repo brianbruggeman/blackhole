@@ -305,6 +305,7 @@ impl ReferencePolicy {
             })
     }
 
+    #[cfg(feature = "std")]
     pub(crate) fn rule_ids(&self) -> alloc::collections::BTreeSet<u32> {
         self.rules.iter().map(|rule| rule.id).collect()
     }
