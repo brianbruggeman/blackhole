@@ -23,6 +23,7 @@ pub mod query;
 pub mod snapshot;
 pub use policy::{Action, RuleConfig};
 use policy::{QueryContext, ReferencePolicy};
+use query::QueryView;
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct Config {
@@ -275,6 +276,34 @@ impl Policy {
             qclass: query.qclass,
             client: None,
         })
+    }
+
+    /// Return the authoritative action for a validated borrowed query view.
+    /// The wire adapter calls this before materializing the owned Proxima DNS
+    /// request, so configured rules remain authoritative at the raw boundary.
+    #[must_use]
+    pub fn action_for_view(&self, query: QueryView<'_>) -> Action {
+        let name = query.name.to_dotted();
+        if self.config.policy.rules.is_empty() {
+            if !self.matches(&name) {
+                return Action::Pass;
+            }
+            return match self.config.policy.mode {
+                Mode::Ignore => Action::Ignore,
+                Mode::Nxdomain => Action::Nxdomain,
+                Mode::Honeypot => Action::Honeypot,
+            };
+        }
+        self.reference
+            .decide(QueryContext {
+                name: &name,
+                qtype: query.qtype,
+                qclass: query.qclass,
+                client: None,
+            })
+            .map_or(self.config.policy.default_action, |decision| {
+                decision.action
+            })
     }
     fn matches(&self, name: &str) -> bool {
         let name = normalize(name);
@@ -607,6 +636,29 @@ mod tests {
         };
         assert!(policy.evaluate(&query("ruled.example")).is_none());
         assert!(policy.evaluate(&query("legacy.example")).is_some());
+    }
+
+    #[test]
+    fn borrowed_view_uses_the_same_authoritative_rule_action() {
+        let mut config = Config::default();
+        config.policy.default_action = Action::Pass;
+        config.policy.rules = vec![RuleConfig {
+            id: 1,
+            domain: "blocked.example".into(),
+            action: Action::Reject,
+            priority: 0,
+            qtype: Some(1),
+            qclass: None,
+            client: None,
+        }];
+        let policy = Policy::new(config).expect("valid policy");
+        let packet = [
+            0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 7, b'b', b'l', b'o', b'c', b'k', b'e', b'd', 7,
+            b'e', b'x', b'a', b'm', b'p', b'l', b'e', 0, 0, 1, 0, 1,
+        ];
+        let view = QueryView::parse(&packet).expect("valid query");
+        assert_eq!(policy.action_for_view(view), Action::Reject);
+        assert_eq!(view.to_owned().name, "blocked.example.");
     }
 
     #[test]
