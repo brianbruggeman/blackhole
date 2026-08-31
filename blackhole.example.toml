@@ -41,6 +41,10 @@ max_name_bytes = 253
 # Bound records emitted by local and forwarded answers.
 max_response_records = 64
 
+[security]
+# Prevent forwarded answers from rebinding clients to private/local networks.
+reject_private_upstream_addresses = true
+
 [honeypot]
 ipv4 = "192.0.2.1"
 ipv6 = "2001:db8::1"

@@ -25,6 +25,8 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   cooldown; open circuits fail closed unless a stale cached answer is usable.
 - Bounded admission controls that reject malformed/overlong owned queries,
   optionally reject `ANY`, and cap emitted answer records.
+- Upstream rebinding protection for private, local, link-local, unspecified,
+  multicast, and IPv6 unique-local A/AAAA answers, with fail-closed SERVFAIL.
 - Proxima-native action counters, failure-cause counters, and request-latency
   histograms that preserve the complete action identity.
 - A tested policy/FSM/snapshot core that does not require privileged capture

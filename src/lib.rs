@@ -59,6 +59,8 @@ mod runtime {
         pub cache: CacheConfig,
         #[serde(default)]
         pub admission: AdmissionConfig,
+        #[serde(default)]
+        pub security: SecurityConfig,
     }
 
     #[derive(Debug, Clone, Deserialize)]
@@ -235,6 +237,20 @@ mod runtime {
     }
 
     #[derive(Debug, Clone, Deserialize)]
+    pub struct SecurityConfig {
+        #[serde(default = "default_reject_private_upstream_addresses")]
+        pub reject_private_upstream_addresses: bool,
+    }
+
+    impl Default for SecurityConfig {
+        fn default() -> Self {
+            Self {
+                reject_private_upstream_addresses: default_reject_private_upstream_addresses(),
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Deserialize)]
     pub struct UpstreamConfig {
         #[serde(default = "default_resolver_ip")]
         pub resolver_ip: String,
@@ -380,6 +396,9 @@ mod runtime {
     }
     fn default_max_response_records() -> usize {
         64
+    }
+    fn default_reject_private_upstream_addresses() -> bool {
+        true
     }
     const MAX_BLOCKLIST_BYTES: u64 = 16 * 1024 * 1024;
     const MAX_BLOCKLIST_LINE_BYTES: usize = 4096;
@@ -659,6 +678,45 @@ mod runtime {
             answer
         }
 
+        fn validate_upstream_answer(&self, answer: &DnsAnswer) -> Result<(), &'static str> {
+            if !self.config.security.reject_private_upstream_addresses {
+                return Ok(());
+            }
+            for record in &answer.records {
+                let blocked = match record.rtype {
+                    1 if record.rdata.len() == 4 => {
+                        let address = Ipv4Addr::new(
+                            record.rdata[0],
+                            record.rdata[1],
+                            record.rdata[2],
+                            record.rdata[3],
+                        );
+                        address.is_private()
+                            || address.is_loopback()
+                            || address.is_link_local()
+                            || address.is_unspecified()
+                            || address.is_multicast()
+                            || address.is_broadcast()
+                    }
+                    28 if record.rdata.len() == 16 => {
+                        let mut octets = [0; 16];
+                        octets.copy_from_slice(&record.rdata);
+                        let address = Ipv6Addr::from(octets);
+                        address.is_unique_local()
+                            || address.is_loopback()
+                            || address.is_unicast_link_local()
+                            || address.is_unspecified()
+                            || address.is_multicast()
+                    }
+                    _ => false,
+                };
+                if blocked {
+                    return Err("upstream_rebinding");
+                }
+            }
+            Ok(())
+        }
+
         /// Return the authoritative action for a validated borrowed query view.
         /// The wire adapter calls this before materializing the owned Proxima DNS
         /// request, so configured rules remain authoritative at the raw boundary.
@@ -845,6 +903,15 @@ mod runtime {
                 let answer = upstream.query(&query.name, query.qtype, query.qclass).await;
                 let answer = match answer {
                     Ok(answer) => {
+                        if let Err(cause) = self.validate_upstream_answer(&answer) {
+                            self.breaker
+                                .lock()
+                                .expect("breaker lock")
+                                .failure(Instant::now());
+                            self.observe_failure(cause);
+                            self.observe(Action::Forward);
+                            return Ok(DnsPipeReply::typed(200, server_failure_answer()));
+                        }
                         self.breaker.lock().expect("breaker lock").success();
                         self.cache.lock().expect("cache lock").insert(
                             key.clone(),
@@ -925,6 +992,15 @@ mod runtime {
     fn refused_answer() -> DnsAnswer {
         DnsAnswer {
             rcode: 5,
+            authoritative: false,
+            recursion_available: true,
+            records: Vec::new(),
+        }
+    }
+
+    fn server_failure_answer() -> DnsAnswer {
+        DnsAnswer {
+            rcode: 2,
             authoritative: false,
             recursion_available: true,
             records: Vec::new(),
@@ -1385,6 +1461,38 @@ mod runtime {
                 })
                 .expect("answer");
             assert!(answer.records.len() <= 1);
+        }
+
+        #[test]
+        fn upstream_rebinding_addresses_fail_closed_before_cache() {
+            let policy = Policy::new(Config::default()).expect("valid policy");
+            let private = DnsAnswer {
+                rcode: 0,
+                authoritative: false,
+                recursion_available: true,
+                records: vec![DnsAnswerRecord {
+                    name: "answer.example.".into(),
+                    rtype: 1,
+                    rclass: 1,
+                    ttl: 30,
+                    rdata: vec![10, 0, 0, 1],
+                }],
+            };
+            assert_eq!(
+                policy.validate_upstream_answer(&private),
+                Err("upstream_rebinding")
+            );
+            let public = DnsAnswer {
+                records: vec![DnsAnswerRecord {
+                    name: "answer.example.".into(),
+                    rtype: 1,
+                    rclass: 1,
+                    ttl: 30,
+                    rdata: vec![93, 184, 216, 34],
+                }],
+                ..private.clone()
+            };
+            assert_eq!(policy.validate_upstream_answer(&public), Ok(()));
         }
 
         #[test]
