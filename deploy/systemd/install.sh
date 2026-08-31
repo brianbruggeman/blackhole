@@ -18,6 +18,10 @@ if [ ! -r "$config" ]; then
     echo "configuration not readable: $config" >&2
     exit 1
 fi
+if ! "$binary" --check "$config" >/dev/null; then
+    echo "configuration validation failed: $config" >&2
+    exit 1
+fi
 
 if ! getent group blackhole >/dev/null; then
     groupadd --system blackhole
