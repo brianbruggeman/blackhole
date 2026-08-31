@@ -10,6 +10,7 @@ See [FEATURES.md](FEATURES.md) for the current prototype surface and
 [ROADMAP.md](ROADMAP.md) for the intended product scope and parity targets with
 Pi-hole and AdGuard Home.
 See [contract.md](contract.md) for the wire meaning of each policy action.
+See [PRIVACY.md](PRIVACY.md) for the retention and honeypot-terminal contract.
 
 This first slice intercepts DNS, the portable boundary used by Pi-hole and
 AdGuard. It does not claim to transparently capture all IP traffic: that needs
