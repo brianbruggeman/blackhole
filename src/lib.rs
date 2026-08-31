@@ -142,6 +142,49 @@ impl DnsCache {
     }
 }
 
+#[derive(Debug, Clone)]
+struct CircuitBreaker {
+    threshold: u32,
+    cooldown: Duration,
+    failures: u32,
+    open_until: Option<Instant>,
+}
+
+impl CircuitBreaker {
+    fn new(threshold: u32, cooldown_secs: u64) -> Self {
+        Self {
+            threshold: threshold.max(1),
+            cooldown: Duration::from_secs(cooldown_secs.max(1)),
+            failures: 0,
+            open_until: None,
+        }
+    }
+
+    fn allows(&mut self, now: Instant) -> bool {
+        match self.open_until {
+            Some(until) if now < until => false,
+            Some(_) => {
+                self.open_until = None;
+                self.failures = 0;
+                true
+            }
+            None => true,
+        }
+    }
+
+    fn success(&mut self) {
+        self.failures = 0;
+        self.open_until = None;
+    }
+
+    fn failure(&mut self, now: Instant) {
+        self.failures = self.failures.saturating_add(1);
+        if self.failures >= self.threshold {
+            self.open_until = Some(now + self.cooldown);
+        }
+    }
+}
+
 impl Default for CacheConfig {
     fn default() -> Self {
         Self {
@@ -164,6 +207,10 @@ pub struct UpstreamConfig {
     pub max_attempts: u32,
     #[serde(default = "default_max_outstanding")]
     pub max_outstanding: usize,
+    #[serde(default = "default_breaker_failures")]
+    pub breaker_failures: u32,
+    #[serde(default = "default_breaker_cooldown_secs")]
+    pub breaker_cooldown_secs: u64,
 }
 
 impl Default for UpstreamConfig {
@@ -174,6 +221,8 @@ impl Default for UpstreamConfig {
             query_timeout_ms: default_query_timeout_ms(),
             max_attempts: default_max_attempts(),
             max_outstanding: default_max_outstanding(),
+            breaker_failures: default_breaker_failures(),
+            breaker_cooldown_secs: default_breaker_cooldown_secs(),
         }
     }
 }
@@ -281,6 +330,12 @@ fn default_stale_ttl_secs() -> u64 {
 fn default_negative_ttl_secs() -> u64 {
     30
 }
+fn default_breaker_failures() -> u32 {
+    3
+}
+fn default_breaker_cooldown_secs() -> u64 {
+    30
+}
 
 impl Config {
     pub fn from_file(path: &std::path::Path) -> Result<Self, Box<dyn std::error::Error>> {
@@ -299,6 +354,7 @@ pub struct Policy {
     upstream: Option<DnsClientUpstream>,
     upstream_slots: Option<Arc<Semaphore>>,
     cache: Arc<Mutex<DnsCache>>,
+    breaker: Arc<Mutex<CircuitBreaker>>,
 }
 
 impl Policy {
@@ -306,6 +362,20 @@ impl Policy {
         config.policy.domains = config.policy.domains.into_iter().map(normalize).collect();
         let reference = ReferencePolicy::new(&config.policy.rules)?;
         let cache = Arc::new(Mutex::new(DnsCache::new(&config.cache)));
+        let breaker = Arc::new(Mutex::new(CircuitBreaker::new(
+            config
+                .upstream
+                .as_ref()
+                .map_or(default_breaker_failures(), |upstream| {
+                    upstream.breaker_failures
+                }),
+            config
+                .upstream
+                .as_ref()
+                .map_or(default_breaker_cooldown_secs(), |upstream| {
+                    upstream.breaker_cooldown_secs
+                }),
+        )));
         let policy = Self {
             config,
             reference,
@@ -313,6 +383,7 @@ impl Policy {
             upstream: None,
             upstream_slots: None,
             cache,
+            breaker,
         };
         if let Some(upstream) = policy.config.upstream.as_ref() {
             policy.validate_upstream(upstream)?;
@@ -361,6 +432,11 @@ impl Policy {
         if upstream.max_attempts == 0 || upstream.max_outstanding == 0 {
             return Err(policy::PolicyError::InvalidUpstream {
                 reason: "max_attempts and max_outstanding must be non-zero".into(),
+            });
+        }
+        if upstream.breaker_failures == 0 || upstream.breaker_cooldown_secs == 0 {
+            return Err(policy::PolicyError::InvalidUpstream {
+                reason: "breaker_failures and breaker_cooldown_secs must be non-zero".into(),
             });
         }
         let broadcast = matches!(resolver_ip, std::net::IpAddr::V4(ip) if ip.is_broadcast());
@@ -518,9 +594,26 @@ impl SendPipe for Policy {
                 self.observe(Action::Forward);
                 return Ok(DnsPipeReply::typed(200, answer));
             }
+            if !self
+                .breaker
+                .lock()
+                .expect("breaker lock")
+                .allows(Instant::now())
+            {
+                if let Some(answer) = self.cache.lock().expect("cache lock").stale(&key) {
+                    self.observe(Action::Forward);
+                    return Ok(DnsPipeReply::typed(200, answer));
+                }
+                self.observe(Action::Forward);
+                return Err(ProximaError::Io(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "upstream circuit breaker is open",
+                )));
+            }
             let answer = upstream.query(&query.name, query.qtype, query.qclass).await;
             let answer = match answer {
                 Ok(answer) => {
+                    self.breaker.lock().expect("breaker lock").success();
                     self.cache.lock().expect("cache lock").insert(
                         key.clone(),
                         answer.clone(),
@@ -529,6 +622,10 @@ impl SendPipe for Policy {
                     answer
                 }
                 Err(error) => {
+                    self.breaker
+                        .lock()
+                        .expect("breaker lock")
+                        .failure(Instant::now());
                     if let Some(answer) = self.cache.lock().expect("cache lock").stale(&key) {
                         self.observe(Action::Forward);
                         return Ok(DnsPipeReply::typed(200, answer));
@@ -851,6 +948,19 @@ mod tests {
         entry.stale_until = Instant::now() - Duration::from_secs(1);
         assert!(cache.stale(&key).is_none());
         assert!(!cache.entries.contains_key(&key));
+    }
+
+    #[test]
+    fn upstream_breaker_opens_after_bounded_failures_and_recovers() {
+        let mut breaker = CircuitBreaker::new(2, 30);
+        let now = Instant::now();
+        assert!(breaker.allows(now));
+        breaker.failure(now);
+        assert!(breaker.allows(now));
+        breaker.failure(now);
+        assert!(!breaker.allows(now));
+        breaker.success();
+        assert!(breaker.allows(now));
     }
 
     #[test]
