@@ -9,7 +9,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | --- | --- |
 | Formatting | `cargo fmt --all -- --check` passed on the current Blackhole changes. |
 | Compilation | `cargo check --offline --all-targets` passed with Proxima from GitHub revision `0652a0c0`. |
-| Unit and integration tests | `cargo test --offline --all-targets` passed: 60 library tests, the UDP/TCP resolver fixture, and 7 fake-upstream tests at `eb3fbd0`. |
+| Unit and integration tests | `cargo test --offline --all-targets` passed: 67 library tests, the UDP/TCP resolver fixture, and 8 fake-upstream tests against GitHub Proxima revision `0652a0c0`. |
 | Cache failure behavior | `fake_upstream_servfail_is_not_cached` passed at `3e463c8`; SERVFAIL caused two upstream exchanges. |
 | Nextest | `cargo nextest run --offline --workspace` passed: 68 tests at `794caa5`. |
 | Doctests | `cargo test --doc --offline` passed: 1 doctest. |
@@ -23,6 +23,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | Per-client rate limiting | The configured per-second client rate cap sheds the third request in a deterministic focused test, while unidentified callers remain unkeyed and the rate-state table is bounded. |
 | Atomic blocklist reload | A replacement blocklist publishes as one snapshot and an invalid replacement leaves the previous generation active; the focused reload test and 64-test library suite pass. |
 | Cache outcome telemetry | Proxima-native counters record fresh hits, misses, stale serves, and capacity evictions; the deterministic bounded-eviction test passes. |
+| Local DNS rewrites | Bounded A/AAAA rewrites answer pass/observe queries, explicit policy actions override them, and malformed or oversized configuration fails closed. |
 
 ## Evidence still required
 

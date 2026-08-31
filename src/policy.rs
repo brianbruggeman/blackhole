@@ -64,6 +64,7 @@ pub enum PolicyError {
     InvalidAdmission { reason: String },
     InvalidBlocklist { path: String, reason: String },
     InvalidCountryMap { path: String, reason: String },
+    InvalidRewrite { name: String, reason: String },
 }
 
 impl core::fmt::Display for PolicyError {
@@ -86,6 +87,9 @@ impl core::fmt::Display for PolicyError {
             }
             Self::InvalidCountryMap { path, reason } => {
                 write!(formatter, "invalid country map {path}: {reason}")
+            }
+            Self::InvalidRewrite { name, reason } => {
+                write!(formatter, "invalid rewrite {name}: {reason}")
             }
         }
     }

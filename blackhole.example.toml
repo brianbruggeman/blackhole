@@ -25,6 +25,14 @@ default_action = "pass"
 # bounded, generated NXDOMAIN rule; missing or malformed files fail startup.
 blocklists = []
 
+# Optional local DNS rewrites. A rewrite answers matching A/AAAA queries when
+# the selected policy action is pass or observe. An explicit rule action wins.
+[[policy.rewrites]]
+name = "router.home.arpa"
+ipv4 = "192.0.2.1"
+ipv6 = "2001:db8::1"
+ttl = 30
+
 [upstream]
 # IP literal only; no hostname lookup is performed.
 resolver_ip = "1.1.1.1"

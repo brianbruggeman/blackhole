@@ -333,6 +333,19 @@ mod runtime {
         }
     }
 
+    #[derive(Debug, Default)]
+    struct RewriteTable {
+        entries: HashMap<(String, u16), DnsAnswer>,
+    }
+
+    impl RewriteTable {
+        fn answer(&self, query: &proxima_dns::DnsQuery) -> Option<DnsAnswer> {
+            self.entries
+                .get(&(normalize(&query.name), query.qtype))
+                .cloned()
+        }
+    }
+
     #[derive(Debug, Clone, Deserialize)]
     pub struct SecurityConfig {
         #[serde(default = "default_reject_private_upstream_addresses")]
@@ -431,6 +444,8 @@ mod runtime {
         pub rules: Vec<RuleConfig>,
         #[serde(default)]
         pub blocklists: Vec<String>,
+        #[serde(default)]
+        pub rewrites: Vec<RewriteConfig>,
         #[serde(default = "default_action")]
         pub default_action: Action,
     }
@@ -441,9 +456,21 @@ mod runtime {
                 domains: Vec::new(),
                 rules: Vec::new(),
                 blocklists: Vec::new(),
+                rewrites: Vec::new(),
                 default_action: default_action(),
             }
         }
+    }
+
+    #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+    pub struct RewriteConfig {
+        pub name: String,
+        #[serde(default)]
+        pub ipv4: Option<Ipv4Addr>,
+        #[serde(default)]
+        pub ipv6: Option<Ipv6Addr>,
+        #[serde(default = "default_ttl")]
+        pub ttl: u32,
     }
 
     #[derive(Debug, Clone, Deserialize)]
@@ -751,6 +778,73 @@ mod runtime {
             observe,
         }))
     }
+
+    const MAX_REWRITES: usize = 10_000;
+
+    fn compile_rewrites(configs: &[RewriteConfig]) -> Result<RewriteTable, policy::PolicyError> {
+        if configs.len() > MAX_REWRITES {
+            return Err(policy::PolicyError::InvalidRewrite {
+                name: "<table>".into(),
+                reason: format!("entry count exceeds {MAX_REWRITES}"),
+            });
+        }
+        let mut entries = HashMap::new();
+        for config in configs {
+            let name = normalize(&config.name);
+            if name.is_empty() || !valid_dns_name(&name) {
+                return Err(policy::PolicyError::InvalidRewrite {
+                    name: config.name.clone(),
+                    reason: "name must be a non-empty ASCII DNS name".into(),
+                });
+            }
+            if config.ipv4.is_none() && config.ipv6.is_none() {
+                return Err(policy::PolicyError::InvalidRewrite {
+                    name: config.name.clone(),
+                    reason: "at least one of ipv4 or ipv6 is required".into(),
+                });
+            }
+            let record_name = format!("{name}.");
+            if let Some(address) = config.ipv4 {
+                let key = (name.clone(), 1);
+                if entries.contains_key(&key) {
+                    return Err(policy::PolicyError::InvalidRewrite {
+                        name: config.name.clone(),
+                        reason: "duplicate A rewrite".into(),
+                    });
+                }
+                entries.insert(
+                    key,
+                    DnsAnswer::ok(vec![DnsAnswerRecord {
+                        name: record_name.clone(),
+                        rtype: 1,
+                        rclass: 1,
+                        ttl: config.ttl,
+                        rdata: proxima_protocols::dns::encode::ipv4_rdata(address).to_vec(),
+                    }]),
+                );
+            }
+            if let Some(address) = config.ipv6 {
+                let key = (name, 28);
+                if entries.contains_key(&key) {
+                    return Err(policy::PolicyError::InvalidRewrite {
+                        name: config.name.clone(),
+                        reason: "duplicate AAAA rewrite".into(),
+                    });
+                }
+                entries.insert(
+                    key,
+                    DnsAnswer::ok(vec![DnsAnswerRecord {
+                        name: record_name,
+                        rtype: 28,
+                        rclass: 1,
+                        ttl: config.ttl,
+                        rdata: proxima_protocols::dns::encode::ipv6_rdata(address).to_vec(),
+                    }]),
+                );
+            }
+        }
+        Ok(RewriteTable { entries })
+    }
     fn default_breaker_failures() -> u32 {
         3
     }
@@ -772,6 +866,7 @@ mod runtime {
         config: Config,
         base_rules: Mutex<Vec<RuleConfig>>,
         country_policy: Option<CountryPolicy>,
+        rewrites: RewriteTable,
         reference: PolicyStore,
         rules_configured: AtomicBool,
         telemetry: Option<TelemetryHandle>,
@@ -824,6 +919,7 @@ mod runtime {
             let base_rules = config.policy.rules.clone();
             let blocklist_rules = load_blocklists(&config.policy.blocklists)?;
             let country_policy = load_country_policy(&config.country_policy)?;
+            let rewrites = compile_rewrites(&config.policy.rewrites)?;
             config.policy.rules.extend(blocklist_rules);
             config.policy.domains = config.policy.domains.into_iter().map(normalize).collect();
             let reference = PolicyStore::new(&config.policy.rules)?;
@@ -848,6 +944,7 @@ mod runtime {
                 config,
                 base_rules: Mutex::new(base_rules),
                 country_policy,
+                rewrites,
                 reference,
                 rules_configured: AtomicBool::new(rules_configured),
                 telemetry: None,
@@ -1223,7 +1320,11 @@ mod runtime {
                 Some(Action::Honeypot) => {
                     Some(honeypot(&query.name, query.qtype, &self.config.honeypot))
                 }
-                Some(Action::Pass | Action::Observe) | None => Some(DnsAnswer::ok(Vec::new())),
+                Some(Action::Pass | Action::Observe) => self
+                    .rewrites
+                    .answer(query)
+                    .or_else(|| Some(DnsAnswer::ok(Vec::new()))),
+                None => Some(DnsAnswer::ok(Vec::new())),
             };
             answer.map(|answer| self.cap_answer(query, answer))
         }
@@ -1354,6 +1455,12 @@ mod runtime {
                     )
                 }
             });
+            if matches!(action, Some(Action::Pass | Action::Observe) | None) {
+                if let Some(answer) = self.rewrites.answer(&query) {
+                    self.observe(action.unwrap_or(Action::Pass));
+                    return Ok(DnsPipeReply::typed(200, self.cap_answer(&query, answer)));
+                }
+            }
             if action == Some(Action::Forward) {
                 let Some(slots) = self.upstream_slots.as_ref() else {
                     self.observe_failure("upstream_unconfigured");
@@ -2110,6 +2217,91 @@ mod runtime {
                     _ => unreachable!("test action set"),
                 }
             }
+        }
+
+        #[test]
+        fn local_rewrite_answers_pass_queries_but_explicit_policy_wins() {
+            let mut config = Config::default();
+            config.policy.rewrites = vec![
+                RewriteConfig {
+                    name: "router.home.arpa".into(),
+                    ipv4: Some(Ipv4Addr::new(192, 0, 2, 1)),
+                    ipv6: Some(Ipv6Addr::LOCALHOST),
+                    ttl: 30,
+                },
+                RewriteConfig {
+                    name: "blocked.home.arpa".into(),
+                    ipv4: Some(Ipv4Addr::new(192, 0, 2, 2)),
+                    ipv6: None,
+                    ttl: 30,
+                },
+            ];
+            config.policy.rules = vec![RuleConfig {
+                id: 1,
+                domain: "blocked.home.arpa".into(),
+                action: Action::Nxdomain,
+                priority: 0,
+                qtype: None,
+                qclass: None,
+                client: None,
+                client_cidr: None,
+            }];
+            let policy = Policy::new(config).expect("valid rewrites");
+            let query = |name: &str, qtype: u16| proxima_dns::DnsQuery {
+                id: 1,
+                recursion_desired: true,
+                name: name.into(),
+                qtype,
+                qclass: 1,
+            };
+            let answer = policy
+                .evaluate(&query("router.home.arpa.", 1))
+                .expect("rewrite answer");
+            assert_eq!(answer.rcode, 0);
+            assert_eq!(answer.records.len(), 1);
+            assert_eq!(answer.records[0].rdata, vec![192, 0, 2, 1]);
+            let aaaa = policy
+                .evaluate(&query("router.home.arpa.", 28))
+                .expect("AAAA rewrite answer");
+            assert_eq!(aaaa.records.len(), 1);
+            assert_eq!(
+                aaaa.records[0].rdata.as_slice(),
+                Ipv6Addr::LOCALHOST.octets().as_slice()
+            );
+            let blocked = policy
+                .evaluate(&query("blocked.home.arpa.", 1))
+                .expect("policy answer");
+            assert_eq!(blocked.rcode, 3);
+            assert!(blocked.records.is_empty());
+        }
+
+        #[test]
+        fn local_rewrites_fail_closed_when_invalid_or_oversized() {
+            let mut invalid = Config::default();
+            invalid.policy.rewrites = vec![RewriteConfig {
+                name: "not a dns name".into(),
+                ipv4: None,
+                ipv6: None,
+                ttl: 30,
+            }];
+            assert!(matches!(
+                Policy::new(invalid),
+                Err(policy::PolicyError::InvalidRewrite { .. })
+            ));
+
+            let mut oversized = Config::default();
+            oversized.policy.rewrites = (0..=MAX_REWRITES)
+                .map(|index| RewriteConfig {
+                    name: format!("host{index}.home.arpa"),
+                    ipv4: Some(Ipv4Addr::new(192, 0, 2, 1)),
+                    ipv6: None,
+                    ttl: 30,
+                })
+                .collect();
+            assert!(matches!(
+                Policy::new(oversized),
+                Err(policy::PolicyError::InvalidRewrite { .. })
+            ));
         }
 
         #[test]

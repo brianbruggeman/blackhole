@@ -16,6 +16,8 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   silently take over.
 - Bounded Pi-hole-compatible blocklist ingestion from hosts/domain files with
   comments, normalization, deduplication, and fail-closed startup reloads.
+- Bounded local A/AAAA rewrites with explicit policy precedence and fail-closed
+  validation for malformed, duplicate, or oversized configuration.
 - Synthetic IPv4/IPv6 honeypot answers with configurable TTL.
 - Explicit fail-closed behavior when a forward rule has no upstream attached.
 - Configured UDP upstream forwarding through Proxima's `DnsClientUpstream`,
