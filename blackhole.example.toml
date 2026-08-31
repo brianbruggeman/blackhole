@@ -30,6 +30,13 @@ stale_ttl_secs = 30
 # TTL for negative answers that carry no record TTL.
 negative_ttl_secs = 30
 
+[admission]
+# Reject DNS ANY queries and malformed/overlong names at the policy edge.
+reject_any = true
+max_name_bytes = 253
+# Bound records emitted by local and forwarded answers.
+max_response_records = 64
+
 [honeypot]
 ipv4 = "192.0.2.1"
 ipv6 = "2001:db8::1"

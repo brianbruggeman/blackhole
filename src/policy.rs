@@ -58,6 +58,7 @@ pub enum PolicyError {
     TooManyRules { max: usize },
     DomainTooLong { id: u32 },
     InvalidUpstream { reason: String },
+    InvalidAdmission { reason: String },
 }
 
 impl core::fmt::Display for PolicyError {
@@ -71,6 +72,7 @@ impl core::fmt::Display for PolicyError {
             Self::TooManyRules { max } => write!(formatter, "rule count exceeds {max}"),
             Self::DomainTooLong { id } => write!(formatter, "rule {id} domain is too long"),
             Self::InvalidUpstream { reason } => write!(formatter, "invalid upstream: {reason}"),
+            Self::InvalidAdmission { reason } => write!(formatter, "invalid admission: {reason}"),
         }
     }
 }

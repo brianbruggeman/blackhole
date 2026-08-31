@@ -21,6 +21,8 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   window for upstream outages.
 - A bounded upstream circuit breaker with configurable failure threshold and
   cooldown; open circuits fail closed unless a stale cached answer is usable.
+- Bounded admission controls that reject malformed/overlong owned queries,
+  optionally reject `ANY`, and cap emitted answer records.
 - Optional action counters through Proxima telemetry.
 - A tested policy/FSM/snapshot core that does not require privileged capture
   APIs.

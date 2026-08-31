@@ -30,8 +30,9 @@ below are future capabilities, grouped by the dependency layer they extend.
   deduplication, and safe reload.
 - Add per-client and network scopes, local rewrites, service profiles, and
   authenticated administration.
-- Add global/per-client admission limits, amplification controls, `ANY`
-  handling, bounded outstanding work, and an upstream circuit breaker.
+- Add per-client/network admission limits and adaptive amplification controls;
+  global bounded admission, `ANY` handling, outstanding-work limits, and an
+  upstream circuit breaker are implemented in the current baseline.
 - Add optional country/region/ASN access policy with allow, deny, and
   observe-only (“snitch”) modes; keep GeoIP uncertainty and database lifecycle
   explicit.

@@ -56,6 +56,8 @@ mod runtime {
         pub upstream: Option<UpstreamConfig>,
         #[serde(default)]
         pub cache: CacheConfig,
+        #[serde(default)]
+        pub admission: AdmissionConfig,
     }
 
     #[derive(Debug, Clone, Deserialize)]
@@ -212,6 +214,26 @@ mod runtime {
     }
 
     #[derive(Debug, Clone, Deserialize)]
+    pub struct AdmissionConfig {
+        #[serde(default = "default_max_name_bytes")]
+        pub max_name_bytes: usize,
+        #[serde(default = "default_reject_any")]
+        pub reject_any: bool,
+        #[serde(default = "default_max_response_records")]
+        pub max_response_records: usize,
+    }
+
+    impl Default for AdmissionConfig {
+        fn default() -> Self {
+            Self {
+                max_name_bytes: default_max_name_bytes(),
+                reject_any: default_reject_any(),
+                max_response_records: default_max_response_records(),
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Deserialize)]
     pub struct UpstreamConfig {
         #[serde(default = "default_resolver_ip")]
         pub resolver_ip: String,
@@ -346,6 +368,15 @@ mod runtime {
     fn default_negative_ttl_secs() -> u64 {
         30
     }
+    fn default_max_name_bytes() -> usize {
+        253
+    }
+    fn default_reject_any() -> bool {
+        true
+    }
+    fn default_max_response_records() -> usize {
+        64
+    }
     fn default_breaker_failures() -> u32 {
         3
     }
@@ -375,6 +406,16 @@ mod runtime {
 
     impl Policy {
         pub fn new(mut config: Config) -> Result<Self, policy::PolicyError> {
+            if config.admission.max_name_bytes == 0 || config.admission.max_name_bytes > 253 {
+                return Err(policy::PolicyError::InvalidAdmission {
+                    reason: "max_name_bytes must be between 1 and 253".into(),
+                });
+            }
+            if config.admission.max_response_records == 0 {
+                return Err(policy::PolicyError::InvalidAdmission {
+                    reason: "max_response_records must be non-zero".into(),
+                });
+            }
             config.policy.domains = config.policy.domains.into_iter().map(normalize).collect();
             let reference = ReferencePolicy::new(&config.policy.rules)?;
             let cache = Arc::new(Mutex::new(DnsCache::new(&config.cache)));
@@ -498,6 +539,28 @@ mod runtime {
             })
         }
 
+        fn admission_allows(&self, query: &proxima_dns::DnsQuery) -> bool {
+            let name = query.name.trim_end_matches('.');
+            if name.len() > self.config.admission.max_name_bytes {
+                return false;
+            }
+            if self.config.admission.reject_any && query.qtype == 255 {
+                return false;
+            }
+            if name.is_empty() {
+                return true;
+            }
+            name.split('.')
+                .all(|label| !label.is_empty() && label.len() <= 63 && label.is_ascii())
+        }
+
+        fn cap_answer(&self, mut answer: DnsAnswer) -> DnsAnswer {
+            answer
+                .records
+                .truncate(self.config.admission.max_response_records);
+            answer
+        }
+
         /// Return the authoritative action for a validated borrowed query view.
         /// The wire adapter calls this before materializing the owned Proxima DNS
         /// request, so configured rules remain authoritative at the raw boundary.
@@ -536,11 +599,16 @@ mod runtime {
         }
 
         pub fn evaluate(&self, query: &proxima_dns::DnsQuery) -> Option<DnsAnswer> {
+            if !self.admission_allows(query) {
+                return Some(refused_answer());
+            }
             let decision = self.decision(query);
             if self.config.policy.rules.is_empty() {
-                return self.evaluate_legacy(query);
+                return self
+                    .evaluate_legacy(query)
+                    .map(|answer| self.cap_answer(answer));
             }
-            match decision
+            let answer = match decision
                 .map(|decision| decision.action)
                 .or(Some(self.config.policy.default_action))
             {
@@ -552,7 +620,8 @@ mod runtime {
                     Some(honeypot(&query.name, query.qtype, &self.config.honeypot))
                 }
                 Some(Action::Pass | Action::Observe) | None => Some(DnsAnswer::ok(Vec::new())),
-            }
+            };
+            answer.map(|answer| self.cap_answer(answer))
         }
 
         fn evaluate_legacy(&self, query: &proxima_dns::DnsQuery) -> Option<DnsAnswer> {
@@ -584,6 +653,10 @@ mod runtime {
         type Err = ProximaError;
         async fn call(&self, request: Self::In) -> Result<Self::Out, ProximaError> {
             let query = request.payload;
+            if !self.admission_allows(&query) {
+                self.observe(Action::Reject);
+                return Ok(DnsPipeReply::typed(200, refused_answer()));
+            }
             // Decide exactly once.  In particular, do not run the rule table to
             // discover forwarding and then run it again to render the outcome.
             let decision = self.decision(&query);
@@ -622,7 +695,7 @@ mod runtime {
                 {
                     if let Some(answer) = self.cache.lock().expect("cache lock").stale(&key) {
                         self.observe(Action::Forward);
-                        return Ok(DnsPipeReply::typed(200, answer));
+                        return Ok(DnsPipeReply::typed(200, self.cap_answer(answer)));
                     }
                     self.observe(Action::Forward);
                     return Err(ProximaError::Io(std::io::Error::new(
@@ -648,14 +721,14 @@ mod runtime {
                             .failure(Instant::now());
                         if let Some(answer) = self.cache.lock().expect("cache lock").stale(&key) {
                             self.observe(Action::Forward);
-                            return Ok(DnsPipeReply::typed(200, answer));
+                            return Ok(DnsPipeReply::typed(200, self.cap_answer(answer)));
                         }
                         self.observe(Action::Forward);
                         return Err(ProximaError::Io(std::io::Error::other(error.to_string())));
                     }
                 };
                 self.observe(Action::Forward);
-                return Ok(DnsPipeReply::typed(200, answer));
+                return Ok(DnsPipeReply::typed(200, self.cap_answer(answer)));
             }
             let outcome = if self.config.policy.rules.is_empty() {
                 self.evaluate_legacy(&query)
@@ -674,7 +747,7 @@ mod runtime {
             };
             self.observe(action.unwrap_or(Action::Pass));
             match outcome {
-                Some(answer) => Ok(DnsPipeReply::typed(200, answer)),
+                Some(answer) => Ok(DnsPipeReply::typed(200, self.cap_answer(answer))),
                 // Compatibility mapping only: semantic policy results are typed;
                 // the current owned DNS facade has no silent-response variant.
                 None => Ok(DnsPipeReply::typed(204, DnsAnswer::ok(Vec::new()))),
@@ -1029,6 +1102,67 @@ mod runtime {
                     _ => unreachable!("test action set"),
                 }
             }
+        }
+
+        #[test]
+        fn admission_rejects_any_and_overlong_or_invalid_names() {
+            let policy = Policy::new(Config::default()).expect("valid policy");
+            let query = |name: &str, qtype: u16| proxima_dns::DnsQuery {
+                id: 1,
+                recursion_desired: true,
+                name: name.into(),
+                qtype,
+                qclass: 1,
+            };
+            assert_eq!(
+                policy.evaluate(&query("example.com.", 255)).unwrap().rcode,
+                5
+            );
+            assert_eq!(
+                policy
+                    .evaluate(&query(&format!("{}.example.", "a".repeat(250)), 1))
+                    .unwrap()
+                    .rcode,
+                5
+            );
+            assert_eq!(
+                policy.evaluate(&query("bad..example.", 1)).unwrap().rcode,
+                5
+            );
+            assert!(
+                Policy::new({
+                    let mut config = Config::default();
+                    config.admission.max_response_records = 0;
+                    config
+                })
+                .is_err()
+            );
+        }
+
+        #[test]
+        fn admission_caps_synthetic_answers() {
+            let mut config = Config::default();
+            config.admission.max_response_records = 1;
+            config.policy.rules = vec![RuleConfig {
+                id: 1,
+                domain: "sink.example".into(),
+                action: Action::Honeypot,
+                priority: 0,
+                qtype: None,
+                qclass: None,
+                client: None,
+            }];
+            let policy = Policy::new(config).expect("valid policy");
+            let answer = policy
+                .evaluate(&proxima_dns::DnsQuery {
+                    id: 1,
+                    recursion_desired: true,
+                    name: "sink.example.".into(),
+                    qtype: 1,
+                    qclass: 1,
+                })
+                .expect("answer");
+            assert!(answer.records.len() <= 1);
         }
 
         #[test]
