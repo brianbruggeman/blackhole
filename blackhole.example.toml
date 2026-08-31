@@ -55,6 +55,8 @@ max_response_records = 64
 max_response_bytes = 4096
 # Bound all policy requests, not only upstream exchanges.
 max_inflight_requests = 1024
+# Bound concurrent requests attributed to one client address.
+max_inflight_per_client = 64
 
 [security]
 # Prevent forwarded answers from rebinding clients to private/local networks.

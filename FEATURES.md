@@ -26,7 +26,8 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   cooldown; open circuits fail closed unless a stale cached answer is usable.
 - Bounded admission controls that reject malformed/overlong owned queries,
   optionally reject `ANY`, cap emitted answer records and approximate wire
-  size, and shed excess in-flight work with a bounded global breaker.
+  size, and shed excess in-flight work with bounded global and per-client
+  limits.
 - Upstream rebinding protection for private, local, link-local, unspecified,
   multicast, and IPv6 unique-local A/AAAA answers, with fail-closed SERVFAIL.
 - A committed libFuzzer target for the borrowed DNS query boundary, with a

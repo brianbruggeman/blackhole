@@ -18,6 +18,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | Fuzz smoke | The `query_view` nightly fuzz target ran 1,000 iterations without a crash; the bounded corpus contains 50 inputs. |
 | Resolver fixture | The actual loopback UDP/TCP listener fixture passed. |
 | Capture lifecycle | Planner, rollback, ownership, recovery, and cleanup tests pass. Capture is explicitly opt-in and wired through the shared controller. |
+| Per-client admission | The configured per-client concurrent-request cap rejects a second in-flight request at the limit, releases on completion, and passes the focused unit test. |
 
 ## Evidence still required
 

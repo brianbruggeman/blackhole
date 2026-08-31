@@ -38,7 +38,7 @@ mod runtime {
     use proxima_primitives::sync::Semaphore;
     use serde::Deserialize;
     use std::collections::{BTreeSet, HashMap};
-    use std::net::{Ipv4Addr, Ipv6Addr};
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
@@ -212,6 +212,24 @@ mod runtime {
         }
     }
 
+    struct ClientPermit {
+        active: Arc<Mutex<HashMap<IpAddr, usize>>>,
+        client: IpAddr,
+    }
+
+    impl Drop for ClientPermit {
+        fn drop(&mut self) {
+            let mut active = self.active.lock().expect("client admission lock");
+            if let Some(count) = active.get_mut(&self.client) {
+                if *count <= 1 {
+                    active.remove(&self.client);
+                } else {
+                    *count -= 1;
+                }
+            }
+        }
+    }
+
     impl Default for CacheConfig {
         fn default() -> Self {
             Self {
@@ -234,6 +252,8 @@ mod runtime {
         pub max_response_bytes: usize,
         #[serde(default = "default_max_inflight_requests")]
         pub max_inflight_requests: usize,
+        #[serde(default = "default_max_inflight_per_client")]
+        pub max_inflight_per_client: usize,
     }
 
     impl Default for AdmissionConfig {
@@ -244,6 +264,7 @@ mod runtime {
                 max_response_records: default_max_response_records(),
                 max_response_bytes: default_max_response_bytes(),
                 max_inflight_requests: default_max_inflight_requests(),
+                max_inflight_per_client: default_max_inflight_per_client(),
             }
         }
     }
@@ -462,6 +483,9 @@ mod runtime {
     fn default_max_inflight_requests() -> usize {
         1024
     }
+    fn default_max_inflight_per_client() -> usize {
+        64
+    }
     const MAX_BLOCKLIST_BYTES: u64 = 16 * 1024 * 1024;
     const MAX_BLOCKLIST_LINE_BYTES: usize = 4096;
 
@@ -571,6 +595,7 @@ mod runtime {
         cache: Arc<Mutex<DnsCache>>,
         breaker: Arc<Mutex<CircuitBreaker>>,
         request_slots: Arc<Semaphore>,
+        client_admission: Arc<Mutex<HashMap<IpAddr, usize>>>,
     }
 
     impl Policy {
@@ -593,6 +618,11 @@ mod runtime {
             if config.admission.max_inflight_requests == 0 {
                 return Err(policy::PolicyError::InvalidAdmission {
                     reason: "max_inflight_requests must be non-zero".into(),
+                });
+            }
+            if config.admission.max_inflight_per_client == 0 {
+                return Err(policy::PolicyError::InvalidAdmission {
+                    reason: "max_inflight_per_client must be non-zero".into(),
                 });
             }
             let blocklist_rules = load_blocklists(&config.policy.blocklists)?;
@@ -626,6 +656,7 @@ mod runtime {
                 cache,
                 breaker,
                 request_slots: Arc::new(Semaphore::new(max_inflight_requests)),
+                client_admission: Arc::new(Mutex::new(HashMap::new())),
             };
             if let Some(upstream) = policy.config.upstream.as_ref() {
                 policy.validate_upstream(upstream)?;
@@ -748,6 +779,20 @@ mod runtime {
                 Some(PeerInfo::Tcp(address)) => Some(address.ip()),
                 _ => None,
             }
+        }
+
+        fn try_client_admission(&self, client: Option<IpAddr>) -> Option<ClientPermit> {
+            let client = client?;
+            let mut active = self.client_admission.lock().expect("client admission lock");
+            let count = active.entry(client).or_default();
+            if *count >= self.config.admission.max_inflight_per_client {
+                return None;
+            }
+            *count += 1;
+            Some(ClientPermit {
+                active: Arc::clone(&self.client_admission),
+                client,
+            })
         }
 
         fn admission_allows(&self, query: &proxima_dns::DnsQuery) -> bool {
@@ -988,6 +1033,12 @@ mod runtime {
                 return Ok(DnsPipeReply::typed(200, server_failure_answer()));
             };
             let client = Policy::client_ip(request.context.peer.as_ref());
+            let _client_slot = self.try_client_admission(client);
+            if client.is_some() && _client_slot.is_none() {
+                self.observe_failure("client_admission_overflow");
+                self.observe(Action::Reject);
+                return Ok(DnsPipeReply::typed(200, server_failure_answer()));
+            }
             let query = request.payload;
             if !self.admission_allows(&query) {
                 self.observe_failure("admission_rejected");
@@ -1720,6 +1771,34 @@ mod runtime {
                 })
                 .is_err()
             );
+            assert!(
+                Policy::new({
+                    let mut config = Config::default();
+                    config.admission.max_inflight_per_client = 0;
+                    config
+                })
+                .is_err()
+            );
+        }
+
+        #[test]
+        fn per_client_admission_is_bounded_and_releases_on_completion() {
+            let mut config = Config::default();
+            config.admission.max_inflight_per_client = 1;
+            let policy = Policy::new(config).expect("valid admission config");
+            let client = "192.0.2.10".parse().expect("client address");
+            let permit = policy
+                .try_client_admission(Some(client))
+                .expect("first request admitted");
+            assert!(policy.try_client_admission(Some(client)).is_none());
+            drop(permit);
+            assert!(policy.try_client_admission(Some(client)).is_some());
+            assert!(
+                policy
+                    .try_client_admission(Some("192.0.2.11".parse().unwrap()))
+                    .is_some()
+            );
+            assert!(policy.try_client_admission(None).is_none());
         }
 
         #[test]
