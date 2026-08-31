@@ -1765,6 +1765,19 @@ mod runtime {
             telemetry.counter_inc("blackhole.failures", &labels, 1);
         }
 
+        pub(crate) fn admin_status(&self) -> String {
+            let cache = self.cache.lock().expect("cache lock");
+            serde_json::json!({
+                "status": "ok",
+                "rules_configured": self.rules_configured.load(Ordering::Acquire),
+                "upstream_configured": self.upstream.is_some(),
+                "country_policy_configured": self.country_policy.is_some(),
+                "cache_entries": cache.entries.len(),
+                "cache_capacity": cache.config.max_entries,
+            })
+            .to_string()
+        }
+
         fn observe_latency(&self, elapsed: Duration) {
             let Some(telemetry) = self.telemetry.as_ref() else {
                 return;

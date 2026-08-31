@@ -25,9 +25,9 @@ pub fn validate_bind(bind: SocketAddr) -> Result<(), ProximaError> {
     }
 }
 
-/// The minimal authenticated control surface. It deliberately exposes no
-/// query data or configuration secrets: health is read-only and reload only
-/// rebuilds the already configured blocklist snapshot.
+/// The authenticated control surface exposes only health and bounded
+/// non-sensitive status; reload routes rebuild already configured snapshots.
+/// It deliberately exposes no query data or configuration secrets.
 pub struct AdminHandler {
     policy: Arc<Policy>,
 }
@@ -49,6 +49,7 @@ impl SendPipe for AdminHandler {
         let path = std::str::from_utf8(&request.path).unwrap_or("");
         match (method, path) {
             ("GET", "/health") => Ok(Response::ok("{\"status\":\"ok\"}")),
+            ("GET", "/status") => Ok(Response::ok(self.policy.admin_status())),
             ("POST", "/reload/blocklists") => match self.policy.reload_blocklists() {
                 Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
                 Err(error) => Ok(Response::new(500).with_body(format!(
@@ -83,7 +84,9 @@ impl SendPipe for AdminHandler {
                     ))),
                 }
             }
-            (_, "/health" | "/reload/blocklists" | "/reload/policy") => Ok(Response::new(405)),
+            (_, "/health" | "/status" | "/reload/blocklists" | "/reload/policy") => {
+                Ok(Response::new(405))
+            }
             _ => Ok(Response::not_found()),
         }
     }
@@ -132,11 +135,23 @@ mod tests {
         let health = block_on(handler.call(request("GET", "/health"))).expect("health response");
         assert_eq!(health.status, 200);
         assert_eq!(health.payload, Bytes::from_static(b"{\"status\":\"ok\"}"));
+        let status = block_on(handler.call(request("GET", "/status"))).expect("status response");
+        assert_eq!(status.status, 200);
+        let status: serde_json::Value =
+            serde_json::from_slice(&status.payload).expect("status JSON");
+        assert_eq!(status["status"], "ok");
+        assert_eq!(status["rules_configured"], false);
+        assert_eq!(status["upstream_configured"], false);
+        assert_eq!(status["country_policy_configured"], false);
+        assert_eq!(status["cache_entries"], 0);
         let unknown = block_on(handler.call(request("GET", "/private"))).expect("404 response");
         assert_eq!(unknown.status, 404);
         let wrong_method =
             block_on(handler.call(request("GET", "/reload/blocklists"))).expect("405 response");
         assert_eq!(wrong_method.status, 405);
+        let wrong_status_method =
+            block_on(handler.call(request("POST", "/status"))).expect("405 status response");
+        assert_eq!(wrong_status_method.status, 405);
     }
 
     #[test]

@@ -43,6 +43,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | Upstream pass-through | `pass` and `observe` actions use the configured upstream after local rewrites, while explicit `forward` remains distinct and fail-closed without an upstream; deterministic fake-upstream proofs pass. |
 | DNS query flag validation | The shared borrowed query boundary and UDP/TCP probes reject AA, TC, RA, Z, and nonzero RCODE bits before policy evaluation; focused and full all-target suites pass. |
 | Blocklist exceptions and subdomains | Bounded blocklist ingestion generates apex and subdomain rules, honors basic AdGuard `@@||domain^` exceptions, and proves normalization/deduplication and fail-closed parsing in the full suite. |
+| Authenticated status endpoint | The existing Proxima bearer-authenticated admin handler exposes bounded non-sensitive status fields; unit and real HTTP listener proofs pass. |
 
 ## Evidence still required
 

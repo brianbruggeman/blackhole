@@ -74,6 +74,18 @@ async fn admin_http_listener_enforces_bearer_auth() {
     let authorized = String::from_utf8_lossy(&authorized);
     assert!(authorized.starts_with("HTTP/1.1 200"));
     assert!(authorized.contains("{\"status\":\"ok\"}"));
+    let status = request(
+        addr,
+        "GET",
+        "/status",
+        Some("Bearer integration-secret"),
+        None,
+    )
+    .await
+    .expect("status response");
+    let status = String::from_utf8_lossy(&status);
+    assert!(status.starts_with("HTTP/1.1 200"));
+    assert!(status.contains("\"cache_entries\":0"));
     let reloaded = request(
         addr,
         "POST",

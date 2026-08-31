@@ -63,7 +63,7 @@ listen = "127.0.0.1:8081"
 token = "a-long-random-secret"
 ```
 
-It provides `GET /health`, `POST /reload/blocklists`, and bounded
+It provides `GET /health`, authenticated `GET /status`, `POST /reload/blocklists`, and bounded
 `POST /reload/policy` (a JSON array of complete rule objects). Send the token
 as a Bearer credential; keep the configuration file readable only by the
 service user.
