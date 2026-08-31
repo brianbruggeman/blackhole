@@ -1,13 +1,13 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::sync::Arc;
 
+use blackhole::listener::{TcpProtocol, UdpProtocol};
 use blackhole::{Action, Config, Policy, RuleConfig, UpstreamConfig};
 use bytes::Bytes;
 use futures::io::{AsyncReadExt, AsyncWriteExt};
 use proxima::pipe::into_handle;
-use proxima::{Listener, ListenerBuilderEntry, ListenerProtocolExt};
+use proxima::{Listener, ListenerBuilderEntry};
 use proxima::{ProximaError, Request, Response, SendPipe};
-use proxima_dns::into_dns_handle;
 use proxima_net::prime::{PrimeDatagramFactory, PrimeTcpUpstream};
 use proxima_primitives::stream::DatagramFactory;
 use proxima_primitives::stream::StreamUpstreamExt;
@@ -94,17 +94,19 @@ async fn listener_forwards_allowed_query_to_loopback_upstream() {
         .expect("listener probe address")
         .port();
     drop(listener_probe);
-    let policy = Policy::new(config).expect("valid policy").with_upstream(
+    let policy = Arc::new(Policy::new(config).expect("valid policy").with_upstream(
         Arc::new(PrimeDatagramFactory),
         Policy::resolver_config(&upstream),
         upstream.max_outstanding,
-    );
+    ));
     let server = Listener::builder()
         .bind(SocketAddr::new(
             IpAddr::V4(Ipv4Addr::LOCALHOST),
             listener_port,
         ))
-        .dns(into_dns_handle(policy))
+        .any()
+        .protocol(UdpProtocol::new(Arc::clone(&policy)))
+        .protocol(TcpProtocol::new(Arc::clone(&policy)))
         .handle(into_handle(Passthrough))
         .serve()
         .await
