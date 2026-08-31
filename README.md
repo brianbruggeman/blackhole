@@ -89,4 +89,15 @@ install `deploy/systemd/blackhole.conf` under `/etc/tmpfiles.d/`, place
 configuration at `/etc/blackhole/blackhole.toml`, and grant only
 `CAP_NET_BIND_SERVICE` when listening on port 53. Capture remains disabled in
 this unit and must be installed through the separately authorized platform
-capture step.
+capture step. After building the release binary, the checked-in installer can
+perform those service-account, ownership, unit, tmpfiles, and systemd steps:
+
+```sh
+cargo build --release --features std --bin blackhole
+sudo BLACKHOLE_BINARY="$PWD/target/release/blackhole" \
+  BLACKHOLE_CONFIG="$PWD/blackhole.example.toml" \
+  ./deploy/systemd/install.sh
+```
+
+The installer requires root and starts the service, but it does not install
+firewall capture rules.
