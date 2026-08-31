@@ -59,6 +59,7 @@ pub enum PolicyError {
     DomainTooLong { id: u32 },
     InvalidUpstream { reason: String },
     InvalidAdmission { reason: String },
+    InvalidBlocklist { path: String, reason: String },
 }
 
 impl core::fmt::Display for PolicyError {
@@ -73,6 +74,9 @@ impl core::fmt::Display for PolicyError {
             Self::DomainTooLong { id } => write!(formatter, "rule {id} domain is too long"),
             Self::InvalidUpstream { reason } => write!(formatter, "invalid upstream: {reason}"),
             Self::InvalidAdmission { reason } => write!(formatter, "invalid admission: {reason}"),
+            Self::InvalidBlocklist { path, reason } => {
+                write!(formatter, "invalid blocklist {path}: {reason}")
+            }
         }
     }
 }

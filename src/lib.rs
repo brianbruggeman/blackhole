@@ -34,7 +34,7 @@ mod runtime {
     use proxima_primitives::stream::DatagramFactory;
     use proxima_primitives::sync::Semaphore;
     use serde::Deserialize;
-    use std::collections::HashMap;
+    use std::collections::{BTreeSet, HashMap};
     use std::net::{Ipv4Addr, Ipv6Addr};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
@@ -286,6 +286,8 @@ mod runtime {
         pub domains: Vec<String>,
         #[serde(default)]
         pub rules: Vec<RuleConfig>,
+        #[serde(default)]
+        pub blocklists: Vec<String>,
         #[serde(default = "default_action")]
         pub default_action: Action,
     }
@@ -295,6 +297,7 @@ mod runtime {
                 mode: default_mode(),
                 domains: Vec::new(),
                 rules: Vec::new(),
+                blocklists: Vec::new(),
                 default_action: default_action(),
             }
         }
@@ -377,6 +380,87 @@ mod runtime {
     fn default_max_response_records() -> usize {
         64
     }
+    const MAX_BLOCKLIST_BYTES: u64 = 16 * 1024 * 1024;
+    const MAX_BLOCKLIST_LINE_BYTES: usize = 4096;
+
+    fn load_blocklists(paths: &[String]) -> Result<Vec<RuleConfig>, policy::PolicyError> {
+        let mut domains = BTreeSet::new();
+        for path in paths {
+            let metadata =
+                std::fs::metadata(path).map_err(|error| policy::PolicyError::InvalidBlocklist {
+                    path: path.clone(),
+                    reason: error.to_string(),
+                })?;
+            if metadata.len() > MAX_BLOCKLIST_BYTES {
+                return Err(policy::PolicyError::InvalidBlocklist {
+                    path: path.clone(),
+                    reason: format!("file exceeds {MAX_BLOCKLIST_BYTES} bytes"),
+                });
+            }
+            let contents = std::fs::read_to_string(path).map_err(|error| {
+                policy::PolicyError::InvalidBlocklist {
+                    path: path.clone(),
+                    reason: error.to_string(),
+                }
+            })?;
+            for line in contents.lines() {
+                if line.len() > MAX_BLOCKLIST_LINE_BYTES {
+                    return Err(policy::PolicyError::InvalidBlocklist {
+                        path: path.clone(),
+                        reason: format!("line exceeds {MAX_BLOCKLIST_LINE_BYTES} bytes"),
+                    });
+                }
+                let line = line.split('#').next().unwrap_or_default().trim();
+                if line.is_empty() || line.starts_with('!') {
+                    continue;
+                }
+                let fields: Vec<&str> = line.split_whitespace().collect();
+                let start = if fields
+                    .first()
+                    .and_then(|field| field.parse::<std::net::IpAddr>().ok())
+                    .is_some()
+                {
+                    1
+                } else {
+                    0
+                };
+                for raw_domain in fields.iter().skip(start) {
+                    let mut domain = raw_domain.trim_end_matches('.').to_ascii_lowercase();
+                    if let Some(stripped) = domain.strip_prefix("||") {
+                        domain = stripped.trim_end_matches('^').to_owned();
+                    }
+                    if !valid_blocklist_domain(&domain) {
+                        return Err(policy::PolicyError::InvalidBlocklist {
+                            path: path.clone(),
+                            reason: format!("invalid domain {raw_domain}"),
+                        });
+                    }
+                    domains.insert(domain);
+                }
+            }
+        }
+        Ok(domains
+            .into_iter()
+            .enumerate()
+            .map(|(index, domain)| RuleConfig {
+                id: u32::MAX.saturating_sub(index as u32),
+                domain,
+                action: Action::Nxdomain,
+                priority: i32::MAX,
+                qtype: None,
+                qclass: None,
+                client: None,
+            })
+            .collect())
+    }
+
+    fn valid_blocklist_domain(domain: &str) -> bool {
+        !domain.is_empty()
+            && domain.len() <= policy::MAX_DOMAIN_BYTES
+            && domain
+                .split('.')
+                .all(|label| !label.is_empty() && label.len() <= 63 && label.is_ascii())
+    }
     fn default_breaker_failures() -> u32 {
         3
     }
@@ -416,6 +500,8 @@ mod runtime {
                     reason: "max_response_records must be non-zero".into(),
                 });
             }
+            let blocklist_rules = load_blocklists(&config.policy.blocklists)?;
+            config.policy.rules.extend(blocklist_rules);
             config.policy.domains = config.policy.domains.into_iter().map(normalize).collect();
             let reference = ReferencePolicy::new(&config.policy.rules)?;
             let cache = Arc::new(Mutex::new(DnsCache::new(&config.cache)));
@@ -923,6 +1009,45 @@ mod runtime {
         #[test]
         fn default_config_is_safe_for_local_testing() {
             assert_eq!(Config::default().server.listen, "127.0.0.1:5353");
+        }
+
+        #[test]
+        fn blocklists_are_bounded_normalized_deduplicated_and_authoritative() {
+            let path = std::env::temp_dir()
+                .join(format!("blackhole-blocklist-{}.txt", std::process::id()));
+            std::fs::write(
+                &path,
+                "# comment\n0.0.0.0 Ads.Example\n||ads.example^\ntelemetry.example.\n",
+            )
+            .expect("write blocklist");
+            let mut config = Config::default();
+            config.policy.blocklists = vec![path.to_string_lossy().into_owned()];
+            config.policy.default_action = Action::Pass;
+            let policy = Policy::new(config).expect("valid blocklist");
+            let query = |name: &str| proxima_dns::DnsQuery {
+                id: 1,
+                recursion_desired: true,
+                name: name.into(),
+                qtype: 1,
+                qclass: 1,
+            };
+            assert_eq!(policy.evaluate(&query("ads.example.")).unwrap().rcode, 3);
+            assert_eq!(
+                policy.evaluate(&query("telemetry.example.")).unwrap().rcode,
+                3
+            );
+            assert_eq!(policy.evaluate(&query("clear.example.")).unwrap().rcode, 0);
+            std::fs::remove_file(path).expect("remove blocklist");
+        }
+
+        #[test]
+        fn missing_blocklists_fail_closed_before_policy_publication() {
+            let mut config = Config::default();
+            config.policy.blocklists = vec!["/definitely/missing/blackhole.list".into()];
+            assert!(matches!(
+                Policy::new(config),
+                Err(policy::PolicyError::InvalidBlocklist { .. })
+            ));
         }
 
         #[test]

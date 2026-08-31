@@ -13,6 +13,8 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   exact/deep-wildcard specificity, client scope, qtype, and qclass filters.
 - Rule-table authority when rules are configured; legacy settings do not
   silently take over.
+- Bounded Pi-hole-compatible blocklist ingestion from hosts/domain files with
+  comments, normalization, deduplication, and fail-closed startup reloads.
 - Synthetic IPv4/IPv6 honeypot answers with configurable TTL.
 - Explicit fail-closed behavior when a forward rule has no upstream attached.
 - Configured UDP upstream forwarding through Proxima's `DnsClientUpstream`,

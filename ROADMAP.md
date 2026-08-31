@@ -26,8 +26,9 @@ below are future capabilities, grouped by the dependency layer they extend.
 
 ## Policy and operator controls
 
-- Ingest Pi-hole-compatible blocklists with bounded parsing, normalization,
-  deduplication, and safe reload.
+- Add authenticated blocklist administration and incremental background reload;
+  bounded Pi-hole-compatible file ingestion, normalization, deduplication, and
+  fail-closed startup reloads are in the current baseline.
 - Add per-client and network scopes, local rewrites, service profiles, and
   authenticated administration.
 - Add per-client/network admission limits and adaptive amplification controls;
