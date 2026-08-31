@@ -239,6 +239,8 @@ impl ReferencePolicy {
         if query.name.len() > MAX_DOMAIN_BYTES {
             return None;
         }
+        #[cfg(feature = "perf-instrument")]
+        crate::perf::record_copy(crate::perf::Boundary::PolicyCanonicalize, query.name.len());
         let canonical_name = normalize(query.name);
         self.rules
             .iter()
@@ -257,6 +259,8 @@ impl IndexedPolicy {
         if query.name.len() > MAX_DOMAIN_BYTES {
             return None;
         }
+        #[cfg(feature = "perf-instrument")]
+        crate::perf::record_copy(crate::perf::Boundary::PolicyCanonicalize, query.name.len());
         let canonical_name = normalize(query.name);
         let mut candidates = Vec::new();
         let mut suffix = String::new();

@@ -157,6 +157,8 @@ async fn decide<'a>(
         policy.observe_failure("encode_failure");
         ProximaError::Config(error.to_string())
     })?;
+    #[cfg(feature = "perf-instrument")]
+    crate::perf::record_copy(crate::perf::Boundary::EncodeOutput, output.len());
     state = state
         .transition(Event::Respond(output.len()))
         .map_err(|error| {
@@ -225,6 +227,8 @@ impl AnyProtocol for UdpProtocol {
                     self.policy.observe_failure("transport_write");
                     ProximaError::Io(error)
                 })?;
+                #[cfg(feature = "perf-instrument")]
+                crate::perf::record_copy(crate::perf::Boundary::TransportWrite, reply.len());
                 state.transition(Event::Sent).map_err(|error| {
                     self.policy.observe_failure("fsm_transition");
                     ProximaError::Config(error.to_string())
@@ -274,6 +278,8 @@ impl AnyProtocol for TcpProtocol {
                         self.policy.observe_failure("frame_overflow");
                         return Ok(());
                     }
+                    #[cfg(feature = "perf-instrument")]
+                    crate::perf::record_copy(crate::perf::Boundary::TcpFrameBuffer, read);
                     input.extend_from_slice(&scratch[..read]);
                 }
                 let length = usize::from(u16::from_be_bytes([input[0], input[1]]));
@@ -297,6 +303,8 @@ impl AnyProtocol for TcpProtocol {
                         self.policy.observe_failure("transport_write");
                         ProximaError::Io(error)
                     })?;
+                    #[cfg(feature = "perf-instrument")]
+                    crate::perf::record_copy(crate::perf::Boundary::TransportWrite, reply.len());
                     responding.transition(Event::Sent).map_err(|error| {
                         self.policy.observe_failure("fsm_transition");
                         ProximaError::Config(error.to_string())

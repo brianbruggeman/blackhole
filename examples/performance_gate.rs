@@ -2,6 +2,8 @@
 //! script. It records allocator activity around the current scalar path so a
 //! SIMD or WASM change cannot be described as zero-copy by inspection.
 
+#[cfg(feature = "perf-instrument")]
+use blackhole::perf;
 use blackhole::policy::{Action, QueryContext, ReferencePolicy, RuleConfig};
 use blackhole::query::QueryView;
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -98,6 +100,23 @@ fn main() {
     let parse_ns = parse_start.elapsed().as_nanos();
     let after_parse = snapshot();
 
+    let owned_packet = [
+        0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07, b'e', b'x',
+        b'a', b'm', b'p', b'l', b'e', 0x03, b'c', b'o', b'm', 0x00, 0x00, 0x01, 0x00, 0x01,
+    ];
+    let owned_start = Instant::now();
+    let owned = QueryView::parse(&owned_packet)
+        .expect("valid query")
+        .to_owned();
+    let owned_ns = owned_start.elapsed().as_nanos();
+    black_box(owned);
+
+    #[cfg(feature = "perf-instrument")]
+    let boundary_bytes = {
+        let stats = perf::snapshot();
+        stats
+    };
+
     println!("gate=b14 implementation=scalar-reference rules=10000 samples=100");
     println!("build_ns={build_ns} {}", delta(before_build, after_build));
     println!("match_ns={match_ns} {}", delta(before_match, after_match));
@@ -105,6 +124,17 @@ fn main() {
         "parse_ns={parse_ns} result={parse_result:?} {}",
         delta(before_parse, after_parse)
     );
+    println!("owned_ns={owned_ns}");
+    #[cfg(feature = "perf-instrument")]
+    println!(
+        "boundary_bytes=MEASURED policy_canonicalize={} borrowed_to_owned={} tcp_frame_buffer={} encode_output={} transport_write={}",
+        boundary_bytes.policy_canonicalize,
+        boundary_bytes.borrowed_to_owned,
+        boundary_bytes.tcp_frame_buffer,
+        boundary_bytes.encode_output,
+        boundary_bytes.transport_write,
+    );
+    #[cfg(not(feature = "perf-instrument"))]
     println!("copy_count=not-instrumented decision=do-not-claim-zero-copy");
     println!("arms=scalar-retained memchr-not-added simd-not-added wasm-not-built");
 }

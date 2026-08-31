@@ -87,6 +87,14 @@ impl<'packet> QueryView<'packet> {
     #[cfg(feature = "std")]
     #[must_use]
     pub fn to_owned(self) -> proxima_dns::DnsQuery {
+        #[cfg(feature = "perf-instrument")]
+        crate::perf::record_copy(
+            crate::perf::Boundary::BorrowedToOwned,
+            self.name
+                .labels()
+                .map(|label| label.len().saturating_add(1))
+                .sum(),
+        );
         proxima_dns::DnsQuery {
             id: self.id,
             recursion_desired: self.recursion_desired,

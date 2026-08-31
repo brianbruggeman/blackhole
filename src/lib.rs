@@ -18,6 +18,8 @@ pub use policy::{Action, RuleConfig};
 pub mod linux_capture;
 #[cfg(feature = "std")]
 pub mod listener;
+#[cfg(feature = "perf-instrument")]
+pub mod perf;
 #[cfg(feature = "std")]
 pub mod pf_capture;
 #[cfg(feature = "std")]

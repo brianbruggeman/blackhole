@@ -27,6 +27,7 @@ std = [
     "proxima-protocols/std",
     "serde/std",
 ]
+perf-instrument = ["std"]
 
 [dependencies]
 bytes = { version = "1", optional = true }

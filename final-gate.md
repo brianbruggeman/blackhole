@@ -27,7 +27,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | macOS build and PF smoke | CI workflow exists, but no local macOS execution evidence is recorded here. |
 | TCP upstream fallback | Open. GitHub-pinned Proxima `0652a0c0` exposes only UDP `DnsClientUpstream` and discards `TC` and response-question metadata. |
 | Proxima metadata change publication | Local Proxima commits `e41c8ac8` and `49146ea3` are not on GitHub; push was rejected for `slot-0` access. Blackhole remains on the published GitHub revision. |
-| Performance gate | The example records provenance and allocator data, but copy boundaries are not fully instrumented; no zero-copy or production-performance claim is supported. |
+| Performance gate | `cargo run --release --features perf-instrument --example performance_gate` ran three times on Linux x86_64. Allocator data and policy/owned boundaries are measured; listener TCP/encode/transport boundaries are instrumented but were not exercised by this example. No zero-copy or production-performance claim is supported. |
 | Privacy and honeypot terminal | The retention contract is documented in `PRIVACY.md`; retention, redaction, access control, and deletion verification controls are not implemented. |
 | GeoIP/country/ASN policy | Not implemented; CIDR client/network scopes are implemented instead. |
 | Incumbent parity | Pi-hole/AdGuard parity is incomplete: encrypted upstreams, admin/API/UI, DHCP, service profiles, and richer policy controls remain open. |
