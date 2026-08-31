@@ -68,12 +68,18 @@ fn main() {
         )
         .trim()
     );
-    let before_build = snapshot();
     let configs = rules(10_000);
-    let build_start = Instant::now();
+    let sample_count = 5;
+    assert!(sample_count > 0);
+    let build = measure(sample_count, || {
+        let before = snapshot();
+        let start = Instant::now();
+        let policy = ReferencePolicy::new(&configs).expect("generated rules are valid");
+        black_box(policy);
+        (start.elapsed().as_nanos(), snapshot().bytes - before.bytes)
+    });
+
     let policy = ReferencePolicy::new(&configs).expect("generated rules are valid");
-    let build_ns = build_start.elapsed().as_nanos();
-    let after_build = snapshot();
 
     let query = QueryContext {
         name: "host5000.shared.example.",
@@ -81,35 +87,45 @@ fn main() {
         qclass: 1,
         client: None,
     };
-    let before_match = snapshot();
-    let match_start = Instant::now();
-    for _ in 0..100 {
-        black_box(policy.decide(query));
-    }
-    let match_ns = match_start.elapsed().as_nanos() / 100;
-    let after_match = snapshot();
+    let matches_per_sample: usize = 100;
+    let matching = measure(sample_count, || {
+        let before = snapshot();
+        let start = Instant::now();
+        for _ in 0..matches_per_sample {
+            black_box(policy.decide(query));
+        }
+        (
+            start.elapsed().as_nanos() / matches_per_sample as u128,
+            snapshot().bytes - before.bytes,
+        )
+    });
 
     // Proxima's borrowed parser is intentionally measured separately: it
     // validates wire input and exposes borrowed names without materializing a
     // dotted String. Encoding remains in the owned listener facade and is not
     // duplicated here.
     let packet = [0u8; 12];
-    let before_parse = snapshot();
-    let parse_start = Instant::now();
-    let parse_result = QueryView::parse(&packet);
-    let parse_ns = parse_start.elapsed().as_nanos();
-    let after_parse = snapshot();
+    let parsing = measure(sample_count, || {
+        let before = snapshot();
+        let start = Instant::now();
+        let result = QueryView::parse(&packet);
+        black_box(&result);
+        (start.elapsed().as_nanos(), snapshot().bytes - before.bytes)
+    });
 
     let owned_packet = [
         0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07, b'e', b'x',
         b'a', b'm', b'p', b'l', b'e', 0x03, b'c', b'o', b'm', 0x00, 0x00, 0x01, 0x00, 0x01,
     ];
-    let owned_start = Instant::now();
-    let owned = QueryView::parse(&owned_packet)
-        .expect("valid query")
-        .to_owned();
-    let owned_ns = owned_start.elapsed().as_nanos();
-    black_box(owned);
+    let owning = measure(sample_count, || {
+        let before = snapshot();
+        let start = Instant::now();
+        let owned = QueryView::parse(&owned_packet)
+            .expect("valid query")
+            .to_owned();
+        black_box(owned);
+        (start.elapsed().as_nanos(), snapshot().bytes - before.bytes)
+    });
 
     #[cfg(feature = "perf-instrument")]
     let boundary_bytes = {
@@ -117,14 +133,11 @@ fn main() {
         stats
     };
 
-    println!("gate=b14 implementation=scalar-reference rules=10000 samples=100");
-    println!("build_ns={build_ns} {}", delta(before_build, after_build));
-    println!("match_ns={match_ns} {}", delta(before_match, after_match));
-    println!(
-        "parse_ns={parse_ns} result={parse_result:?} {}",
-        delta(before_parse, after_parse)
-    );
-    println!("owned_ns={owned_ns}");
+    println!("gate=b14 implementation=scalar-reference rules=10000 samples={sample_count}");
+    report("build", &build, configs.len());
+    report("match", &matching, sample_count * matches_per_sample);
+    report("parse", &parsing, sample_count);
+    report("owned", &owning, sample_count);
     #[cfg(feature = "perf-instrument")]
     println!(
         "boundary_bytes=MEASURED policy_canonicalize={} borrowed_to_owned={} tcp_frame_buffer={} encode_output={} transport_write={}",
@@ -136,7 +149,109 @@ fn main() {
     );
     #[cfg(not(feature = "perf-instrument"))]
     println!("copy_count=not-instrumented decision=do-not-claim-zero-copy");
+    println!(
+        "rss_kib=MEASURED {:?} loadavg=MEASURED {:?}",
+        rss_kib(),
+        load_average()
+    );
     println!("arms=scalar-retained memchr-not-added simd-not-added wasm-not-built");
+}
+
+struct Measurements {
+    nanos: Vec<u128>,
+    allocs: u64,
+    alloc_bytes: u64,
+}
+
+fn measure<F>(count: usize, mut operation: F) -> Measurements
+where
+    F: FnMut() -> (u128, u64),
+{
+    assert!(count > 0);
+    let mut nanos = Vec::with_capacity(count);
+    let mut allocs = 0;
+    let mut alloc_bytes = 0;
+    for _ in 0..count {
+        let before = snapshot();
+        let (elapsed, bytes) = operation();
+        let after = snapshot();
+        nanos.push(elapsed);
+        allocs += after.allocs - before.allocs;
+        alloc_bytes += bytes;
+    }
+    Measurements {
+        nanos,
+        allocs,
+        alloc_bytes,
+    }
+}
+
+fn report(label: &str, measurements: &Measurements, operations: usize) {
+    assert!(!measurements.nanos.is_empty());
+    assert!(operations > 0);
+    let mut sorted = measurements.nanos.clone();
+    sorted.sort_unstable();
+    let sum: u128 = sorted.iter().sum();
+    let mean = sum as f64 / sorted.len() as f64;
+    let variance = sorted
+        .iter()
+        .map(|value| {
+            let difference = *value as f64 - mean;
+            difference * difference
+        })
+        .sum::<f64>()
+        / sorted.len() as f64;
+    let cov = if mean == 0.0 {
+        0.0
+    } else {
+        variance.sqrt() / mean
+    };
+    let throughput = operations as f64 / (sum as f64 / 1_000_000_000.0);
+    println!(
+        "{label}_ns=MEASURED p50={} p95={} p99={} min={} max={} cov={cov:.6} n={} throughput_ops_s=DERIVED {throughput:.2} allocs=MEASURED {} alloc_bytes=MEASURED {}",
+        percentile(&sorted, 50),
+        percentile(&sorted, 95),
+        percentile(&sorted, 99),
+        sorted[0],
+        sorted[sorted.len() - 1],
+        measurements.nanos.len(),
+        measurements.allocs,
+        measurements.alloc_bytes,
+    );
+}
+
+fn percentile(sorted: &[u128], percentile: usize) -> u128 {
+    let index = ((sorted.len() - 1) * percentile).div_ceil(100);
+    sorted[index]
+}
+
+fn rss_kib() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        let status = std::fs::read_to_string("/proc/self/status").ok()?;
+        return status.lines().find_map(|line| {
+            line.strip_prefix("VmRSS:")
+                .and_then(|value| value.split_whitespace().next())
+                .and_then(|value| value.parse().ok())
+        });
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+fn load_average() -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        return std::fs::read_to_string("/proc/loadavg")
+            .ok()
+            .and_then(|value| value.split_whitespace().next().map(str::to_owned));
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -150,12 +265,4 @@ fn snapshot() -> Snapshot {
         allocs: ALLOCS.load(Ordering::Relaxed),
         bytes: ALLOC_BYTES.load(Ordering::Relaxed),
     }
-}
-
-fn delta(before: Snapshot, after: Snapshot) -> String {
-    format!(
-        "allocs={} alloc_bytes={}",
-        after.allocs - before.allocs,
-        after.bytes - before.bytes
-    )
 }

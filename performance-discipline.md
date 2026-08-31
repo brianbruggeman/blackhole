@@ -56,3 +56,26 @@ listener_boundary_bytes=Snapshot {
 ```
 
 The fixture asserts every total is nonzero while exercising both UDP and TCP.
+
+## Row 2 — distribution-reporting harness
+
+`MEASURED` on 2026-08-31, Linux `x86_64`, rustc 1.98.0, release build, with
+the default-off `perf-instrument` feature. Three consecutive runs used
+Proxima GitHub revision `0652a0c0a9c4d10e745f5428b251a98648b4f64e`, source
+commit `74ea46a`, and a clean `/tmp` target directory. Each run contains five
+samples per operation; match contains 100 decisions per sample. Values below
+are the observed ranges across the three process runs:
+
+```text
+build p50_ns=43220726..48438116 p95_ns=43417209..48628037 cov=0.002084..0.010909 n=5 allocs=50005 alloc_bytes=5144450
+match p50_ns=39007..39528 p95_ns=40069..41331 cov=0.012266..0.024760 n=5 allocs=500 alloc_bytes=11500
+parse p50_ns=36..48 p95_ns=214..260 cov=0.898773..1.013908 n=5 allocs=0 alloc_bytes=0
+owned p50_ns=164..269 p95_ns=769..1076 cov=0.807043..0.983855 n=5 allocs=10 alloc_bytes=80
+rss_kib=5040..5104 loadavg=3.62..4.19
+boundary_bytes=MEASURED policy_canonicalize=12000 borrowed_to_owned=60 tcp_frame_buffer=0 encode_output=0 transport_write=0
+```
+
+Throughput is printed by the executable as `DERIVED` from the measured sample
+durations and operation count. The wide small-sample parse and owned tails are
+reported rather than hidden. This row improves observability; it does not
+authorize an optimization or a zero-copy claim.
