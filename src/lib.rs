@@ -462,6 +462,8 @@ mod runtime {
         pub blocklists: Vec<String>,
         #[serde(default)]
         pub rewrites: Vec<RewriteConfig>,
+        #[serde(default)]
+        pub profiles: Vec<ServiceProfileConfig>,
         #[serde(default = "default_action")]
         pub default_action: Action,
     }
@@ -473,6 +475,7 @@ mod runtime {
                 rules: Vec::new(),
                 blocklists: Vec::new(),
                 rewrites: Vec::new(),
+                profiles: Vec::new(),
                 default_action: default_action(),
             }
         }
@@ -487,6 +490,16 @@ mod runtime {
         pub ipv6: Option<Ipv6Addr>,
         #[serde(default = "default_ttl")]
         pub ttl: u32,
+    }
+
+    #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+    pub struct ServiceProfileConfig {
+        pub id: u32,
+        pub name: String,
+        pub domains: Vec<String>,
+        pub action: Action,
+        #[serde(default)]
+        pub priority: i32,
     }
 
     #[derive(Debug, Clone, Deserialize)]
@@ -809,6 +822,62 @@ mod runtime {
 
     const MAX_REWRITES: usize = 10_000;
 
+    const MAX_PROFILES: usize = 256;
+
+    fn compile_profiles(
+        profiles: &[ServiceProfileConfig],
+    ) -> Result<Vec<RuleConfig>, policy::PolicyError> {
+        if profiles.len() > MAX_PROFILES {
+            return Err(policy::PolicyError::InvalidProfile {
+                name: "<table>".into(),
+                reason: format!("profile count exceeds {MAX_PROFILES}"),
+            });
+        }
+        let mut names = BTreeSet::new();
+        let mut rules = Vec::new();
+        for profile in profiles {
+            let name = profile.name.trim();
+            if name.is_empty() || !name.is_ascii() || !names.insert(name.to_ascii_lowercase()) {
+                return Err(policy::PolicyError::InvalidProfile {
+                    name: profile.name.clone(),
+                    reason: "name must be non-empty ASCII and unique".into(),
+                });
+            }
+            if profile.domains.is_empty() || profile.domains.len() > policy::MAX_RULES {
+                return Err(policy::PolicyError::InvalidProfile {
+                    name: profile.name.clone(),
+                    reason: "domains must be non-empty and bounded".into(),
+                });
+            }
+            for (offset, raw_domain) in profile.domains.iter().enumerate() {
+                let id = profile.id.checked_add(offset as u32).ok_or_else(|| {
+                    policy::PolicyError::InvalidProfile {
+                        name: profile.name.clone(),
+                        reason: "id range overflows".into(),
+                    }
+                })?;
+                let domain = normalize(raw_domain);
+                if domain.is_empty() || domain.len() > policy::MAX_DOMAIN_BYTES {
+                    return Err(policy::PolicyError::InvalidProfile {
+                        name: profile.name.clone(),
+                        reason: format!("invalid domain {domain}"),
+                    });
+                }
+                rules.push(RuleConfig {
+                    id,
+                    domain,
+                    action: profile.action,
+                    priority: profile.priority,
+                    qtype: None,
+                    qclass: None,
+                    client: None,
+                    client_cidr: None,
+                });
+            }
+        }
+        Ok(rules)
+    }
+
     fn compile_rewrites(configs: &[RewriteConfig]) -> Result<RewriteTable, policy::PolicyError> {
         if configs.len() > MAX_REWRITES {
             return Err(policy::PolicyError::InvalidRewrite {
@@ -953,6 +1022,8 @@ mod runtime {
                     reason: "client abuse limits must be non-zero".into(),
                 });
             }
+            let profile_rules = compile_profiles(&config.policy.profiles)?;
+            config.policy.rules.extend(profile_rules);
             let base_rules = config.policy.rules.clone();
             let blocklist_rules = load_blocklists(&config.policy.blocklists)?;
             let country_policy = load_country_policy(&config.country_policy)?;
@@ -2409,6 +2480,52 @@ mod runtime {
             assert!(matches!(
                 Policy::new(oversized),
                 Err(policy::PolicyError::InvalidRewrite { .. })
+            ));
+        }
+
+        #[test]
+        fn named_service_profiles_compile_into_authoritative_rules() {
+            let mut config = Config::default();
+            config.policy.profiles = vec![ServiceProfileConfig {
+                id: 40_000,
+                name: "Adult content".into(),
+                domains: vec!["ads.example".into(), "tracking.example".into()],
+                action: Action::Nxdomain,
+                priority: 10,
+            }];
+            let policy = Policy::new(config).expect("valid service profile");
+            let query = proxima_dns::DnsQuery {
+                id: 7,
+                recursion_desired: true,
+                name: "ads.example.".into(),
+                qtype: 1,
+                qclass: 1,
+            };
+            assert_eq!(policy.evaluate(&query).expect("profile answer").rcode, 3);
+        }
+
+        #[test]
+        fn service_profiles_reject_duplicate_names_and_invalid_domains() {
+            let mut config = Config::default();
+            config.policy.profiles = vec![
+                ServiceProfileConfig {
+                    id: 1,
+                    name: "ads".into(),
+                    domains: vec!["ads.example".into()],
+                    action: Action::Nxdomain,
+                    priority: 0,
+                },
+                ServiceProfileConfig {
+                    id: 2,
+                    name: "ADS".into(),
+                    domains: vec!["tracking.example".into()],
+                    action: Action::Nxdomain,
+                    priority: 0,
+                },
+            ];
+            assert!(matches!(
+                Policy::new(config),
+                Err(policy::PolicyError::InvalidProfile { .. })
             ));
         }
 

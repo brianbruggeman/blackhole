@@ -33,6 +33,15 @@ ipv4 = "192.0.2.1"
 ipv6 = "2001:db8::1"
 ttl = 30
 
+# Optional named service profile. Each domain becomes a policy rule; explicit
+# rules with a higher effective precedence still win.
+[[policy.profiles]]
+id = 40000
+name = "telemetry"
+domains = ["ads.example", "telemetry.example"]
+action = "nxdomain"
+priority = 10
+
 [upstream]
 # IP literal only; no hostname lookup is performed.
 resolver_ip = "1.1.1.1"

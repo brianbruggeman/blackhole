@@ -65,6 +65,7 @@ pub enum PolicyError {
     InvalidBlocklist { path: String, reason: String },
     InvalidCountryMap { path: String, reason: String },
     InvalidRewrite { name: String, reason: String },
+    InvalidProfile { name: String, reason: String },
 }
 
 impl core::fmt::Display for PolicyError {
@@ -90,6 +91,9 @@ impl core::fmt::Display for PolicyError {
             }
             Self::InvalidRewrite { name, reason } => {
                 write!(formatter, "invalid rewrite {name}: {reason}")
+            }
+            Self::InvalidProfile { name, reason } => {
+                write!(formatter, "invalid service profile {name}: {reason}")
             }
         }
     }

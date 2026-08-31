@@ -18,6 +18,8 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   comments, normalization, deduplication, and fail-closed startup reloads.
 - Bounded local A/AAAA rewrites with explicit policy precedence and fail-closed
   validation for malformed, duplicate, or oversized configuration.
+- Named service-blocking profiles compile into the authoritative rule table,
+  with bounded domains, stable generated IDs, and duplicate-name rejection.
 - Synthetic IPv4/IPv6 honeypot answers with configurable TTL.
 - Explicit fail-closed behavior when a forward rule has no upstream attached.
 - Configured UDP upstream forwarding through Proxima's `DnsClientUpstream`,
