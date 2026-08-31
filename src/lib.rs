@@ -40,6 +40,7 @@ mod runtime {
     use proxima_primitives::sync::Semaphore;
     use serde::Deserialize;
     use std::collections::{BTreeSet, HashMap};
+    use std::hash::Hash;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
@@ -256,6 +257,39 @@ mod runtime {
         blocked_until: Option<Instant>,
     }
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    enum AbuseNetworkKey {
+        V4(u32, u8),
+        V6([u8; 16], u8),
+    }
+
+    fn abuse_network_key(client: IpAddr, ipv4_prefix: u8, ipv6_prefix: u8) -> AbuseNetworkKey {
+        match client {
+            IpAddr::V4(address) => {
+                let prefix = ipv4_prefix.min(32);
+                let value = u32::from_be_bytes(address.octets());
+                let mask = if prefix == 0 {
+                    0
+                } else {
+                    u32::MAX << (32 - u32::from(prefix))
+                };
+                AbuseNetworkKey::V4(value & mask, prefix)
+            }
+            IpAddr::V6(address) => {
+                let prefix = ipv6_prefix.min(128);
+                let mut octets = address.octets();
+                let full_bytes = usize::from(prefix / 8);
+                let remaining_bits = prefix % 8;
+                if remaining_bits != 0 && full_bytes < octets.len() {
+                    octets[full_bytes] &= 0xff << (8 - remaining_bits);
+                }
+                let first_zero = full_bytes + usize::from(remaining_bits != 0);
+                octets[first_zero..].fill(0);
+                AbuseNetworkKey::V6(octets, prefix)
+            }
+        }
+    }
+
     const MAX_CLIENT_RATE_ENTRIES: usize = 4096;
 
     impl Drop for ClientPermit {
@@ -308,6 +342,16 @@ mod runtime {
         pub client_abuse_window_secs: u64,
         #[serde(default = "default_client_abuse_cooldown_secs")]
         pub client_abuse_cooldown_secs: u64,
+        #[serde(default = "default_max_network_abuse_violations")]
+        pub max_network_abuse_violations: usize,
+        #[serde(default = "default_network_abuse_window_secs")]
+        pub network_abuse_window_secs: u64,
+        #[serde(default = "default_network_abuse_cooldown_secs")]
+        pub network_abuse_cooldown_secs: u64,
+        #[serde(default = "default_network_abuse_ipv4_prefix")]
+        pub network_abuse_ipv4_prefix: u8,
+        #[serde(default = "default_network_abuse_ipv6_prefix")]
+        pub network_abuse_ipv6_prefix: u8,
     }
 
     impl Default for AdmissionConfig {
@@ -326,6 +370,11 @@ mod runtime {
                 max_client_abuse_violations: default_max_client_abuse_violations(),
                 client_abuse_window_secs: default_client_abuse_window_secs(),
                 client_abuse_cooldown_secs: default_client_abuse_cooldown_secs(),
+                max_network_abuse_violations: default_max_network_abuse_violations(),
+                network_abuse_window_secs: default_network_abuse_window_secs(),
+                network_abuse_cooldown_secs: default_network_abuse_cooldown_secs(),
+                network_abuse_ipv4_prefix: default_network_abuse_ipv4_prefix(),
+                network_abuse_ipv6_prefix: default_network_abuse_ipv6_prefix(),
             }
         }
     }
@@ -677,6 +726,21 @@ mod runtime {
 
     fn default_client_abuse_cooldown_secs() -> u64 {
         30
+    }
+    fn default_max_network_abuse_violations() -> usize {
+        32
+    }
+    fn default_network_abuse_window_secs() -> u64 {
+        10
+    }
+    fn default_network_abuse_cooldown_secs() -> u64 {
+        30
+    }
+    fn default_network_abuse_ipv4_prefix() -> u8 {
+        24
+    }
+    fn default_network_abuse_ipv6_prefix() -> u8 {
+        64
     }
     fn default_max_queries_per_client_per_second() -> usize {
         100
@@ -1082,6 +1146,7 @@ mod runtime {
         client_rates: Arc<Mutex<HashMap<IpAddr, ClientRate>>>,
         client_response_budgets: Arc<Mutex<HashMap<IpAddr, ClientResponseBudget>>>,
         client_abuse: Arc<Mutex<HashMap<IpAddr, ClientAbuse>>>,
+        network_abuse: Arc<Mutex<HashMap<AbuseNetworkKey, ClientAbuse>>>,
     }
 
     struct RegexRule {
@@ -1135,6 +1200,62 @@ mod runtime {
         Ok(regex_rules)
     }
 
+    fn abuse_state_allows(state: &mut ClientAbuse, now: Instant, window: Duration) -> bool {
+        if state.blocked_until.is_some_and(|until| until > now) {
+            return false;
+        }
+        if state.blocked_until.is_some_and(|until| until <= now) {
+            state.blocked_until = None;
+            state.violations = 0;
+            state.window_started = now;
+        } else if now.duration_since(state.window_started) >= window {
+            state.violations = 0;
+            state.window_started = now;
+        }
+        true
+    }
+
+    fn record_abuse<K: Copy + Eq + Hash>(
+        abuse: &mut HashMap<K, ClientAbuse>,
+        key: K,
+        now: Instant,
+        window: Duration,
+        cooldown: Duration,
+        threshold: usize,
+    ) -> bool {
+        if let Some(state) = abuse.get_mut(&key) {
+            if now.duration_since(state.window_started) >= window {
+                state.window_started = now;
+                state.violations = 0;
+                state.blocked_until = None;
+            }
+            state.violations = state.violations.saturating_add(1);
+            if state.violations >= threshold {
+                state.blocked_until = Some(now + cooldown);
+                return true;
+            }
+            return false;
+        }
+        if abuse.len() >= MAX_CLIENT_RATE_ENTRIES {
+            if let Some(oldest) = abuse
+                .iter()
+                .min_by_key(|(_, state)| state.window_started)
+                .map(|(key, _)| *key)
+            {
+                abuse.remove(&oldest);
+            }
+        }
+        abuse.insert(
+            key,
+            ClientAbuse {
+                window_started: now,
+                violations: 1,
+                blocked_until: None,
+            },
+        );
+        false
+    }
+
     impl Policy {
         pub fn new(mut config: Config) -> Result<Self, policy::PolicyError> {
             if config.cache.max_ttl_secs == 0 {
@@ -1180,6 +1301,16 @@ mod runtime {
             if config.admission.max_response_bytes_per_client_per_second == 0 {
                 return Err(policy::PolicyError::InvalidAdmission {
                     reason: "max_response_bytes_per_client_per_second must be non-zero".into(),
+                });
+            }
+            if config.admission.max_network_abuse_violations == 0
+                || config.admission.network_abuse_window_secs == 0
+                || config.admission.network_abuse_cooldown_secs == 0
+                || config.admission.network_abuse_ipv4_prefix > 32
+                || config.admission.network_abuse_ipv6_prefix > 128
+            {
+                return Err(policy::PolicyError::InvalidAdmission {
+                    reason: "network abuse limits or prefixes are invalid".into(),
                 });
             }
             if config.admission.max_client_abuse_violations == 0
@@ -1242,6 +1373,7 @@ mod runtime {
                 client_rates: Arc::new(Mutex::new(HashMap::new())),
                 client_response_budgets: Arc::new(Mutex::new(HashMap::new())),
                 client_abuse: Arc::new(Mutex::new(HashMap::new())),
+                network_abuse: Arc::new(Mutex::new(HashMap::new())),
             };
             if let Some(upstream) = policy.config.upstream.as_ref() {
                 policy.validate_upstream(upstream)?;
@@ -1566,19 +1698,36 @@ mod runtime {
                 return true;
             };
             let now = Instant::now();
-            let mut abuse = self.client_abuse.lock().expect("client abuse lock");
-            let Some(state) = abuse.get_mut(&client) else {
-                return true;
-            };
-            if state.blocked_until.is_some_and(|until| until > now) {
-                return false;
-            }
-            if state.blocked_until.is_some_and(|until| until <= now) {
-                state.blocked_until = None;
-                state.violations = 0;
-                state.window_started = now;
-            }
-            true
+            let exact_allowed = self
+                .client_abuse
+                .lock()
+                .expect("client abuse lock")
+                .get_mut(&client)
+                .is_none_or(|state| {
+                    abuse_state_allows(
+                        state,
+                        now,
+                        Duration::from_secs(self.config.admission.client_abuse_window_secs),
+                    )
+                });
+            let network = abuse_network_key(
+                client,
+                self.config.admission.network_abuse_ipv4_prefix,
+                self.config.admission.network_abuse_ipv6_prefix,
+            );
+            let network_allowed = self
+                .network_abuse
+                .lock()
+                .expect("network abuse lock")
+                .get_mut(&network)
+                .is_none_or(|state| {
+                    abuse_state_allows(
+                        state,
+                        now,
+                        Duration::from_secs(self.config.admission.network_abuse_window_secs),
+                    )
+                });
+            exact_allowed && network_allowed
         }
 
         pub(crate) fn record_client_abuse(&self, client: Option<IpAddr>) -> bool {
@@ -1586,41 +1735,28 @@ mod runtime {
                 return false;
             };
             let now = Instant::now();
-            let window = Duration::from_secs(self.config.admission.client_abuse_window_secs);
-            let mut abuse = self.client_abuse.lock().expect("client abuse lock");
-            if let Some(state) = abuse.get_mut(&client) {
-                if now.duration_since(state.window_started) >= window {
-                    state.window_started = now;
-                    state.violations = 0;
-                    state.blocked_until = None;
-                }
-                state.violations += 1;
-                if state.violations >= self.config.admission.max_client_abuse_violations {
-                    state.blocked_until = Some(
-                        now + Duration::from_secs(self.config.admission.client_abuse_cooldown_secs),
-                    );
-                    return true;
-                }
-                return false;
-            }
-            if abuse.len() >= MAX_CLIENT_RATE_ENTRIES {
-                if let Some(oldest) = abuse
-                    .iter()
-                    .min_by_key(|(_, state)| state.window_started)
-                    .map(|(client, _)| *client)
-                {
-                    abuse.remove(&oldest);
-                }
-            }
-            abuse.insert(
+            let exact_opened = record_abuse(
+                &mut self.client_abuse.lock().expect("client abuse lock"),
                 client,
-                ClientAbuse {
-                    window_started: now,
-                    violations: 1,
-                    blocked_until: None,
-                },
+                now,
+                Duration::from_secs(self.config.admission.client_abuse_window_secs),
+                Duration::from_secs(self.config.admission.client_abuse_cooldown_secs),
+                self.config.admission.max_client_abuse_violations,
             );
-            false
+            let network = abuse_network_key(
+                client,
+                self.config.admission.network_abuse_ipv4_prefix,
+                self.config.admission.network_abuse_ipv6_prefix,
+            );
+            let network_opened = record_abuse(
+                &mut self.network_abuse.lock().expect("network abuse lock"),
+                network,
+                now,
+                Duration::from_secs(self.config.admission.network_abuse_window_secs),
+                Duration::from_secs(self.config.admission.network_abuse_cooldown_secs),
+                self.config.admission.max_network_abuse_violations,
+            );
+            exact_opened || network_opened
         }
 
         fn admission_allows(&self, query: &proxima_dns::DnsQuery) -> bool {
@@ -3423,6 +3559,35 @@ mod runtime {
             assert!(policy.record_client_abuse(client));
             assert!(!policy.allow_client_abuse(client));
             assert!(policy.allow_client_abuse(None));
+        }
+
+        #[test]
+        fn network_abuse_breaker_sheds_only_the_offending_network() {
+            let mut config = Config::default();
+            config.admission.max_client_abuse_violations = 100;
+            config.admission.max_network_abuse_violations = 2;
+            config.admission.network_abuse_cooldown_secs = 60;
+            let policy = Policy::new(config).expect("valid network abuse config");
+            let first = Some("192.0.2.10".parse().expect("first client"));
+            let second = Some("192.0.2.11".parse().expect("second client"));
+            let other_network = Some("192.0.3.10".parse().expect("other client"));
+
+            assert!(!policy.record_client_abuse(first));
+            assert!(policy.allow_client_abuse(second));
+            assert!(policy.record_client_abuse(second));
+            assert!(!policy.allow_client_abuse(first));
+            assert!(!policy.allow_client_abuse(second));
+            assert!(policy.allow_client_abuse(other_network));
+            assert!(policy.allow_client_abuse(None));
+
+            assert_eq!(
+                abuse_network_key("2001:db8:1:2::10".parse().unwrap(), 24, 64),
+                abuse_network_key("2001:db8:1:2::11".parse().unwrap(), 24, 64)
+            );
+            assert_ne!(
+                abuse_network_key("2001:db8:1:2::10".parse().unwrap(), 24, 64),
+                abuse_network_key("2001:db8:1:3::10".parse().unwrap(), 24, 64)
+            );
         }
 
         #[test]

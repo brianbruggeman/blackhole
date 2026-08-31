@@ -46,6 +46,9 @@ breaker; unidentified callers are not assigned a shared abuse identity.
 Encoded responses also consume a bounded per-client byte budget per second;
 when it is exhausted, the listener sheds that client's response rather than
 amplifying the traffic pattern.
+The network-scoped breaker aggregates those violations across configurable
+IPv4/IPv6 prefixes (defaults `/24` and `/64`) and sheds only the offending
+network during its cooldown.
 Blocklist files accept hosts/domain entries and basic AdGuard `||domain^`
 filters; `@@||domain^` exceptions override the generated apex and subdomain
 blocks. Local A/AAAA rewrites are bounded and apply to `pass`/`observe` queries;

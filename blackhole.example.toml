@@ -100,6 +100,13 @@ max_inflight_per_client = 64
 max_client_abuse_violations = 8
 client_abuse_window_secs = 10
 client_abuse_cooldown_secs = 30
+# Temporarily shed an entire /24 (IPv4) or /64 (IPv6) after repeated
+# violations from clients in that network; unrelated networks remain allowed.
+max_network_abuse_violations = 32
+network_abuse_window_secs = 10
+network_abuse_cooldown_secs = 30
+network_abuse_ipv4_prefix = 24
+network_abuse_ipv6_prefix = 64
 # Bound encoded DNS response bytes sent to one identified client per second.
 max_response_bytes_per_client_per_second = 1048576
 
