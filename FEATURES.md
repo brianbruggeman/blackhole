@@ -37,6 +37,9 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - A bounded per-client abuse breaker that temporarily sheds clients which
   repeatedly exceed the configured query-rate limit, without affecting
   unidentified callers.
+- A bounded per-client encoded-response-byte budget that sheds identified
+  clients after their configured one-second egress budget is exhausted,
+  without applying a shared identity to unidentified callers.
 - Upstream rebinding protection for private, local, link-local, unspecified,
   multicast, and IPv6 unique-local A/AAAA answers, with fail-closed SERVFAIL.
 - Optional country deny and observe-only (“snitch”) policy from a bounded,

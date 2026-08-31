@@ -88,6 +88,8 @@ max_inflight_per_client = 64
 max_client_abuse_violations = 8
 client_abuse_window_secs = 10
 client_abuse_cooldown_secs = 30
+# Bound encoded DNS response bytes sent to one identified client per second.
+max_response_bytes_per_client_per_second = 1048576
 
 [security]
 # Prevent forwarded answers from rebinding clients to private/local networks.

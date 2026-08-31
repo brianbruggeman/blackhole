@@ -239,6 +239,11 @@ mod runtime {
         requests: usize,
     }
 
+    struct ClientResponseBudget {
+        window_started: Instant,
+        bytes: usize,
+    }
+
     #[derive(Debug, Clone, Copy)]
     struct ClientAbuse {
         window_started: Instant,
@@ -290,6 +295,8 @@ mod runtime {
         pub max_inflight_per_client: usize,
         #[serde(default = "default_max_queries_per_client_per_second")]
         pub max_queries_per_client_per_second: usize,
+        #[serde(default = "default_max_response_bytes_per_client_per_second")]
+        pub max_response_bytes_per_client_per_second: usize,
         #[serde(default = "default_max_client_abuse_violations")]
         pub max_client_abuse_violations: usize,
         #[serde(default = "default_client_abuse_window_secs")]
@@ -309,6 +316,8 @@ mod runtime {
                 max_inflight_requests: default_max_inflight_requests(),
                 max_inflight_per_client: default_max_inflight_per_client(),
                 max_queries_per_client_per_second: default_max_queries_per_client_per_second(),
+                max_response_bytes_per_client_per_second:
+                    default_max_response_bytes_per_client_per_second(),
                 max_client_abuse_violations: default_max_client_abuse_violations(),
                 client_abuse_window_secs: default_client_abuse_window_secs(),
                 client_abuse_cooldown_secs: default_client_abuse_cooldown_secs(),
@@ -648,6 +657,9 @@ mod runtime {
     }
     fn default_max_queries_per_client_per_second() -> usize {
         100
+    }
+    fn default_max_response_bytes_per_client_per_second() -> usize {
+        1_048_576
     }
     const MAX_BLOCKLIST_BYTES: u64 = 16 * 1024 * 1024;
     const MAX_BLOCKLIST_LINE_BYTES: usize = 4096;
@@ -1007,6 +1019,7 @@ mod runtime {
         request_slots: Arc<Semaphore>,
         client_admission: Arc<Mutex<HashMap<IpAddr, usize>>>,
         client_rates: Arc<Mutex<HashMap<IpAddr, ClientRate>>>,
+        client_response_budgets: Arc<Mutex<HashMap<IpAddr, ClientResponseBudget>>>,
         client_abuse: Arc<Mutex<HashMap<IpAddr, ClientAbuse>>>,
     }
 
@@ -1050,6 +1063,11 @@ mod runtime {
             if config.admission.max_queries_per_client_per_second == 0 {
                 return Err(policy::PolicyError::InvalidAdmission {
                     reason: "max_queries_per_client_per_second must be non-zero".into(),
+                });
+            }
+            if config.admission.max_response_bytes_per_client_per_second == 0 {
+                return Err(policy::PolicyError::InvalidAdmission {
+                    reason: "max_response_bytes_per_client_per_second must be non-zero".into(),
                 });
             }
             if config.admission.max_client_abuse_violations == 0
@@ -1101,6 +1119,7 @@ mod runtime {
                 request_slots: Arc::new(Semaphore::new(max_inflight_requests)),
                 client_admission: Arc::new(Mutex::new(HashMap::new())),
                 client_rates: Arc::new(Mutex::new(HashMap::new())),
+                client_response_budgets: Arc::new(Mutex::new(HashMap::new())),
                 client_abuse: Arc::new(Mutex::new(HashMap::new())),
             };
             if let Some(upstream) = policy.config.upstream.as_ref() {
@@ -1295,6 +1314,61 @@ mod runtime {
                 ClientRate {
                     window_started: now,
                     requests: 1,
+                },
+            );
+            true
+        }
+
+        /// Bound encoded DNS egress per identified client over a one-second
+        /// window. This is deliberately enforced at the listener after
+        /// encoding, so the budget measures actual wire bytes rather than an
+        /// estimate derived from the answer model.
+        pub(crate) fn allow_client_response_bytes(
+            &self,
+            client: Option<IpAddr>,
+            bytes: usize,
+        ) -> bool {
+            let Some(client) = client else {
+                return true;
+            };
+            let now = Instant::now();
+            let limit = self
+                .config
+                .admission
+                .max_response_bytes_per_client_per_second;
+            if bytes > limit {
+                return false;
+            }
+            let mut budgets = self
+                .client_response_budgets
+                .lock()
+                .expect("client response budget lock");
+            if let Some(budget) = budgets.get_mut(&client) {
+                if now.duration_since(budget.window_started) >= Duration::from_secs(1) {
+                    budget.window_started = now;
+                    budget.bytes = bytes;
+                    return true;
+                }
+                if budget.bytes.saturating_add(bytes) > limit {
+                    return false;
+                }
+                budget.bytes = budget.bytes.saturating_add(bytes);
+                return true;
+            }
+            if budgets.len() >= MAX_CLIENT_RATE_ENTRIES {
+                if let Some(oldest) = budgets
+                    .iter()
+                    .min_by_key(|(_, budget)| budget.window_started)
+                    .map(|(client, _)| *client)
+                {
+                    budgets.remove(&oldest);
+                }
+            }
+            budgets.insert(
+                client,
+                ClientResponseBudget {
+                    window_started: now,
+                    bytes,
                 },
             );
             true
@@ -2883,6 +2957,27 @@ mod runtime {
             assert!(policy.record_client_abuse(client));
             assert!(!policy.allow_client_abuse(client));
             assert!(policy.allow_client_abuse(None));
+        }
+
+        #[test]
+        fn response_byte_budget_sheds_a_client_without_affecting_unidentified_callers() {
+            let mut config = Config::default();
+            config.admission.max_response_bytes_per_client_per_second = 10;
+            let policy = Policy::new(config).expect("valid policy");
+            let client = Some("192.0.2.10".parse().expect("client address"));
+            assert!(policy.allow_client_response_bytes(client, 6));
+            assert!(!policy.allow_client_response_bytes(client, 5));
+            assert!(policy.allow_client_response_bytes(None, 4096));
+        }
+
+        #[test]
+        fn zero_response_byte_budget_is_rejected() {
+            let mut config = Config::default();
+            config.admission.max_response_bytes_per_client_per_second = 0;
+            assert!(matches!(
+                Policy::new(config),
+                Err(policy::PolicyError::InvalidAdmission { .. })
+            ));
         }
 
         #[test]

@@ -9,7 +9,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | --- | --- |
 | Formatting | `cargo fmt --all -- --check` passed on the current Blackhole changes. |
 | Compilation | `cargo check --offline --all-targets` passed with Proxima from GitHub revision `0652a0c0`. |
-| Unit and integration tests | `cargo test --offline --all-targets` passed: 77 library tests, 1 real HTTP admin fixture, 3 real loopback UDP/TCP resolver fixture tests, and 8 fake-upstream tests against GitHub Proxima revision `0652a0c0`; verified at Blackhole commit `ec5dd44` with Rust `1.98.0` and Cargo `1.98.0`. |
+| Unit and integration tests | `cargo test --offline --all-targets` passed: 79 library tests, 1 real HTTP admin fixture, 3 real loopback UDP/TCP resolver fixture tests, and 8 fake-upstream tests against GitHub Proxima revision `0652a0c0`; verified at Blackhole commit `ec5dd44` with Rust `1.98.0` and Cargo `1.98.0`. |
 | Cache failure behavior | `fake_upstream_servfail_is_not_cached` passed at `3e463c8`; SERVFAIL caused two upstream exchanges. |
 | Nextest | `cargo nextest run --offline --workspace` passed: 84 tests, 84 passed, 0 skipped, against GitHub Proxima revision `0652a0c0`. |
 | Doctests | `cargo test --doc --offline` passed: 1 doctest. |
@@ -29,6 +29,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | Cache TTL telemetry | The focused `cache_ttl_telemetry_reports_effective_positive_and_negative_ttls` test proves the histogram reports the configured post-clamp positive TTL and negative TTL through Proxima's telemetry interface. |
 | Local DNS rewrites | Bounded A/AAAA rewrites answer pass/observe queries, explicit policy actions override them, and malformed or oversized configuration fails closed. |
 | Per-client abuse breaker | Full all-target suite passed with a focused test covering repeated rate-limit violations opening a temporary bounded breaker while unidentified callers remain unaffected. |
+| Per-client response-byte budget | Focused tests prove encoded-response budget accumulation sheds a client at the configured one-second ceiling, unidentified callers remain unkeyed, and zero-value configuration fails closed. |
 | Named service profiles | Focused tests prove profile domains compile into authoritative rules and duplicate profile names or invalid domains fail closed. |
 | Listener rewrite path | Full all-target suite includes a real loopback UDP test proving a local rewrite is encoded and returned through the Proxima listener adapter. |
 | Listener profile path | Full all-target suite includes a real loopback UDP test proving a configured service profile is enforced by the listener's actual policy path. |
