@@ -21,7 +21,8 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Configured UDP upstream forwarding through Proxima's `DnsClientUpstream`,
   with timeout/retry settings and a bounded outstanding-query limit.
 - Bounded positive and negative response caching with a bounded stale-serving
-  window for upstream outages.
+  window for upstream outages, plus Proxima-native hit/miss/stale/eviction
+  counters.
 - A bounded upstream circuit breaker with configurable failure threshold and
   cooldown; open circuits fail closed unless a stale cached answer is usable.
 - Bounded admission controls that reject malformed/overlong owned queries,

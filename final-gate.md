@@ -22,6 +22,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | Response amplification cap | The configured response-ratio cap is validated and applied below the absolute response ceiling; the focused cap test and full 62-test library suite pass. |
 | Per-client rate limiting | The configured per-second client rate cap sheds the third request in a deterministic focused test, while unidentified callers remain unkeyed and the rate-state table is bounded. |
 | Atomic blocklist reload | A replacement blocklist publishes as one snapshot and an invalid replacement leaves the previous generation active; the focused reload test and 64-test library suite pass. |
+| Cache outcome telemetry | Proxima-native counters record fresh hits, misses, stale serves, and capacity evictions; the deterministic bounded-eviction test passes. |
 
 ## Evidence still required
 

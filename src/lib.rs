@@ -138,10 +138,11 @@ mod runtime {
             None
         }
 
-        fn insert(&mut self, key: CacheKey, answer: DnsAnswer, now: Instant) {
+        fn insert(&mut self, key: CacheKey, answer: DnsAnswer, now: Instant) -> bool {
             if self.config.max_entries == 0 {
-                return;
+                return false;
             }
+            let mut evicted = false;
             if self.entries.len() >= self.config.max_entries && !self.entries.contains_key(&key) {
                 if let Some(oldest) = self
                     .entries
@@ -150,6 +151,7 @@ mod runtime {
                     .map(|(key, _)| key.clone())
                 {
                     self.entries.remove(&oldest);
+                    evicted = true;
                 }
             }
             let ttl_secs = answer
@@ -168,6 +170,7 @@ mod runtime {
                     stale_until: now + ttl + stale,
                 },
             );
+            evicted
         }
     }
 
@@ -1258,6 +1261,17 @@ mod runtime {
             telemetry.counter_inc("blackhole.country_observations", &labels, 1);
         }
 
+        fn observe_cache(&self, outcome: &'static str) {
+            let Some(telemetry) = self.telemetry.as_ref() else {
+                return;
+            };
+            if !telemetry.is_active() {
+                return;
+            }
+            let labels = Labels::from_pairs(&[("outcome", outcome)]);
+            telemetry.counter_inc("blackhole.cache", &labels, 1);
+        }
+
         pub(crate) fn observe_failure(&self, cause: &'static str) {
             let Some(telemetry) = self.telemetry.as_ref() else {
                 return;
@@ -1358,9 +1372,11 @@ mod runtime {
                 };
                 let key = CacheKey::from_query(&query);
                 if let Some(answer) = self.cache.lock().expect("cache lock").fresh(&key) {
+                    self.observe_cache("fresh_hit");
                     self.observe(Action::Forward);
                     return Ok(DnsPipeReply::typed(200, self.cap_answer(&query, answer)));
                 }
+                self.observe_cache("miss");
                 if !self
                     .breaker
                     .lock()
@@ -1368,6 +1384,7 @@ mod runtime {
                     .allows(Instant::now())
                 {
                     if let Some(answer) = self.cache.lock().expect("cache lock").stale(&key) {
+                        self.observe_cache("stale_hit");
                         self.observe(Action::Forward);
                         return Ok(DnsPipeReply::typed(200, self.cap_answer(&query, answer)));
                     }
@@ -1392,11 +1409,14 @@ mod runtime {
                         }
                         self.breaker.lock().expect("breaker lock").success();
                         if matches!(answer.rcode, 0 | 3) {
-                            self.cache.lock().expect("cache lock").insert(
+                            let evicted = self.cache.lock().expect("cache lock").insert(
                                 key.clone(),
                                 answer.clone(),
                                 Instant::now(),
                             );
+                            if evicted {
+                                self.observe_cache("eviction");
+                            }
                         }
                         answer
                     }
@@ -1406,6 +1426,7 @@ mod runtime {
                             .expect("breaker lock")
                             .failure(Instant::now());
                         if let Some(answer) = self.cache.lock().expect("cache lock").stale(&key) {
+                            self.observe_cache("stale_hit");
                             self.observe(Action::Forward);
                             return Ok(DnsPipeReply::typed(200, self.cap_answer(&query, answer)));
                         }
@@ -2010,9 +2031,9 @@ mod runtime {
                 qclass: 1,
             };
             let now = Instant::now();
-            cache.insert(first.clone(), DnsAnswer::ok(Vec::new()), now);
+            assert!(!cache.insert(first.clone(), DnsAnswer::ok(Vec::new()), now));
             assert!(cache.fresh(&first).is_some());
-            cache.insert(second.clone(), DnsAnswer::name_error(), now);
+            assert!(cache.insert(second.clone(), DnsAnswer::name_error(), now));
             assert_eq!(cache.entries.len(), 1);
             assert!(cache.fresh(&first).is_none());
             assert_eq!(cache.fresh(&second), Some(DnsAnswer::name_error()));
