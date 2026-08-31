@@ -9,7 +9,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | --- | --- |
 | Formatting | `cargo fmt --all -- --check` passed on the current Blackhole changes. |
 | Compilation | `cargo check --offline --all-targets` passed with Proxima from GitHub revision `0652a0c0`. |
-| Unit and integration tests | `cargo test --offline --all-targets` passed: 73 library tests, 3 real loopback UDP/TCP resolver fixture tests, and 8 fake-upstream tests against GitHub Proxima revision `0652a0c0`. |
+| Unit and integration tests | `cargo test --offline --all-targets` passed: 77 library tests, 1 real HTTP admin fixture, 3 real loopback UDP/TCP resolver fixture tests, and 8 fake-upstream tests against GitHub Proxima revision `0652a0c0`; verified at Blackhole commit `374b693` with Rust `1.98.0` and Cargo `1.98.0`. |
 | Cache failure behavior | `fake_upstream_servfail_is_not_cached` passed at `3e463c8`; SERVFAIL caused two upstream exchanges. |
 | Nextest | `cargo nextest run --offline --workspace` passed: 84 tests, 84 passed, 0 skipped, against GitHub Proxima revision `0652a0c0`. |
 | Doctests | `cargo test --doc --offline` passed: 1 doctest. |
@@ -18,7 +18,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | Fuzz smoke | The `query_view` nightly fuzz target ran 1,000 iterations without a crash; the bounded corpus contains 50 inputs. |
 | Resolver fixture | The actual loopback UDP/TCP listener fixture passed. |
 | Configuration validation | `cargo run --offline -- --check blackhole.example.toml` and `cargo run --offline -- --check` both exited successfully before listener startup; enabled capture plans are validated through the platform planner without installation. |
-| Authenticated admin control plane | Focused and real-listener tests prove Proxima HTTP health routing, bearer rejection/admission, bounded 404/405 routes, and authenticated blocklist reload behavior. |
+| Authenticated admin control plane | Focused and real-listener tests prove Proxima HTTP health routing, bearer rejection/admission, bounded 404/405 routes, authenticated blocklist reload behavior, and loopback-only binding while the control plane is plaintext HTTP. |
 | Capture lifecycle | Planner, rollback, ownership, recovery, and cleanup tests pass. Capture is explicitly opt-in and wired through the shared controller. |
 | Per-client admission | The configured per-client concurrent-request cap rejects a second in-flight request at the limit, releases on completion, and passes the focused unit test. |
 | Response amplification cap | The configured response-ratio cap is validated and applied below the absolute response ceiling; the focused cap test is included in the current 73-test library suite. |
