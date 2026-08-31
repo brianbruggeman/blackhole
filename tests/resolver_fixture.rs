@@ -1,5 +1,6 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU16, Ordering};
 
 use blackhole::listener::{TcpProtocol, UdpProtocol};
 use blackhole::{Action, Config, Policy, RewriteConfig, RuleConfig, UpstreamConfig};
@@ -12,6 +13,17 @@ use proxima_net::prime::{PrimeDatagramFactory, PrimeTcpUpstream};
 use proxima_primitives::stream::DatagramFactory;
 use proxima_primitives::stream::StreamUpstreamExt;
 use proxima_protocols::dns::{Flags, encode, parse_message};
+
+static NEXT_LISTENER_SLOT: AtomicU16 = AtomicU16::new(0);
+
+fn test_listener_addr() -> SocketAddr {
+    let process_slot = (std::process::id() % 1_000) as u16;
+    let slot = NEXT_LISTENER_SLOT.fetch_add(1, Ordering::Relaxed) % 20;
+    SocketAddr::new(
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        30_000 + process_slot.saturating_mul(20) + slot,
+    )
+}
 
 struct Passthrough;
 
@@ -92,22 +104,14 @@ async fn listener_forwards_allowed_query_to_loopback_upstream() {
     });
 
     let upstream = config.upstream.clone().expect("upstream config");
-    let listener_probe = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("probe listener port");
-    let listener_port = listener_probe
-        .local_addr()
-        .expect("listener probe address")
-        .port();
-    drop(listener_probe);
     let policy = Arc::new(Policy::new(config).expect("valid policy").with_upstream(
         Arc::new(PrimeDatagramFactory),
         Policy::resolver_config(&upstream),
         upstream.max_outstanding,
     ));
+    let listener_addr = test_listener_addr();
     let server = Listener::builder()
-        .bind(SocketAddr::new(
-            IpAddr::V4(Ipv4Addr::LOCALHOST),
-            listener_port,
-        ))
+        .bind(listener_addr)
         .any()
         .protocol(UdpProtocol::new(Arc::clone(&policy)))
         .protocol(TcpProtocol::new(Arc::clone(&policy)))
@@ -115,7 +119,6 @@ async fn listener_forwards_allowed_query_to_loopback_upstream() {
         .serve()
         .await
         .expect("serve listener");
-    let listener_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), listener_port);
 
     let mut client = PrimeDatagramFactory
         .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
@@ -202,9 +205,7 @@ async fn listener_serves_local_rewrite_on_the_real_udp_path() {
         ttl: 30,
     }];
     let policy = Arc::new(Policy::new(config).expect("valid rewrite policy"));
-    let listener_probe = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("probe listener port");
-    let listener_addr = listener_probe.local_addr().expect("listener address");
-    drop(listener_probe);
+    let listener_addr = test_listener_addr();
     let server = Listener::builder()
         .bind(listener_addr)
         .any()
@@ -249,5 +250,56 @@ async fn listener_serves_local_rewrite_on_the_real_udp_path() {
         answer.rdata,
         proxima_protocols::dns::RData::A(Ipv4Addr::new(192, 0, 2, 53))
     );
+    server.stop();
+}
+
+#[proxima::test]
+async fn listener_enforces_service_profile_on_the_real_udp_path() {
+    let mut config = Config::default();
+    config.policy.profiles = vec![blackhole::ServiceProfileConfig {
+        id: 40_000,
+        name: "telemetry".into(),
+        domains: vec!["ads.example".into()],
+        action: Action::Nxdomain,
+        priority: 10,
+    }];
+    let policy = Arc::new(Policy::new(config).expect("valid profile policy"));
+    let listener_addr = test_listener_addr();
+    let server = Listener::builder()
+        .bind(listener_addr)
+        .any()
+        .protocol(UdpProtocol::new(Arc::clone(&policy)))
+        .protocol(TcpProtocol::new(Arc::clone(&policy)))
+        .handle(into_handle(Passthrough))
+        .serve()
+        .await
+        .expect("serve listener");
+
+    let mut client = PrimeDatagramFactory
+        .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+        .expect("bind client");
+    let mut query = Vec::new();
+    encode::encode_query(
+        0x4322,
+        true,
+        encode::EncodeQuestion {
+            name: "ads.example.",
+            qtype: 1,
+            qclass: 1,
+        },
+        &mut query,
+    )
+    .expect("encode profile query");
+    std::future::poll_fn(|cx| client.poll_send_to(cx, &query, listener_addr))
+        .await
+        .expect("send profile query");
+    let mut response = [0u8; 4096];
+    let (len, _) = std::future::poll_fn(|cx| client.poll_recv_from(cx, &mut response))
+        .await
+        .expect("receive profile response");
+    let message = parse_message(&response[..len]).expect("parse profile response");
+    assert_eq!(message.header.id, 0x4322);
+    assert_eq!(message.header.flags.rcode(), 3);
+    assert_eq!(message.answers().count(), 0);
     server.stop();
 }
