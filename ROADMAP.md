@@ -38,8 +38,8 @@ below are future capabilities, grouped by the dependency layer they extend.
 
 ## Interception and deployment
 
-- Add privileged Linux nftables and macOS packet-filter smoke evidence and
-  complete original-destination capture integration.
+- Add privileged Linux nftables and macOS packet-filter smoke evidence for the
+  opt-in capture configuration and complete original-destination integration.
 - Keep client and original-destination metadata adapter-owned.
 - Support unprivileged DNS operation with privilege isolated to capture setup.
 - Add cross-platform native deployment adapters.

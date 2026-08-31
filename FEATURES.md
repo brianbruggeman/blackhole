@@ -40,6 +40,9 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Shared capture-controller orchestration with exact ownership journaling,
   rollback on journal failure, corruption-safe restart recovery, and cleanup
   refusal for ownership mismatches.
+- Explicit opt-in capture configuration wires the shared controller to the
+  native platform backend, recovers ownership before install, and cleans up
+  after orderly shutdown.
 - Linux builds expose an explicit `nft` command capability; macOS builds
   expose the corresponding `pfctl` capability without including either
   privileged backend in the policy core.

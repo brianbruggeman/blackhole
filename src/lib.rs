@@ -63,6 +63,8 @@ mod runtime {
         pub admission: AdmissionConfig,
         #[serde(default)]
         pub security: SecurityConfig,
+        #[serde(default)]
+        pub capture: CaptureConfig,
     }
 
     #[derive(Debug, Clone, Deserialize)]
@@ -295,6 +297,35 @@ mod runtime {
         #[serde(default = "default_listen")]
         pub listen: String,
     }
+
+    #[derive(Debug, Clone, Deserialize)]
+    pub struct CaptureConfig {
+        #[serde(default)]
+        pub enabled: bool,
+        #[serde(default = "default_capture_inbound_port")]
+        pub inbound_port: u16,
+        #[serde(default = "default_capture_chain")]
+        pub chain: String,
+        #[serde(default = "default_capture_mark")]
+        pub mark: u32,
+        #[serde(default = "default_capture_ownership_path")]
+        pub ownership_path: String,
+        #[serde(default = "default_capture_original_destination")]
+        pub original_destination: String,
+    }
+
+    impl Default for CaptureConfig {
+        fn default() -> Self {
+            Self {
+                enabled: false,
+                inbound_port: default_capture_inbound_port(),
+                chain: default_capture_chain(),
+                mark: default_capture_mark(),
+                ownership_path: default_capture_ownership_path(),
+                original_destination: default_capture_original_destination(),
+            }
+        }
+    }
     impl Default for ServerConfig {
         fn default() -> Self {
             Self {
@@ -356,6 +387,21 @@ mod runtime {
     }
     fn default_listen() -> String {
         "127.0.0.1:5353".into()
+    }
+    fn default_capture_inbound_port() -> u16 {
+        53
+    }
+    fn default_capture_chain() -> String {
+        "capture".into()
+    }
+    fn default_capture_mark() -> u32 {
+        42
+    }
+    fn default_capture_ownership_path() -> String {
+        "/var/lib/blackhole/capture.state".into()
+    }
+    fn default_capture_original_destination() -> String {
+        "127.0.0.1:53".into()
     }
     fn default_mode() -> Mode {
         Mode::Nxdomain

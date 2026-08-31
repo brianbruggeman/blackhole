@@ -1,7 +1,15 @@
 #![cfg(feature = "std")]
 
+#[cfg(target_os = "macos")]
+use blackhole::linux_capture::FileOwnershipStore;
+#[cfg(target_os = "linux")]
+use blackhole::linux_capture::{
+    CaptureController, FileOwnershipStore, NftRulePlan, native::NftCommandBackend,
+};
 #[cfg(feature = "std")]
 use blackhole::listener::{TcpProtocol, UdpProtocol};
+#[cfg(target_os = "macos")]
+use blackhole::pf_capture::{PfRulePlan, native::PfctlCommandBackend};
 #[cfg(feature = "std")]
 use blackhole::{Config, Policy};
 #[cfg(feature = "std")]
@@ -17,8 +25,98 @@ use proxima_net::prime::PrimeDatagramFactory;
 #[cfg(feature = "std")]
 use std::{env, net::SocketAddr, path::Path, sync::Arc};
 
+#[cfg(target_os = "linux")]
+struct CaptureGuard {
+    controller: CaptureController<NftCommandBackend, FileOwnershipStore>,
+    plan: NftRulePlan,
+}
+
+#[cfg(target_os = "macos")]
+struct CaptureGuard {
+    controller: CaptureController<PfctlCommandBackend, FileOwnershipStore>,
+    plan: PfRulePlan,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl CaptureGuard {
+    fn cleanup(&mut self) -> Result<(), ProximaError> {
+        self.controller
+            .cleanup(&self.plan)
+            .map_err(|error| ProximaError::Config(format!("capture cleanup failed: {error}")))
+    }
+}
+
 #[cfg(feature = "std")]
 struct AnyHandler;
+
+#[cfg(target_os = "linux")]
+fn install_capture(
+    config: &blackhole::CaptureConfig,
+    listen_port: u16,
+) -> Result<Option<CaptureGuard>, ProximaError> {
+    if !config.enabled {
+        return Ok(None);
+    }
+    let plan = NftRulePlan::for_ports(&config.chain, config.inbound_port, listen_port, config.mark)
+        .map_err(|error| ProximaError::Config(format!("invalid capture plan: {error}")))?;
+    let store = FileOwnershipStore::new(&config.ownership_path);
+    let mut controller = CaptureController::with_store(NftCommandBackend::default(), store);
+    controller
+        .recover(&plan)
+        .map_err(|error| ProximaError::Config(format!("capture recovery failed: {error}")))?;
+    controller
+        .install(&plan)
+        .map_err(|error| ProximaError::Config(format!("capture install failed: {error}")))?;
+    Ok(Some(CaptureGuard { controller, plan }))
+}
+
+#[cfg(target_os = "macos")]
+fn install_capture(
+    config: &blackhole::CaptureConfig,
+    listen_port: u16,
+) -> Result<Option<CaptureGuard>, ProximaError> {
+    if !config.enabled {
+        return Ok(None);
+    }
+    let original_destination = config.original_destination.parse().map_err(|error| {
+        ProximaError::Config(format!("invalid capture original_destination: {error}"))
+    })?;
+    let plan = PfRulePlan::new(&config.chain, original_destination, listen_port)
+        .map_err(|error| ProximaError::Config(format!("invalid capture plan: {error}")))?;
+    let store = FileOwnershipStore::new(&config.ownership_path);
+    let mut controller = CaptureController::with_store(PfctlCommandBackend::default(), store);
+    controller
+        .recover(&plan)
+        .map_err(|error| ProximaError::Config(format!("capture recovery failed: {error}")))?;
+    controller
+        .install(&plan)
+        .map_err(|error| ProximaError::Config(format!("capture install failed: {error}")))?;
+    Ok(Some(CaptureGuard { controller, plan }))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+struct CaptureGuard;
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+impl CaptureGuard {
+    fn cleanup(&mut self) -> Result<(), ProximaError> {
+        Ok(())
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn install_capture(
+    config: &blackhole::CaptureConfig,
+    _listen_port: u16,
+) -> Result<Option<CaptureGuard>, ProximaError> {
+    if config.enabled {
+        Err(ProximaError::Config(
+            "capture is unsupported on this platform".into(),
+        ))
+    } else {
+        Ok(None)
+    }
+}
 
 #[cfg(feature = "std")]
 impl SendPipe for AnyHandler {
@@ -46,6 +144,8 @@ async fn main() -> Result<(), ProximaError> {
         .listen
         .parse()
         .map_err(|error| ProximaError::Config(format!("invalid server.listen: {error}")))?;
+    let capture_config = config.capture.clone();
+    let mut capture = install_capture(&capture_config, bind.port())?;
     let upstream = config.upstream.clone();
     let mut policy = Policy::new(config)
         .map_err(|error| ProximaError::Config(format!("invalid policy rule: {error}")))?;
@@ -58,15 +158,27 @@ async fn main() -> Result<(), ProximaError> {
         );
     }
     let policy = Arc::new(policy);
-    let server = Listener::builder()
+    let server = match Listener::builder()
         .bind(bind)
         .any()
         .protocol(UdpProtocol::new(Arc::clone(&policy)))
         .protocol(TcpProtocol::new(Arc::clone(&policy)))
         .handle(into_handle(AnyHandler))
         .serve()
-        .await?;
+        .await
+    {
+        Ok(server) => server,
+        Err(error) => {
+            if let Some(capture) = capture.as_mut() {
+                let _ = capture.cleanup();
+            }
+            return Err(error);
+        }
+    };
     println!("blackhole listening on {bind} (UDP+TCP DNS)");
     server.run_until_signal().await;
+    if let Some(capture) = capture.as_mut() {
+        capture.cleanup()?;
+    }
     Ok(())
 }

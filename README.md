@@ -30,3 +30,5 @@ Explicit forwarding uses the opt-in Proxima upstream pipe and fails closed
 when no upstream is attached. Forwarded positive and negative answers are
 cached within configured bounds; an upstream circuit breaker limits repeated
 failures and permits stale answers only during its configured stale window.
+The `[capture]` section is disabled by default; when enabled, it installs and
+recovers only the platform-native, journal-owned DNS redirect rules.

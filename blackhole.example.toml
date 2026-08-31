@@ -2,6 +2,17 @@
 # Use 53 only with the required OS capability; loopback keeps local testing scoped.
 listen = "127.0.0.1:5353"
 
+[capture]
+# Capture is opt-in. Enabling it requires the platform's firewall capability.
+enabled = false
+inbound_port = 53
+chain = "capture"
+mark = 42
+# The parent directory must already be owned and writable by the service.
+ownership_path = "/var/lib/blackhole/capture.state"
+# Used by the macOS PF adapter; set this to the host's inbound DNS address.
+original_destination = "127.0.0.1:53"
+
 [policy]
 # ignore drops the DNS response, nxdomain denies it, honeypot returns the configured address.
 mode = "nxdomain"
