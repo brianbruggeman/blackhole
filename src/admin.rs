@@ -9,7 +9,7 @@ use proxima::middlewares::auth::Auth;
 use proxima::pipe::{PipeHandle, into_handle};
 use proxima::{ProximaError, Request, Response, SendPipe};
 
-use crate::{Policy, RuleConfig};
+use crate::{Policy, RegexRuleConfig, RuleConfig};
 
 const MAX_POLICY_BODY_BYTES: usize = 64 * 1024;
 
@@ -84,9 +84,32 @@ impl SendPipe for AdminHandler {
                     ))),
                 }
             }
-            (_, "/health" | "/status" | "/reload/blocklists" | "/reload/policy") => {
-                Ok(Response::new(405))
+            ("POST", "/reload/regex") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let rules = match serde_json::from_slice::<Vec<RegexRuleConfig>>(&request.payload) {
+                    Ok(rules) => rules,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                match self.policy.reload_regex_rules(&rules) {
+                    Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
             }
+            (
+                _,
+                "/health" | "/status" | "/reload/blocklists" | "/reload/policy" | "/reload/regex",
+            ) => Ok(Response::new(405)),
             _ => Ok(Response::not_found()),
         }
     }
@@ -190,6 +213,36 @@ mod tests {
             .expect("empty request shape");
         let response = block_on(handler.call(empty)).expect("empty policy response");
         assert_eq!(response.status, 422);
+    }
+
+    #[test]
+    fn regex_reload_replaces_rules_and_allows_clearing_them() {
+        let policy = Arc::new(Policy::new(crate::Config::default()).expect("default policy"));
+        let handler = AdminHandler::new(Arc::clone(&policy));
+        let valid = Request::builder()
+            .method("POST")
+            .path("/reload/regex")
+            .payload(
+                r#"[{"id":9,"pattern":"^blocked\\.example$","action":"nxdomain","priority":0,"qtype":null,"qclass":null,"client":null}]"#,
+            )
+            .build()
+            .expect("valid regex request");
+        let response = block_on(handler.call(valid)).expect("regex reload response");
+        assert_eq!(response.status, 200);
+        let mut query_wire = vec![0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0];
+        query_wire.extend_from_slice(b"\x07blocked\x07example\0\0\x01\0\x01");
+        let query = crate::query::QueryView::parse(&query_wire).expect("query");
+        assert_eq!(policy.action_for_view(query), crate::Action::Nxdomain);
+
+        let clear = Request::builder()
+            .method("POST")
+            .path("/reload/regex")
+            .payload("[]")
+            .build()
+            .expect("clear regex request");
+        let response = block_on(handler.call(clear)).expect("clear response");
+        assert_eq!(response.status, 200);
+        assert_eq!(policy.action_for_view(query), crate::Action::Pass);
     }
 
     #[test]

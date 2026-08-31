@@ -1069,7 +1069,8 @@ mod runtime {
         country_policy: Option<CountryPolicy>,
         rewrites: RewriteTable,
         reference: PolicyStore,
-        regex_rules: Vec<RegexRule>,
+        regex_rules: Mutex<Vec<RegexRule>>,
+        domain_rules_configured: AtomicBool,
         rules_configured: AtomicBool,
         telemetry: Option<TelemetryHandle>,
         upstream: Option<DnsClientUpstream>,
@@ -1091,6 +1092,47 @@ mod runtime {
         qtype: Option<u16>,
         qclass: Option<u16>,
         client: Option<IpAddr>,
+    }
+
+    fn compile_regex_rules(
+        configs: &[RegexRuleConfig],
+        mut rule_ids: BTreeSet<u32>,
+    ) -> Result<Vec<RegexRule>, policy::PolicyError> {
+        if configs.len() > MAX_REGEX_RULES {
+            return Err(policy::PolicyError::TooManyRegexRules {
+                max: MAX_REGEX_RULES,
+            });
+        }
+        let mut regex_rules = Vec::with_capacity(configs.len());
+        for rule in configs {
+            if rule.pattern.len() > MAX_REGEX_PATTERN_BYTES {
+                return Err(policy::PolicyError::InvalidRegex {
+                    id: rule.id,
+                    reason: format!("pattern exceeds {MAX_REGEX_PATTERN_BYTES} bytes"),
+                });
+            }
+            if !rule_ids.insert(rule.id) {
+                return Err(policy::PolicyError::DuplicateRule { id: rule.id });
+            }
+            let pattern = regex::RegexBuilder::new(&rule.pattern)
+                .size_limit(MAX_REGEX_PROGRAM_BYTES)
+                .dfa_size_limit(MAX_REGEX_PROGRAM_BYTES)
+                .build()
+                .map_err(|error| policy::PolicyError::InvalidRegex {
+                    id: rule.id,
+                    reason: error.to_string(),
+                })?;
+            regex_rules.push(RegexRule {
+                id: rule.id,
+                pattern,
+                action: rule.action,
+                priority: rule.priority,
+                qtype: rule.qtype,
+                qclass: rule.qclass,
+                client: rule.client,
+            });
+        }
+        Ok(regex_rules)
     }
 
     impl Policy {
@@ -1155,44 +1197,11 @@ mod runtime {
             let country_policy = load_country_policy(&config.country_policy)?;
             let rewrites = compile_rewrites(&config.policy.rewrites)?;
             config.policy.rules.extend(blocklist_rules);
-            if config.policy.regex_rules.len() > MAX_REGEX_RULES {
-                return Err(policy::PolicyError::TooManyRegexRules {
-                    max: MAX_REGEX_RULES,
-                });
-            }
             let mut rule_ids = BTreeSet::new();
             for rule in &config.policy.rules {
                 rule_ids.insert(rule.id);
             }
-            let mut regex_rules = Vec::with_capacity(config.policy.regex_rules.len());
-            for rule in &config.policy.regex_rules {
-                if rule.pattern.len() > MAX_REGEX_PATTERN_BYTES {
-                    return Err(policy::PolicyError::InvalidRegex {
-                        id: rule.id,
-                        reason: format!("pattern exceeds {MAX_REGEX_PATTERN_BYTES} bytes"),
-                    });
-                }
-                if !rule_ids.insert(rule.id) {
-                    return Err(policy::PolicyError::DuplicateRule { id: rule.id });
-                }
-                let pattern = regex::RegexBuilder::new(&rule.pattern)
-                    .size_limit(MAX_REGEX_PROGRAM_BYTES)
-                    .dfa_size_limit(MAX_REGEX_PROGRAM_BYTES)
-                    .build()
-                    .map_err(|error| policy::PolicyError::InvalidRegex {
-                        id: rule.id,
-                        reason: error.to_string(),
-                    })?;
-                regex_rules.push(RegexRule {
-                    id: rule.id,
-                    pattern,
-                    action: rule.action,
-                    priority: rule.priority,
-                    qtype: rule.qtype,
-                    qclass: rule.qclass,
-                    client: rule.client,
-                });
-            }
+            let regex_rules = compile_regex_rules(&config.policy.regex_rules, rule_ids)?;
             config.policy.domains = config.policy.domains.into_iter().map(normalize).collect();
             let reference = PolicyStore::new(&config.policy.rules)?;
             let cache = Arc::new(Mutex::new(DnsCache::new(&config.cache)));
@@ -1213,13 +1222,15 @@ mod runtime {
             )));
             let rules_configured =
                 !config.policy.rules.is_empty() || !config.policy.regex_rules.is_empty();
+            let domain_rules_configured = !config.policy.rules.is_empty();
             let policy = Self {
                 config,
                 base_rules: Mutex::new(base_rules),
                 country_policy,
                 rewrites,
                 reference,
-                regex_rules,
+                regex_rules: Mutex::new(regex_rules),
+                domain_rules_configured: AtomicBool::new(domain_rules_configured),
                 rules_configured: AtomicBool::new(rules_configured),
                 telemetry: None,
                 upstream: None,
@@ -1253,8 +1264,15 @@ mod runtime {
         ) -> Result<ReloadState, policy::PolicyError> {
             let published = self.reference.reload(rules)?;
             *self.base_rules.lock().expect("base rules lock") = rules.to_vec();
+            self.domain_rules_configured
+                .store(!rules.is_empty(), Ordering::Release);
             self.rules_configured.store(
-                !rules.is_empty() || !self.regex_rules.is_empty(),
+                !rules.is_empty()
+                    || !self
+                        .regex_rules
+                        .lock()
+                        .expect("regex rules lock")
+                        .is_empty(),
                 Ordering::Release,
             );
             self.cache.lock().expect("cache lock").clear();
@@ -1269,12 +1287,42 @@ mod runtime {
             let mut rules = self.base_rules.lock().expect("base rules lock").clone();
             rules.extend(load_blocklists(&self.config.policy.blocklists)?);
             let published = self.reference.reload(&rules)?;
+            self.domain_rules_configured
+                .store(!rules.is_empty(), Ordering::Release);
             self.rules_configured.store(
-                !rules.is_empty() || !self.regex_rules.is_empty(),
+                !rules.is_empty()
+                    || !self
+                        .regex_rules
+                        .lock()
+                        .expect("regex rules lock")
+                        .is_empty(),
                 Ordering::Release,
             );
             self.cache.lock().expect("cache lock").clear();
             Ok(published)
+        }
+
+        /// Compile and atomically replace regex rules. Invalid updates leave
+        /// the last good regex generation in place.
+        pub fn reload_regex_rules(
+            &self,
+            configs: &[RegexRuleConfig],
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let rule_ids = self
+                .base_rules
+                .lock()
+                .expect("base rules lock")
+                .iter()
+                .map(|rule| rule.id)
+                .collect();
+            let compiled = compile_regex_rules(configs, rule_ids)?;
+            *self.regex_rules.lock().expect("regex rules lock") = compiled;
+            self.rules_configured.store(
+                self.domain_rules_configured.load(Ordering::Acquire) || !configs.is_empty(),
+                Ordering::Release,
+            );
+            self.cache.lock().expect("cache lock").clear();
+            Ok(ReloadState::Published)
         }
 
         /// Attach Proxima's existing bounded DNS upstream pipe. Forwarding is
@@ -1735,6 +1783,8 @@ mod runtime {
             client: Option<IpAddr>,
         ) -> Option<policy::Decision> {
             self.regex_rules
+                .lock()
+                .expect("regex rules lock")
                 .iter()
                 .filter(|rule| {
                     rule.pattern.is_match(name)

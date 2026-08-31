@@ -65,7 +65,7 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   current bounded files and retain the last good snapshot on failure.
 - Optional Proxima HTTP admin control plane with bearer authentication, a
   read-only health and non-sensitive status endpoints, authenticated blocklist
-  reload, and bounded complete rule-table reload from JSON.
+  reload, and bounded complete domain and regex rule-table reloads from JSON.
 - A tested policy/FSM/snapshot core that does not require privileged capture
   APIs.
 - Shared capture-controller orchestration with exact ownership journaling,

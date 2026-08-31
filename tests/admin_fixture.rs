@@ -112,5 +112,19 @@ async fn admin_http_listener_enforces_bearer_auth() {
     let policy = String::from_utf8_lossy(&policy);
     assert!(policy.starts_with("HTTP/1.1 200"));
     assert!(policy.contains("{\"status\":\"reloaded\"}"));
+    let regex = request(
+        addr,
+        "POST",
+        "/reload/regex",
+        Some("Bearer integration-secret"),
+        Some(
+            r#"[{"id":9,"pattern":"^blocked\\.example$","action":"nxdomain","priority":0,"qtype":null,"qclass":null,"client":null}]"#,
+        ),
+    )
+    .await
+    .expect("regex reload response");
+    let regex = String::from_utf8_lossy(&regex);
+    assert!(regex.starts_with("HTTP/1.1 200"));
+    assert!(regex.contains("{\"status\":\"reloaded\"}"));
     server.stop();
 }
