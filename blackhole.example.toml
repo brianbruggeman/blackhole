@@ -50,6 +50,8 @@ name = "telemetry"
 domains = ["ads.example", "telemetry.example"]
 action = "nxdomain"
 priority = 10
+# Optional client scope; the profile then applies only to matching networks.
+# client_cidrs = ["192.0.2.0/24", "2001:db8::/32"]
 
 # Optional bounded regular-expression rule. Expressions match the normalized
 # DNS name without its trailing root dot; explicit domain rules win first.

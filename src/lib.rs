@@ -602,6 +602,8 @@ mod runtime {
         pub action: Action,
         #[serde(default)]
         pub priority: i32,
+        #[serde(default)]
+        pub client_cidrs: Vec<String>,
     }
 
     #[derive(Debug, Clone, Deserialize)]
@@ -1039,7 +1041,7 @@ mod runtime {
                     qclass: None,
                     client: None,
                     client_cidr: None,
-                    client_cidrs: Vec::new(),
+                    client_cidrs: profile.client_cidrs.clone(),
                 });
             }
         }
@@ -3414,7 +3416,7 @@ mod runtime {
         }
 
         #[test]
-        fn named_service_profiles_compile_into_authoritative_rules() {
+        fn named_service_profiles_compile_into_scoped_authoritative_rules() {
             let mut config = Config::default();
             config.policy.profiles = vec![ServiceProfileConfig {
                 id: 40_000,
@@ -3422,6 +3424,7 @@ mod runtime {
                 domains: vec!["ads.example".into(), "tracking.example".into()],
                 action: Action::Nxdomain,
                 priority: 10,
+                client_cidrs: vec!["192.0.2.0/24".into()],
             }];
             let policy = Policy::new(config).expect("valid service profile");
             let query = proxima_dns::DnsQuery {
@@ -3431,7 +3434,19 @@ mod runtime {
                 qtype: 1,
                 qclass: 1,
             };
-            assert_eq!(policy.evaluate(&query).expect("profile answer").rcode, 3);
+            assert_eq!(
+                policy
+                    .decision(&query, Some("192.0.2.53".parse().unwrap()))
+                    .expect("scoped profile decision")
+                    .action,
+                Action::Nxdomain
+            );
+            assert!(
+                policy
+                    .decision(&query, Some("198.51.100.53".parse().unwrap()))
+                    .is_none()
+            );
+            assert!(policy.decision(&query, None).is_none());
         }
 
         #[test]
@@ -3444,6 +3459,7 @@ mod runtime {
                     domains: vec!["ads.example".into()],
                     action: Action::Nxdomain,
                     priority: 0,
+                    client_cidrs: Vec::new(),
                 },
                 ServiceProfileConfig {
                     id: 2,
@@ -3451,6 +3467,7 @@ mod runtime {
                     domains: vec!["tracking.example".into()],
                     action: Action::Nxdomain,
                     priority: 0,
+                    client_cidrs: Vec::new(),
                 },
             ];
             assert!(matches!(
@@ -3470,6 +3487,7 @@ mod runtime {
                     domains: vec!["first.example".into(); per_profile],
                     action: Action::Nxdomain,
                     priority: 0,
+                    client_cidrs: Vec::new(),
                 },
                 ServiceProfileConfig {
                     id: 200_000,
@@ -3477,6 +3495,7 @@ mod runtime {
                     domains: vec!["second.example".into(); per_profile],
                     action: Action::Nxdomain,
                     priority: 0,
+                    client_cidrs: Vec::new(),
                 },
             ];
             assert!(matches!(
