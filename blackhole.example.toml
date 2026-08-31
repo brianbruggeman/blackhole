@@ -40,6 +40,8 @@ reject_any = true
 max_name_bytes = 253
 # Bound records emitted by local and forwarded answers.
 max_response_records = 64
+# Bound all policy requests, not only upstream exchanges.
+max_inflight_requests = 1024
 
 [security]
 # Prevent forwarded answers from rebinding clients to private/local networks.

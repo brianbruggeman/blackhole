@@ -224,6 +224,8 @@ mod runtime {
         pub reject_any: bool,
         #[serde(default = "default_max_response_records")]
         pub max_response_records: usize,
+        #[serde(default = "default_max_inflight_requests")]
+        pub max_inflight_requests: usize,
     }
 
     impl Default for AdmissionConfig {
@@ -232,6 +234,7 @@ mod runtime {
                 max_name_bytes: default_max_name_bytes(),
                 reject_any: default_reject_any(),
                 max_response_records: default_max_response_records(),
+                max_inflight_requests: default_max_inflight_requests(),
             }
         }
     }
@@ -400,6 +403,9 @@ mod runtime {
     fn default_reject_private_upstream_addresses() -> bool {
         true
     }
+    fn default_max_inflight_requests() -> usize {
+        1024
+    }
     const MAX_BLOCKLIST_BYTES: u64 = 16 * 1024 * 1024;
     const MAX_BLOCKLIST_LINE_BYTES: usize = 4096;
 
@@ -506,6 +512,7 @@ mod runtime {
         upstream_slots: Option<Arc<Semaphore>>,
         cache: Arc<Mutex<DnsCache>>,
         breaker: Arc<Mutex<CircuitBreaker>>,
+        request_slots: Arc<Semaphore>,
     }
 
     impl Policy {
@@ -520,11 +527,17 @@ mod runtime {
                     reason: "max_response_records must be non-zero".into(),
                 });
             }
+            if config.admission.max_inflight_requests == 0 {
+                return Err(policy::PolicyError::InvalidAdmission {
+                    reason: "max_inflight_requests must be non-zero".into(),
+                });
+            }
             let blocklist_rules = load_blocklists(&config.policy.blocklists)?;
             config.policy.rules.extend(blocklist_rules);
             config.policy.domains = config.policy.domains.into_iter().map(normalize).collect();
             let reference = ReferencePolicy::new(&config.policy.rules)?;
             let cache = Arc::new(Mutex::new(DnsCache::new(&config.cache)));
+            let max_inflight_requests = config.admission.max_inflight_requests;
             let breaker = Arc::new(Mutex::new(CircuitBreaker::new(
                 config
                     .upstream
@@ -547,6 +560,7 @@ mod runtime {
                 upstream_slots: None,
                 cache,
                 breaker,
+                request_slots: Arc::new(Semaphore::new(max_inflight_requests)),
             };
             if let Some(upstream) = policy.config.upstream.as_ref() {
                 policy.validate_upstream(upstream)?;
@@ -843,6 +857,11 @@ mod runtime {
 
     impl Policy {
         async fn call_inner(&self, request: DnsPipeRequest) -> Result<DnsPipeReply, ProximaError> {
+            let Ok(_request_slot) = self.request_slots.try_acquire() else {
+                self.observe_failure("admission_overflow");
+                self.observe(Action::Reject);
+                return Ok(DnsPipeReply::typed(200, server_failure_answer()));
+            };
             let client = Policy::client_ip(request.context.peer.as_ref());
             let query = request.payload;
             if !self.admission_allows(&query) {
@@ -1431,6 +1450,14 @@ mod runtime {
                 Policy::new({
                     let mut config = Config::default();
                     config.admission.max_response_records = 0;
+                    config
+                })
+                .is_err()
+            );
+            assert!(
+                Policy::new({
+                    let mut config = Config::default();
+                    config.admission.max_inflight_requests = 0;
                     config
                 })
                 .is_err()
