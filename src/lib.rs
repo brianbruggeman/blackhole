@@ -12,8 +12,10 @@ use proxima_primitives::pipe::SendPipe;
 use proxima_primitives::stream::DatagramFactory;
 use proxima_primitives::sync::Semaphore;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 pub mod fsm;
 pub mod linux_capture;
@@ -36,6 +38,118 @@ pub struct Config {
     pub honeypot: HoneypotConfig,
     #[serde(default)]
     pub upstream: Option<UpstreamConfig>,
+    #[serde(default)]
+    pub cache: CacheConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CacheConfig {
+    #[serde(default = "default_cache_entries")]
+    pub max_entries: usize,
+    #[serde(default = "default_stale_ttl_secs")]
+    pub stale_ttl_secs: u64,
+    #[serde(default = "default_negative_ttl_secs")]
+    pub negative_ttl_secs: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct CacheKey {
+    name: String,
+    qtype: u16,
+    qclass: u16,
+}
+
+impl CacheKey {
+    fn from_query(query: &proxima_dns::DnsQuery) -> Self {
+        Self {
+            name: normalize(&query.name),
+            qtype: query.qtype,
+            qclass: query.qclass,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct CacheEntry {
+    answer: DnsAnswer,
+    expires_at: Instant,
+    stale_until: Instant,
+}
+
+#[derive(Debug)]
+struct DnsCache {
+    entries: HashMap<CacheKey, CacheEntry>,
+    config: CacheConfig,
+}
+
+impl DnsCache {
+    fn new(config: &CacheConfig) -> Self {
+        Self {
+            entries: HashMap::new(),
+            config: config.clone(),
+        }
+    }
+
+    fn fresh(&mut self, key: &CacheKey) -> Option<DnsAnswer> {
+        let now = Instant::now();
+        let entry = self.entries.get(key)?;
+        if now < entry.expires_at {
+            return Some(entry.answer.clone());
+        }
+        None
+    }
+
+    fn stale(&mut self, key: &CacheKey) -> Option<DnsAnswer> {
+        let now = Instant::now();
+        let entry = self.entries.get(key)?;
+        if now < entry.stale_until {
+            return Some(entry.answer.clone());
+        }
+        self.entries.remove(key);
+        None
+    }
+
+    fn insert(&mut self, key: CacheKey, answer: DnsAnswer, now: Instant) {
+        if self.config.max_entries == 0 {
+            return;
+        }
+        if self.entries.len() >= self.config.max_entries && !self.entries.contains_key(&key) {
+            if let Some(oldest) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.expires_at)
+                .map(|(key, _)| key.clone())
+            {
+                self.entries.remove(&oldest);
+            }
+        }
+        let ttl_secs = answer
+            .records
+            .iter()
+            .map(|record| u64::from(record.ttl))
+            .min()
+            .unwrap_or(self.config.negative_ttl_secs);
+        let ttl = Duration::from_secs(ttl_secs);
+        let stale = Duration::from_secs(self.config.stale_ttl_secs);
+        self.entries.insert(
+            key,
+            CacheEntry {
+                answer,
+                expires_at: now + ttl,
+                stale_until: now + ttl + stale,
+            },
+        );
+    }
+}
+
+impl Default for CacheConfig {
+    fn default() -> Self {
+        Self {
+            max_entries: default_cache_entries(),
+            stale_ttl_secs: default_stale_ttl_secs(),
+            negative_ttl_secs: default_negative_ttl_secs(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -158,6 +272,15 @@ fn default_max_attempts() -> u32 {
 fn default_max_outstanding() -> usize {
     64
 }
+fn default_cache_entries() -> usize {
+    1024
+}
+fn default_stale_ttl_secs() -> u64 {
+    30
+}
+fn default_negative_ttl_secs() -> u64 {
+    30
+}
 
 impl Config {
     pub fn from_file(path: &std::path::Path) -> Result<Self, Box<dyn std::error::Error>> {
@@ -175,18 +298,21 @@ pub struct Policy {
     telemetry: Option<TelemetryHandle>,
     upstream: Option<DnsClientUpstream>,
     upstream_slots: Option<Arc<Semaphore>>,
+    cache: Arc<Mutex<DnsCache>>,
 }
 
 impl Policy {
     pub fn new(mut config: Config) -> Result<Self, policy::PolicyError> {
         config.policy.domains = config.policy.domains.into_iter().map(normalize).collect();
         let reference = ReferencePolicy::new(&config.policy.rules)?;
+        let cache = Arc::new(Mutex::new(DnsCache::new(&config.cache)));
         let policy = Self {
             config,
             reference,
             telemetry: None,
             upstream: None,
             upstream_slots: None,
+            cache,
         };
         if let Some(upstream) = policy.config.upstream.as_ref() {
             policy.validate_upstream(upstream)?;
@@ -387,13 +513,30 @@ impl SendPipe for Policy {
                 self.observe(Action::Forward);
                 return Ok(DnsPipeReply::typed(204, DnsAnswer::ok(Vec::new())));
             };
-            let answer = upstream
-                .query(&query.name, query.qtype, query.qclass)
-                .await
-                .map_err(|error| {
+            let key = CacheKey::from_query(&query);
+            if let Some(answer) = self.cache.lock().expect("cache lock").fresh(&key) {
+                self.observe(Action::Forward);
+                return Ok(DnsPipeReply::typed(200, answer));
+            }
+            let answer = upstream.query(&query.name, query.qtype, query.qclass).await;
+            let answer = match answer {
+                Ok(answer) => {
+                    self.cache.lock().expect("cache lock").insert(
+                        key.clone(),
+                        answer.clone(),
+                        Instant::now(),
+                    );
+                    answer
+                }
+                Err(error) => {
+                    if let Some(answer) = self.cache.lock().expect("cache lock").stale(&key) {
+                        self.observe(Action::Forward);
+                        return Ok(DnsPipeReply::typed(200, answer));
+                    }
                     self.observe(Action::Forward);
-                    ProximaError::Io(std::io::Error::other(error.to_string()))
-                })?;
+                    return Err(ProximaError::Io(std::io::Error::other(error.to_string())));
+                }
+            };
             self.observe(Action::Forward);
             return Ok(DnsPipeReply::typed(200, answer));
         }
@@ -660,6 +803,54 @@ mod tests {
         let view = QueryView::parse(&packet).expect("valid query");
         assert_eq!(policy.action_for_view(view), Action::Reject);
         assert_eq!(view.to_owned().name, "blocked.example.");
+    }
+
+    #[test]
+    fn cache_bounds_entries_and_serves_positive_and_negative_answers() {
+        let config = CacheConfig {
+            max_entries: 1,
+            stale_ttl_secs: 30,
+            negative_ttl_secs: 30,
+        };
+        let mut cache = DnsCache::new(&config);
+        let first = CacheKey {
+            name: "one.example".into(),
+            qtype: 1,
+            qclass: 1,
+        };
+        let second = CacheKey {
+            name: "two.example".into(),
+            qtype: 1,
+            qclass: 1,
+        };
+        let now = Instant::now();
+        cache.insert(first.clone(), DnsAnswer::ok(Vec::new()), now);
+        assert!(cache.fresh(&first).is_some());
+        cache.insert(second.clone(), DnsAnswer::name_error(), now);
+        assert_eq!(cache.entries.len(), 1);
+        assert!(cache.fresh(&first).is_none());
+        assert_eq!(cache.fresh(&second), Some(DnsAnswer::name_error()));
+    }
+
+    #[test]
+    fn expired_entries_are_available_only_inside_the_stale_window() {
+        let config = CacheConfig::default();
+        let mut cache = DnsCache::new(&config);
+        let key = CacheKey {
+            name: "stale.example".into(),
+            qtype: 1,
+            qclass: 1,
+        };
+        let now = Instant::now();
+        cache.insert(key.clone(), DnsAnswer::name_error(), now);
+        let entry = cache.entries.get_mut(&key).expect("inserted cache entry");
+        entry.expires_at = now - Duration::from_secs(1);
+        assert!(cache.fresh(&key).is_none());
+        assert!(cache.stale(&key).is_some());
+        let entry = cache.entries.get_mut(&key).expect("stale entry retained");
+        entry.stale_until = Instant::now() - Duration::from_secs(1);
+        assert!(cache.stale(&key).is_none());
+        assert!(!cache.entries.contains_key(&key));
     }
 
     #[test]
