@@ -8,12 +8,12 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | Gate | Evidence |
 | --- | --- |
 | Formatting | `cargo fmt --all -- --check` passed on the current Blackhole changes with Rust `1.98.0`. |
-| Compilation | `cargo check --offline --all-targets` passed with Proxima from GitHub revision `0652a0c0` using Rust `1.98.0` and Cargo `1.98.0`. |
-| Unit and integration tests | `cargo test --offline --all-targets` passed: 80 library tests, 1 real HTTP admin fixture, 3 real loopback UDP/TCP resolver fixture tests, and 8 fake-upstream tests against GitHub Proxima revision `0652a0c0`; verified at Blackhole policy-admin changes with Rust `1.98.0` and Cargo `1.98.0`. |
+| Compilation | `cargo check --offline --all-targets` passed with Proxima from GitHub revision `0652a0c0` using Rust `1.98.0` and Cargo `1.98.0`; the current tree is `ccfff92`. |
+| Unit and integration tests | `cargo test --offline --all-targets` passed: 80 library tests, 1 real HTTP admin fixture, 3 real loopback UDP/TCP resolver fixture tests, and 8 fake-upstream tests against GitHub Proxima revision `0652a0c0`; refreshed at Blackhole `ccfff92` with Rust `1.98.0` and Cargo `1.98.0`. |
 | Cache failure behavior | `fake_upstream_servfail_is_not_cached` passed at `3e463c8`; SERVFAIL caused two upstream exchanges. |
-| Nextest | `cargo nextest run --offline --workspace` passed: 92 tests, 92 passed, 0 skipped, against GitHub Proxima revision `0652a0c0`; the real admin fixture uses an OS-assigned loopback port and passes under the parallel runner. |
-| Doctests | `cargo test --doc --offline` passed: 1 doctest. |
-| No-std and WASM | `cargo check --offline --no-default-features --target thumbv7m-none-eabi` and the equivalent `wasm32-unknown-unknown` command passed on the current main tree with GitHub Proxima revision `0652a0c0`. |
+| Nextest | `cargo nextest run --offline --workspace` passed at Blackhole `ccfff92`: 92 tests, 92 passed, 0 skipped, against GitHub Proxima revision `0652a0c0`; the real admin fixture uses an OS-assigned loopback port and passes under the parallel runner. |
+| Doctests | `cargo test --doc --offline` passed at Blackhole `ccfff92`: 1 doctest. |
+| No-std and WASM | `cargo check --offline --no-default-features --target thumbv7m-none-eabi` and the equivalent `wasm32-unknown-unknown` command passed at Blackhole `ccfff92` with GitHub Proxima revision `0652a0c0`. |
 | Dependency audit | `cargo audit --no-fetch` passed with one allowed warning: unmaintained `paste` (`RUSTSEC-2024-0436`). The fuzz lockfile audit also passed. |
 | Fuzz smoke | The `query_view` nightly fuzz target ran 1,000 iterations without a crash; the bounded corpus contains 50 inputs. |
 | Resolver fixture | The actual loopback UDP/TCP listener fixture passed. |
