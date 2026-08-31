@@ -14,6 +14,7 @@ use proxima_protocols::dns::{Flags, encode, parse_message};
 #[derive(Clone, Copy)]
 enum ReplyMode {
     Valid,
+    Negative,
     WrongId,
     Malformed,
     WrongSender,
@@ -54,7 +55,10 @@ impl FakeSocket {
         let reply = match mode {
             ReplyMode::Malformed => vec![0; 12],
             ReplyMode::Timeout => return,
-            ReplyMode::Valid | ReplyMode::WrongId | ReplyMode::WrongSender => {
+            ReplyMode::Valid
+            | ReplyMode::Negative
+            | ReplyMode::WrongId
+            | ReplyMode::WrongSender => {
                 let message = parse_message(query).expect("fake query");
                 let question = message
                     .questions()
@@ -76,15 +80,29 @@ impl FakeSocket {
                 } else {
                     message.header.id
                 };
+                let records = if matches!(mode, ReplyMode::Negative) {
+                    Vec::new()
+                } else {
+                    vec![record]
+                };
                 encode::encode_response(
                     id,
-                    Flags::for_response(true, false, true, 0),
+                    Flags::for_response(
+                        true,
+                        false,
+                        true,
+                        if matches!(mode, ReplyMode::Negative) {
+                            3
+                        } else {
+                            0
+                        },
+                    ),
                     encode::EncodeQuestion {
                         name: &name,
                         qtype: question.qtype,
                         qclass: question.qclass,
                     },
-                    &[record],
+                    &records,
                     &mut response,
                 )
                 .expect("fake response");
@@ -253,5 +271,19 @@ async fn fake_upstream_cache_hit_avoids_a_second_exchange() {
         socket.state.lock().expect("fake state").sent.len(),
         1,
         "fresh cache entry must avoid a second upstream query"
+    );
+}
+
+#[proxima::test]
+async fn fake_upstream_negative_cache_hit_avoids_a_second_exchange() {
+    let (policy, socket) = policy(ReplyMode::Negative);
+    let first = policy.call(request()).await.expect("first exchange");
+    assert_eq!(first.payload.rcode, 3);
+    let second = policy.call(request()).await.expect("cached exchange");
+    assert_eq!(second.payload.rcode, 3);
+    assert_eq!(
+        socket.state.lock().expect("fake state").sent.len(),
+        1,
+        "fresh negative cache entry must avoid a second upstream query"
     );
 }
