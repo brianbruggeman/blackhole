@@ -1,6 +1,5 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU16, Ordering};
 
 use blackhole::listener::{TcpProtocol, UdpProtocol};
 use blackhole::{Action, Config, Policy, RewriteConfig, RuleConfig, UpstreamConfig};
@@ -14,15 +13,9 @@ use proxima_primitives::stream::DatagramFactory;
 use proxima_primitives::stream::StreamUpstreamExt;
 use proxima_protocols::dns::{Flags, encode, parse_message};
 
-static NEXT_LISTENER_SLOT: AtomicU16 = AtomicU16::new(0);
-
 fn test_listener_addr() -> SocketAddr {
-    let process_slot = (std::process::id() % 19_000) as u16;
-    let slot = NEXT_LISTENER_SLOT.fetch_add(1, Ordering::Relaxed) % 20;
-    SocketAddr::new(
-        IpAddr::V4(Ipv4Addr::LOCALHOST),
-        40_000 + process_slot + slot,
-    )
+    let probe = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("reserve listener port");
+    probe.local_addr().expect("reserved listener address")
 }
 
 struct Passthrough;
