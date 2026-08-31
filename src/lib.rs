@@ -1057,11 +1057,13 @@ mod runtime {
                             return Ok(DnsPipeReply::typed(200, server_failure_answer()));
                         }
                         self.breaker.lock().expect("breaker lock").success();
-                        self.cache.lock().expect("cache lock").insert(
-                            key.clone(),
-                            answer.clone(),
-                            Instant::now(),
-                        );
+                        if matches!(answer.rcode, 0 | 3) {
+                            self.cache.lock().expect("cache lock").insert(
+                                key.clone(),
+                                answer.clone(),
+                                Instant::now(),
+                            );
+                        }
                         answer
                     }
                     Err(error) => {

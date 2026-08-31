@@ -15,6 +15,7 @@ use proxima_protocols::dns::{Flags, encode, parse_message};
 enum ReplyMode {
     Valid,
     Negative,
+    Servfail,
     WrongId,
     Malformed,
     WrongSender,
@@ -57,6 +58,7 @@ impl FakeSocket {
             ReplyMode::Timeout => return,
             ReplyMode::Valid
             | ReplyMode::Negative
+            | ReplyMode::Servfail
             | ReplyMode::WrongId
             | ReplyMode::WrongSender => {
                 let message = parse_message(query).expect("fake query");
@@ -80,7 +82,7 @@ impl FakeSocket {
                 } else {
                     message.header.id
                 };
-                let records = if matches!(mode, ReplyMode::Negative) {
+                let records = if matches!(mode, ReplyMode::Negative | ReplyMode::Servfail) {
                     Vec::new()
                 } else {
                     vec![record]
@@ -93,6 +95,8 @@ impl FakeSocket {
                         true,
                         if matches!(mode, ReplyMode::Negative) {
                             3
+                        } else if matches!(mode, ReplyMode::Servfail) {
+                            2
                         } else {
                             0
                         },
@@ -286,5 +290,19 @@ async fn fake_upstream_negative_cache_hit_avoids_a_second_exchange() {
         socket.state.lock().expect("fake state").sent.len(),
         1,
         "fresh negative cache entry must avoid a second upstream query"
+    );
+}
+
+#[proxima::test]
+async fn fake_upstream_servfail_is_not_cached() {
+    let (policy, socket) = policy(ReplyMode::Servfail);
+    let first = policy.call(request()).await.expect("first exchange");
+    assert_eq!(first.payload.rcode, 2);
+    let second = policy.call(request()).await.expect("second exchange");
+    assert_eq!(second.payload.rcode, 2);
+    assert_eq!(
+        socket.state.lock().expect("fake state").sent.len(),
+        2,
+        "SERVFAIL must not become a reusable negative cache entry"
     );
 }
