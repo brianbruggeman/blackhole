@@ -1394,6 +1394,7 @@ mod runtime {
             &self,
             rules: &[RuleConfig],
         ) -> Result<ReloadState, policy::PolicyError> {
+            let started = Instant::now();
             let regex_ids = self
                 .regex_rules
                 .lock()
@@ -1418,6 +1419,7 @@ mod runtime {
                 Ordering::Release,
             );
             self.cache.lock().expect("cache lock").clear();
+            self.observe_reload_latency("rules", started);
             Ok(published)
         }
 
@@ -1426,6 +1428,7 @@ mod runtime {
         /// Files are read and validated before the live snapshot is touched,
         /// so an unreadable or malformed update keeps the last good generation.
         pub fn reload_blocklists(&self) -> Result<ReloadState, policy::PolicyError> {
+            let started = Instant::now();
             let mut rules = self.base_rules.lock().expect("base rules lock").clone();
             rules.extend(load_blocklists(&self.config.policy.blocklists)?);
             let regex_ids = self
@@ -1451,14 +1454,17 @@ mod runtime {
                 Ordering::Release,
             );
             self.cache.lock().expect("cache lock").clear();
+            self.observe_reload_latency("blocklists", started);
             Ok(published)
         }
 
         /// Reload the configured country/CIDR map and publish it only after
         /// the complete replacement has passed bounded validation.
         pub fn reload_country_policy(&self) -> Result<ReloadState, policy::PolicyError> {
+            let started = Instant::now();
             let next = load_country_policy(&self.config.country_policy)?;
             *self.country_policy.write().expect("country policy lock") = next;
+            self.observe_reload_latency("country", started);
             Ok(ReloadState::Published)
         }
 
@@ -1468,6 +1474,7 @@ mod runtime {
             &self,
             configs: &[RegexRuleConfig],
         ) -> Result<ReloadState, policy::PolicyError> {
+            let started = Instant::now();
             let rule_ids = self.reference.rule_ids();
             let compiled = compile_regex_rules(configs, rule_ids)?;
             *self.regex_rules.lock().expect("regex rules lock") = compiled;
@@ -1476,6 +1483,7 @@ mod runtime {
                 Ordering::Release,
             );
             self.cache.lock().expect("cache lock").clear();
+            self.observe_reload_latency("regex", started);
             Ok(ReloadState::Published)
         }
 
@@ -2117,6 +2125,21 @@ mod runtime {
                 "blackhole.request_latency_ns",
                 &labels,
                 elapsed.as_nanos() as f64,
+            );
+        }
+
+        fn observe_reload_latency(&self, kind: &'static str, started: Instant) {
+            let Some(telemetry) = self.telemetry.as_ref() else {
+                return;
+            };
+            if !telemetry.is_active() {
+                return;
+            }
+            let labels = Labels::from_pairs(&[("kind", kind)]);
+            telemetry.histogram_record(
+                "blackhole.reload_latency_ns",
+                &labels,
+                started.elapsed().as_nanos() as f64,
             );
         }
     }
@@ -3951,6 +3974,66 @@ mod runtime {
             policy.observe_latency(Duration::from_nanos(7));
             assert_eq!(telemetry.failures.load(Ordering::Relaxed), 1);
             assert_eq!(telemetry.latencies.load(Ordering::Relaxed), 1);
+        }
+
+        #[test]
+        fn telemetry_records_reload_latency_by_reload_kind() {
+            use proxima::Telemetry;
+            use std::sync::{Arc, Mutex};
+
+            struct ReloadTelemetry {
+                kinds: Mutex<Vec<String>>,
+            }
+
+            impl Telemetry for ReloadTelemetry {
+                fn counter_inc(&self, _: &str, _: &Labels, _: u64) {}
+                fn gauge_set(&self, _: &str, _: &Labels, _: i64) {}
+                fn histogram_record(&self, metric: &str, labels: &Labels, value: f64) {
+                    assert_eq!(metric, "blackhole.reload_latency_ns");
+                    assert_eq!(labels.entries().len(), 1);
+                    assert!(value >= 0.0);
+                    self.kinds
+                        .lock()
+                        .expect("reload telemetry lock")
+                        .push(labels.entries()[0].1.to_owned());
+                }
+            }
+
+            let telemetry = Arc::new(ReloadTelemetry {
+                kinds: Mutex::new(Vec::new()),
+            });
+            let policy = Policy::new(Config::default())
+                .expect("valid policy")
+                .with_telemetry(telemetry.clone());
+            policy
+                .reload_rules(&[RuleConfig {
+                    id: 1,
+                    domain: "blocked.example".into(),
+                    action: Action::Nxdomain,
+                    priority: 0,
+                    qtype: None,
+                    qclass: None,
+                    client: None,
+                    client_cidr: None,
+                    client_cidrs: Vec::new(),
+                }])
+                .expect("rules reload");
+            policy
+                .reload_regex_rules(&[RegexRuleConfig {
+                    id: 2,
+                    pattern: "blocked".into(),
+                    action: Action::Drop,
+                    priority: 0,
+                    qtype: None,
+                    qclass: None,
+                    client: None,
+                }])
+                .expect("regex reload");
+
+            assert_eq!(
+                *telemetry.kinds.lock().expect("reload telemetry lock"),
+                vec!["rules".to_owned(), "regex".to_owned()]
+            );
         }
     }
 }
