@@ -6,6 +6,7 @@
 
 use std::fmt;
 use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 
 const MAX_INTERFACE_BYTES: usize = 15;
 const MAX_CHAIN_BYTES: usize = 32;
@@ -95,8 +96,18 @@ impl NftRulePlan {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CaptureOwnership {
+    pub table: String,
+    pub chain: String,
+    pub inbound_port: u16,
+    pub redirect_port: u16,
+    pub mark: u32,
+}
+
 pub trait CapturePlan {
     fn render(&self) -> String;
+    fn ownership(&self) -> CaptureOwnership;
 }
 
 pub trait RuleBackend {
@@ -115,16 +126,123 @@ pub enum InstallState {
     Failed,
 }
 
-pub struct CaptureController<B> {
+pub trait OwnershipStore {
+    fn load(&self) -> Result<Option<CaptureOwnership>, String>;
+    fn save(&mut self, ownership: &CaptureOwnership) -> Result<(), String>;
+    fn clear(&mut self) -> Result<(), String>;
+}
+
+#[derive(Debug, Default)]
+pub struct MemoryOwnershipStore {
+    ownership: Option<CaptureOwnership>,
+}
+
+impl OwnershipStore for MemoryOwnershipStore {
+    fn load(&self) -> Result<Option<CaptureOwnership>, String> {
+        Ok(self.ownership.clone())
+    }
+
+    fn save(&mut self, ownership: &CaptureOwnership) -> Result<(), String> {
+        self.ownership = Some(ownership.clone());
+        Ok(())
+    }
+
+    fn clear(&mut self) -> Result<(), String> {
+        self.ownership = None;
+        Ok(())
+    }
+}
+
+/// A small line-oriented journal. The file is replaced atomically enough for
+/// restart recovery: an incomplete record is treated as absent, never as
+/// permission to delete unrelated firewall state.
+#[derive(Debug, Clone)]
+pub struct FileOwnershipStore {
+    path: PathBuf,
+}
+
+impl FileOwnershipStore {
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
+    }
+
+    fn encode(ownership: &CaptureOwnership) -> String {
+        format!(
+            "{}\n{}\n{}\n{}\n{}\n",
+            ownership.table,
+            ownership.chain,
+            ownership.inbound_port,
+            ownership.redirect_port,
+            ownership.mark
+        )
+    }
+
+    fn decode(value: &str) -> Option<CaptureOwnership> {
+        let mut lines = value.lines();
+        Some(CaptureOwnership {
+            table: lines.next()?.to_owned(),
+            chain: lines.next()?.to_owned(),
+            inbound_port: lines.next()?.parse().ok()?,
+            redirect_port: lines.next()?.parse().ok()?,
+            mark: lines.next()?.parse().ok()?,
+        })
+    }
+
+    fn validate_path(path: &Path) -> Result<(), String> {
+        if path.as_os_str().is_empty() {
+            Err("ownership journal path is empty".into())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl OwnershipStore for FileOwnershipStore {
+    fn load(&self) -> Result<Option<CaptureOwnership>, String> {
+        Self::validate_path(&self.path)?;
+        match std::fs::read_to_string(&self.path) {
+            Ok(value) => Ok(Self::decode(&value)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    fn save(&mut self, ownership: &CaptureOwnership) -> Result<(), String> {
+        Self::validate_path(&self.path)?;
+        let temporary = self.path.with_extension("tmp");
+        std::fs::write(&temporary, Self::encode(ownership)).map_err(|error| error.to_string())?;
+        std::fs::rename(temporary, &self.path).map_err(|error| error.to_string())
+    }
+
+    fn clear(&mut self) -> Result<(), String> {
+        Self::validate_path(&self.path)?;
+        match std::fs::remove_file(&self.path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+}
+
+pub struct CaptureController<B, S = MemoryOwnershipStore> {
     backend: B,
+    store: S,
     state: InstallState,
 }
 
-impl<B: RuleBackend> CaptureController<B> {
+impl<B: RuleBackend> CaptureController<B, MemoryOwnershipStore> {
     #[must_use]
     pub fn new(backend: B) -> Self {
+        Self::with_store(backend, MemoryOwnershipStore::default())
+    }
+}
+
+impl<B: RuleBackend, S: OwnershipStore> CaptureController<B, S> {
+    #[must_use]
+    pub fn with_store(backend: B, store: S) -> Self {
         Self {
             backend,
+            store,
             state: InstallState::Uninstalled,
         }
     }
@@ -143,6 +261,11 @@ impl<B: RuleBackend> CaptureController<B> {
             self.state = InstallState::Failed;
             return Err(CaptureError::Transaction { error, rollback });
         }
+        if let Err(error) = self.store.save(&plan.ownership()) {
+            let rollback = self.backend.remove(plan);
+            self.state = InstallState::Failed;
+            return Err(CaptureError::Transaction { error, rollback });
+        }
         self.state = InstallState::Installed;
         Ok(())
     }
@@ -151,9 +274,32 @@ impl<B: RuleBackend> CaptureController<B> {
         if self.state == InstallState::Uninstalled {
             return Ok(());
         }
+        match self.store.load().map_err(CaptureError::Backend)? {
+            Some(ownership) if ownership == plan.ownership() => {}
+            _ => return Err(CaptureError::OwnershipMismatch),
+        }
         self.backend.remove(plan).map_err(CaptureError::Backend)?;
+        self.store.clear().map_err(CaptureError::Backend)?;
         self.state = InstallState::Uninstalled;
         Ok(())
+    }
+
+    /// Reconcile after a process crash or reboot. Only an exact ownership
+    /// record can cause a backend verification; unrelated rules are ignored.
+    pub fn recover(&mut self, plan: &B::Plan) -> Result<InstallState, CaptureError> {
+        let Some(ownership) = self.store.load().map_err(CaptureError::Backend)? else {
+            return Ok(self.state);
+        };
+        if ownership != plan.ownership() {
+            return Ok(self.state);
+        }
+        if self.backend.verify(plan).is_ok() {
+            self.state = InstallState::Installed;
+        } else {
+            self.store.clear().map_err(CaptureError::Backend)?;
+            self.state = InstallState::Uninstalled;
+        }
+        Ok(self.state)
     }
 
     #[must_use]
@@ -171,6 +317,16 @@ impl CapturePlan for NftRulePlan {
     fn render(&self) -> String {
         self.render()
     }
+
+    fn ownership(&self) -> CaptureOwnership {
+        CaptureOwnership {
+            table: self.table.clone(),
+            chain: self.chain.clone(),
+            inbound_port: self.inbound_port,
+            redirect_port: self.redirect_port,
+            mark: self.mark,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -182,6 +338,7 @@ pub enum CaptureError {
         error: String,
         rollback: Result<(), String>,
     },
+    OwnershipMismatch,
 }
 
 impl fmt::Display for CaptureError {
@@ -195,6 +352,9 @@ impl fmt::Display for CaptureError {
                     formatter,
                     "capture verification failed: {error}; rollback: {rollback:?}"
                 )
+            }
+            Self::OwnershipMismatch => {
+                formatter.write_str("capture ownership record does not match the plan")
             }
         }
     }
@@ -293,5 +453,39 @@ mod tests {
         controller.cleanup(&plan).unwrap();
         controller.cleanup(&plan).unwrap();
         assert_eq!(controller.status(), InstallState::Uninstalled);
+    }
+
+    #[test]
+    fn file_ownership_store_round_trips_and_ignores_corruption() {
+        let path = std::env::temp_dir().join(format!(
+            "blackhole-capture-ownership-{}.state",
+            std::process::id()
+        ));
+        let mut store = FileOwnershipStore::new(&path);
+        let ownership = NftRulePlan::new("capture", 5353, 42).unwrap().ownership();
+        store.save(&ownership).expect("journal save");
+        assert_eq!(store.load().expect("journal load"), Some(ownership.clone()));
+        std::fs::write(&path, "partial\nrecord\n").expect("corrupt journal");
+        assert_eq!(store.load().expect("corrupt journal is safe"), None);
+        store.clear().expect("journal cleanup");
+    }
+
+    #[test]
+    fn recovery_verifies_only_an_exact_owned_plan() {
+        let path = std::env::temp_dir().join(format!(
+            "blackhole-capture-recovery-{}.state",
+            std::process::id()
+        ));
+        let plan = NftRulePlan::new("capture", 53, 5353).unwrap();
+        let mut first =
+            CaptureController::with_store(FakeBackend::default(), FileOwnershipStore::new(&path));
+        first.install(&plan).expect("install");
+
+        let mut recovered =
+            CaptureController::with_store(FakeBackend::default(), FileOwnershipStore::new(&path));
+        assert_eq!(recovered.recover(&plan).unwrap(), InstallState::Installed);
+        recovered.cleanup(&plan).expect("owned cleanup");
+        assert_eq!(recovered.status(), InstallState::Uninstalled);
+        assert!(!path.exists());
     }
 }

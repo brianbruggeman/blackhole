@@ -7,7 +7,7 @@
 use std::fmt;
 use std::net::SocketAddr;
 
-use crate::linux_capture::{CaptureContext, CapturePlan};
+use crate::linux_capture::{CaptureContext, CaptureOwnership, CapturePlan};
 
 const MAX_ANCHOR_BYTES: usize = 64;
 
@@ -55,6 +55,16 @@ impl PfRulePlan {
 impl CapturePlan for PfRulePlan {
     fn render(&self) -> String {
         self.render()
+    }
+
+    fn ownership(&self) -> CaptureOwnership {
+        CaptureOwnership {
+            table: "pf".into(),
+            chain: self.anchor.clone(),
+            inbound_port: self.original_destination.port(),
+            redirect_port: self.redirect_port,
+            mark: 0,
+        }
     }
 }
 

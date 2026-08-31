@@ -26,5 +26,8 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Optional action counters through Proxima telemetry.
 - A tested policy/FSM/snapshot core that does not require privileged capture
   APIs.
+- Shared capture-controller orchestration with exact ownership journaling,
+  rollback on journal failure, corruption-safe restart recovery, and cleanup
+  refusal for ownership mismatches.
 - Proxima consumed from its GitHub source, with Prime as the default runtime
   path and Tokio compatibility supplied by the dependency configuration.
