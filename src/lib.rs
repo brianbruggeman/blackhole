@@ -692,11 +692,30 @@ mod runtime {
             answer
         }
 
-        fn validate_upstream_answer(&self, answer: &DnsAnswer) -> Result<(), &'static str> {
-            if !self.config.security.reject_private_upstream_addresses {
-                return Ok(());
-            }
+        fn validate_upstream_answer(
+            &self,
+            query: &proxima_dns::DnsQuery,
+            answer: &DnsAnswer,
+        ) -> Result<(), &'static str> {
+            let query_name = normalize(&query.name);
+            let mut has_question_owner = false;
             for record in &answer.records {
+                let record_name = normalize(&record.name);
+                if !valid_dns_name(&record_name) || record.rclass != query.qclass {
+                    return Err("upstream_question_mismatch");
+                }
+                if record_name == query_name {
+                    has_question_owner = true;
+                }
+                if record.rtype == 1 && record.rdata.len() != 4 {
+                    return Err("upstream_malformed");
+                }
+                if record.rtype == 28 && record.rdata.len() != 16 {
+                    return Err("upstream_malformed");
+                }
+                if !self.config.security.reject_private_upstream_addresses {
+                    continue;
+                }
                 let blocked = match record.rtype {
                     1 if record.rdata.len() == 4 => {
                         let address = Ipv4Addr::new(
@@ -727,6 +746,9 @@ mod runtime {
                 if blocked {
                     return Err("upstream_rebinding");
                 }
+            }
+            if !answer.records.is_empty() && !has_question_owner {
+                return Err("upstream_question_mismatch");
             }
             Ok(())
         }
@@ -928,7 +950,7 @@ mod runtime {
                 let answer = upstream.query(&query.name, query.qtype, query.qclass).await;
                 let answer = match answer {
                     Ok(answer) => {
-                        if let Err(cause) = self.validate_upstream_answer(&answer) {
+                        if let Err(cause) = self.validate_upstream_answer(&query, &answer) {
                             self.breaker
                                 .lock()
                                 .expect("breaker lock")
@@ -1065,6 +1087,14 @@ mod runtime {
     }
     fn normalize(value: impl AsRef<str>) -> String {
         value.as_ref().trim_end_matches('.').to_ascii_lowercase()
+    }
+
+    fn valid_dns_name(name: &str) -> bool {
+        name.is_empty()
+            || (name.len() <= 253
+                && name
+                    .split('.')
+                    .all(|label| !label.is_empty() && label.len() <= 63 && label.is_ascii()))
     }
 
     #[cfg(test)]
@@ -1510,6 +1540,13 @@ mod runtime {
         #[test]
         fn upstream_rebinding_addresses_fail_closed_before_cache() {
             let policy = Policy::new(Config::default()).expect("valid policy");
+            let query = proxima_dns::DnsQuery {
+                id: 1,
+                recursion_desired: true,
+                name: "answer.example.".into(),
+                qtype: 1,
+                qclass: 1,
+            };
             let private = DnsAnswer {
                 rcode: 0,
                 authoritative: false,
@@ -1523,7 +1560,7 @@ mod runtime {
                 }],
             };
             assert_eq!(
-                policy.validate_upstream_answer(&private),
+                policy.validate_upstream_answer(&query, &private),
                 Err("upstream_rebinding")
             );
             let public = DnsAnswer {
@@ -1536,7 +1573,48 @@ mod runtime {
                 }],
                 ..private.clone()
             };
-            assert_eq!(policy.validate_upstream_answer(&public), Ok(()));
+            assert_eq!(policy.validate_upstream_answer(&query, &public), Ok(()));
+        }
+
+        #[test]
+        fn upstream_answer_must_match_question_shape() {
+            let policy = Policy::new(Config::default()).expect("valid policy");
+            let query = proxima_dns::DnsQuery {
+                id: 1,
+                recursion_desired: true,
+                name: "answer.example.".into(),
+                qtype: 1,
+                qclass: 1,
+            };
+            let unrelated = DnsAnswer {
+                records: vec![DnsAnswerRecord {
+                    name: "other.example.".into(),
+                    rtype: 1,
+                    rclass: 1,
+                    ttl: 30,
+                    rdata: vec![93, 184, 216, 34],
+                }],
+                ..DnsAnswer::ok(Vec::new())
+            };
+            assert_eq!(
+                policy.validate_upstream_answer(&query, &unrelated),
+                Err("upstream_question_mismatch")
+            );
+
+            let malformed = DnsAnswer {
+                records: vec![DnsAnswerRecord {
+                    name: "answer.example.".into(),
+                    rtype: 1,
+                    rclass: 1,
+                    ttl: 30,
+                    rdata: vec![127, 0, 0],
+                }],
+                ..DnsAnswer::ok(Vec::new())
+            };
+            assert_eq!(
+                policy.validate_upstream_answer(&query, &malformed),
+                Err("upstream_malformed")
+            );
         }
 
         #[test]
