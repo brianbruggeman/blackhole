@@ -362,6 +362,79 @@ impl fmt::Display for CaptureError {
 
 impl std::error::Error for CaptureError {}
 
+#[cfg(target_os = "linux")]
+pub mod native {
+    use super::{NftRulePlan, RuleBackend};
+    use std::io::Write;
+    use std::path::PathBuf;
+    use std::process::{Command, Stdio};
+
+    /// Privileged nftables capability. Construction is harmless; commands run
+    /// only when the caller explicitly installs or removes a capture plan.
+    #[derive(Debug, Clone)]
+    pub struct NftCommandBackend {
+        program: PathBuf,
+    }
+
+    impl Default for NftCommandBackend {
+        fn default() -> Self {
+            Self {
+                program: PathBuf::from("nft"),
+            }
+        }
+    }
+
+    impl NftCommandBackend {
+        #[must_use]
+        pub fn new(program: impl Into<PathBuf>) -> Self {
+            Self {
+                program: program.into(),
+            }
+        }
+
+        fn apply(&self, args: &[&str], input: Option<&str>) -> Result<(), String> {
+            let mut command = Command::new(&self.program);
+            command.args(args);
+            if input.is_some() {
+                command.stdin(Stdio::piped());
+            }
+            let mut child = command.spawn().map_err(|error| error.to_string())?;
+            if let Some(input) = input {
+                child
+                    .stdin
+                    .take()
+                    .ok_or_else(|| "nft stdin was unavailable".to_owned())?
+                    .write_all(input.as_bytes())
+                    .map_err(|error| error.to_string())?;
+            }
+            let output = child
+                .wait_with_output()
+                .map_err(|error| error.to_string())?;
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(String::from_utf8_lossy(&output.stderr).trim().to_owned())
+            }
+        }
+    }
+
+    impl RuleBackend for NftCommandBackend {
+        type Plan = NftRulePlan;
+
+        fn install(&mut self, plan: &Self::Plan) -> Result<(), String> {
+            self.apply(&["-f", "-"], Some(&plan.render()))
+        }
+
+        fn verify(&mut self, plan: &Self::Plan) -> Result<(), String> {
+            self.apply(&["list", "table", "inet", &plan.table], None)
+        }
+
+        fn remove(&mut self, plan: &Self::Plan) -> Result<(), String> {
+            self.apply(&["delete", "table", "inet", &plan.table], None)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

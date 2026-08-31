@@ -32,5 +32,8 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Shared capture-controller orchestration with exact ownership journaling,
   rollback on journal failure, corruption-safe restart recovery, and cleanup
   refusal for ownership mismatches.
+- Linux builds expose an explicit `nft` command capability; macOS builds
+  expose the corresponding `pfctl` capability without including either
+  privileged backend in the policy core.
 - Proxima consumed from its GitHub source, with Prime as the default runtime
   path and Tokio compatibility supplied by the dependency configuration.

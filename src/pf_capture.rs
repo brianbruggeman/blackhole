@@ -89,6 +89,80 @@ impl fmt::Display for PfError {
 
 impl std::error::Error for PfError {}
 
+#[cfg(target_os = "macos")]
+pub mod native {
+    use super::PfRulePlan;
+    use crate::linux_capture::{CapturePlan, RuleBackend};
+    use std::io::Write;
+    use std::path::PathBuf;
+    use std::process::{Command, Stdio};
+
+    /// Privileged pfctl capability. It is compiled only for macOS and does
+    /// not run until a caller explicitly uses the capture controller.
+    #[derive(Debug, Clone)]
+    pub struct PfctlCommandBackend {
+        program: PathBuf,
+    }
+
+    impl Default for PfctlCommandBackend {
+        fn default() -> Self {
+            Self {
+                program: PathBuf::from("pfctl"),
+            }
+        }
+    }
+
+    impl PfctlCommandBackend {
+        #[must_use]
+        pub fn new(program: impl Into<PathBuf>) -> Self {
+            Self {
+                program: program.into(),
+            }
+        }
+
+        fn apply(&self, args: &[&str], input: Option<&str>) -> Result<(), String> {
+            let mut command = Command::new(&self.program);
+            command.args(args);
+            if input.is_some() {
+                command.stdin(Stdio::piped());
+            }
+            let mut child = command.spawn().map_err(|error| error.to_string())?;
+            if let Some(input) = input {
+                child
+                    .stdin
+                    .take()
+                    .ok_or_else(|| "pfctl stdin was unavailable".to_owned())?
+                    .write_all(input.as_bytes())
+                    .map_err(|error| error.to_string())?;
+            }
+            let output = child
+                .wait_with_output()
+                .map_err(|error| error.to_string())?;
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(String::from_utf8_lossy(&output.stderr).trim().to_owned())
+            }
+        }
+    }
+
+    impl RuleBackend for PfctlCommandBackend {
+        type Plan = PfRulePlan;
+
+        fn install(&mut self, plan: &Self::Plan) -> Result<(), String> {
+            self.apply(&["-a", &plan.anchor, "-f", "-"], Some(&plan.render()))
+        }
+
+        fn verify(&mut self, plan: &Self::Plan) -> Result<(), String> {
+            self.apply(&["-a", &plan.anchor, "-sr"], None)
+        }
+
+        fn remove(&mut self, plan: &Self::Plan) -> Result<(), String> {
+            self.apply(&["-a", &plan.anchor, "-F", "all"], None)
+        }
+    }
+}
+
 /// PF rdr does not provide transparent original-destination and reply-route
 /// semantics for every UDP deployment. Reject unsupported contexts instead of
 /// silently degrading to a policy path with invented metadata.
