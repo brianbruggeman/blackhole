@@ -84,7 +84,8 @@ service user.
 
 For a hardened Linux local-network deployment, install the example unit at
 `deploy/systemd/blackhole.service`, create the `blackhole` service account,
-place configuration at `/etc/blackhole/blackhole.toml`, and grant only
+install `deploy/systemd/blackhole.conf` under `/etc/tmpfiles.d/`, place
+configuration at `/etc/blackhole/blackhole.toml`, and grant only
 `CAP_NET_BIND_SERVICE` when listening on port 53. Capture remains disabled in
 this unit and must be installed through the separately authorized platform
 capture step.

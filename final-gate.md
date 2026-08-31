@@ -22,6 +22,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | Authenticated admin control plane | Focused and real-listener tests prove Proxima HTTP health routing, bearer rejection/admission, bounded 404/405 routes, authenticated blocklist, country-map, domain-rule, and regex-rule reload behavior, bounded policy bodies, and loopback-only binding while the control plane is plaintext HTTP. |
 | Live forwarding FSM path | The real loopback resolver fixture exercises the listener's `Matched(Forward)`, `Forward`, `Forwarded`, and response-send transitions while forwarding through Proxima's GitHub-pinned `DnsClientUpstream`. |
 | Capture lifecycle | Planner, rollback, ownership, recovery, and cleanup tests pass. Capture is explicitly opt-in, wired through the shared controller, and native Linux cleanup targets only the exact journal-owned chain rather than deleting the shared table. |
+| Linux deployment artifact | `deploy/systemd/blackhole.service` and its tmpfiles definition are present and diff-validated; the unit restricts the service to a dedicated user, low-port bind capability, and `/var/lib/blackhole` state. Host installation smoke is not claimed because the service binary and `blackhole` account are not installed in this workspace. |
 | Per-client admission | The configured per-client concurrent-request cap rejects a second in-flight request at the limit, releases on completion, and passes the focused unit test. |
 | Response amplification cap | The configured response-ratio cap is validated and applied below the absolute response ceiling; the focused cap test passes in the current 81-test library suite. |
 | Per-client rate limiting | The configured per-second client rate cap sheds the third request in a deterministic focused test, while unidentified callers remain unkeyed and the rate-state table is bounded. |
@@ -54,6 +55,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | Gate | Current state |
 | --- | --- |
 | Privileged capture smoke | Not produced here. The process has no effective capabilities (`CapEff: 0`); non-mutating `nft --check` returned netlink `EPERM`. |
+| Host-installed systemd smoke | Not produced here. `systemd-analyze verify` reaches the unit but reports the expected missing `/usr/local/bin/blackhole` installation path. |
 | macOS build and PF smoke | CI workflow exists, but no local macOS execution evidence is recorded here. |
 | TCP upstream fallback | Open. GitHub-pinned Proxima `0652a0c0` exposes only UDP `DnsClientUpstream` and discards `TC` and response-question metadata. |
 | Proxima metadata change publication | Published GitHub Proxima `main` is `67704934788cb576e78c2d4506e076f890b5ec50`; inspecting that source still shows `DnsAnswer` omits the response question and TC bit. Blackhole remains on the compatible pinned revision `0652a0c0`, so TCP fallback is not claimed. |
