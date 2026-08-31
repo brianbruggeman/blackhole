@@ -14,6 +14,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | Nextest | `cargo nextest run --offline --workspace` passed at Blackhole `b35d471`: 102 tests, 102 passed, 0 skipped, against GitHub Proxima revision `0652a0c0`; the real admin and resolver fixtures use OS-assigned loopback ports and pass under the parallel runner. |
 | Doctests | `cargo test --doc --offline` passed at Blackhole `f7e2518`: 1 doctest. |
 | No-std and WASM | `cargo build --offline --no-default-features --target thumbv7m-none-eabi` and the equivalent `wasm32-unknown-unknown` command passed at Blackhole `b35d471` with GitHub Proxima revision `0652a0c0`; both completed without warnings. |
+| Tokio compatibility build | `cargo check --offline --features tokio-compat --all-targets` passed at Blackhole `e8d1a9d` with GitHub Proxima revision `0652a0c0`; the lane compiles Tokio capability support while the default executable remains Prime-backed. |
 | Dependency audit | Root `cargo audit --no-fetch` passed at Blackhole `f7e2518` with one allowed warning: unmaintained `paste` (`RUSTSEC-2024-0436`). |
 | Fuzz smoke | The installed nightly `rustc 1.100.0-nightly` `query_view` target ran 1,000 iterations over the 56 tracked corpus inputs without a crash at Blackhole `0f48c4e`; generated corpus files were discarded after the smoke run. |
 | Resolver fixture | The actual loopback UDP/TCP listener fixture passed. |
