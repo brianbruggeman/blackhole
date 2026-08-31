@@ -835,6 +835,7 @@ mod runtime {
         }
         let mut names = BTreeSet::new();
         let mut rules = Vec::new();
+        let mut total_domains = 0usize;
         for profile in profiles {
             let name = profile.name.trim();
             if name.is_empty() || !name.is_ascii() || !names.insert(name.to_ascii_lowercase()) {
@@ -847,6 +848,13 @@ mod runtime {
                 return Err(policy::PolicyError::InvalidProfile {
                     name: profile.name.clone(),
                     reason: "domains must be non-empty and bounded".into(),
+                });
+            }
+            total_domains = total_domains.saturating_add(profile.domains.len());
+            if total_domains > policy::MAX_RULES {
+                return Err(policy::PolicyError::InvalidProfile {
+                    name: profile.name.clone(),
+                    reason: format!("combined domain count exceeds {}", policy::MAX_RULES),
                 });
             }
             for (offset, raw_domain) in profile.domains.iter().enumerate() {
@@ -2519,6 +2527,32 @@ mod runtime {
                     id: 2,
                     name: "ADS".into(),
                     domains: vec!["tracking.example".into()],
+                    action: Action::Nxdomain,
+                    priority: 0,
+                },
+            ];
+            assert!(matches!(
+                Policy::new(config),
+                Err(policy::PolicyError::InvalidProfile { .. })
+            ));
+        }
+
+        #[test]
+        fn service_profiles_enforce_an_aggregate_rule_bound() {
+            let mut config = Config::default();
+            let per_profile = policy::MAX_RULES / 2 + 1;
+            config.policy.profiles = vec![
+                ServiceProfileConfig {
+                    id: 10_000,
+                    name: "first".into(),
+                    domains: vec!["first.example".into(); per_profile],
+                    action: Action::Nxdomain,
+                    priority: 0,
+                },
+                ServiceProfileConfig {
+                    id: 200_000,
+                    name: "second".into(),
+                    domains: vec!["second.example".into(); per_profile],
                     action: Action::Nxdomain,
                     priority: 0,
                 },
