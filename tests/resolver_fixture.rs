@@ -27,6 +27,9 @@ impl SendPipe for Passthrough {
 
 #[proxima::test]
 async fn listener_forwards_allowed_query_to_loopback_upstream() {
+    #[cfg(feature = "perf-instrument")]
+    blackhole::perf::reset();
+
     let upstream_socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind upstream");
     let upstream_addr = upstream_socket.local_addr().expect("upstream address");
     let upstream_thread = std::thread::spawn(move || {
@@ -176,4 +179,15 @@ async fn listener_forwards_allowed_query_to_loopback_upstream() {
 
     server.stop();
     upstream_thread.join().expect("upstream thread");
+
+    #[cfg(feature = "perf-instrument")]
+    {
+        let boundaries = blackhole::perf::snapshot();
+        println!("listener_boundary_bytes={boundaries:?}");
+        assert!(boundaries.policy_canonicalize > 0);
+        assert!(boundaries.borrowed_to_owned > 0);
+        assert!(boundaries.tcp_frame_buffer > 0);
+        assert!(boundaries.encode_output > 0);
+        assert!(boundaries.transport_write > 0);
+    }
 }

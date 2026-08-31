@@ -41,3 +41,18 @@ exercised by this example. The TCP buffering, encoding, and transport counters
 remain zero because this example does not run the listener; listener coverage
 must be measured through the resolver fixture before those values are used.
 No optimization decision is justified by this row.
+
+The actual listener fixture was then run with the same feature and
+`--nocapture`. `MEASURED` boundary totals were:
+
+```text
+listener_boundary_bytes=Snapshot {
+    policy_canonicalize: 28,
+    borrowed_to_owned: 28,
+    tcp_frame_buffer: 31,
+    encode_output: 120,
+    transport_write: 120,
+}
+```
+
+The fixture asserts every total is nonzero while exercising both UDP and TCP.
