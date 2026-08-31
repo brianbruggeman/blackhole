@@ -9,9 +9,9 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | --- | --- |
 | Formatting | `cargo fmt --all -- --check` passed at Blackhole `b35d471` with Rust `1.98.0`. |
 | Compilation | `cargo check --offline --all-targets` passed at Blackhole `72aa9d0` with GitHub Proxima revision `0652a0c0`, Rust `1.98.0`, and Cargo `1.98.0`. |
-| Unit and integration tests | `cargo nextest run --offline --workspace` passed at Blackhole `b35d471`: 102 tests, 102 passed, 0 skipped, including the real HTTP admin fixture, 3 real loopback UDP/TCP resolver fixture tests, and 10 fake-upstream tests against GitHub Proxima revision `0652a0c0`. |
+| Unit and integration tests | `cargo nextest run --offline --workspace` passed at Blackhole `62ad865`: 103 tests, 103 passed, 0 skipped, including the real HTTP admin fixture, 3 real loopback UDP/TCP resolver fixture tests, and 10 fake-upstream tests against GitHub Proxima revision `0652a0c0`. |
 | Cache failure behavior | `fake_upstream_servfail_is_not_cached` passes in the current 100-test nextest run; SERVFAIL causes a second upstream exchange rather than a reusable negative cache entry. |
-| Nextest | `cargo nextest run --offline --workspace` passed at Blackhole `b35d471`: 102 tests, 102 passed, 0 skipped, against GitHub Proxima revision `0652a0c0`; the real admin and resolver fixtures use OS-assigned loopback ports and pass under the parallel runner. |
+| Nextest | `cargo nextest run --offline --workspace` passed at Blackhole `62ad865`: 103 tests, 103 passed, 0 skipped, against GitHub Proxima revision `0652a0c0`; the real admin and resolver fixtures use OS-assigned loopback ports and pass under the parallel runner. |
 | Doctests | `cargo test --doc --offline` passed at Blackhole `f7e2518`: 1 doctest. |
 | No-std and WASM | `cargo build --offline --no-default-features --target thumbv7m-none-eabi` and the equivalent `wasm32-unknown-unknown` command passed at Blackhole `b35d471` with GitHub Proxima revision `0652a0c0`; both completed without warnings. |
 | Tokio compatibility build | `cargo check --offline --features tokio-compat --all-targets` passed at Blackhole `e8d1a9d` with GitHub Proxima revision `0652a0c0`; the lane compiles Tokio capability support while the default executable remains Prime-backed. |
