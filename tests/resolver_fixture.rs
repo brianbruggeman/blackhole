@@ -89,6 +89,7 @@ async fn listener_forwards_allowed_query_to_loopback_upstream() {
         qclass: None,
         client: None,
         client_cidr: None,
+        client_cidrs: Vec::new(),
     }];
     config.upstream = Some(UpstreamConfig {
         resolver_ip: upstream_addr.ip().to_string(),

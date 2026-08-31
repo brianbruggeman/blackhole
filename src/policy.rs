@@ -1,12 +1,13 @@
 //! Deterministic reference policy matcher.
 
 use alloc::collections::BTreeMap;
-use alloc::{borrow::ToOwned, string::String, vec::Vec};
+use alloc::{borrow::ToOwned, format, string::String, vec::Vec};
 use core::net::IpAddr;
 use serde::Deserialize;
 
 pub const MAX_RULES: usize = 100_000;
 pub const MAX_DOMAIN_BYTES: usize = 253;
+pub const MAX_CLIENT_CIDRS: usize = 64;
 
 /// Actions understood by the reference matcher. Rendering belongs to the
 /// transport edge and is deliberately not part of this module.
@@ -36,6 +37,8 @@ pub struct RuleConfig {
     pub client: Option<IpAddr>,
     #[serde(default)]
     pub client_cidr: Option<String>,
+    #[serde(default)]
+    pub client_cidrs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,7 +123,7 @@ struct Rule {
     qtype: Option<u16>,
     qclass: Option<u16>,
     client: Option<IpAddr>,
-    client_network: Option<IpNetwork>,
+    client_networks: Vec<IpNetwork>,
     wildcard: bool,
 }
 
@@ -218,22 +221,45 @@ impl ReferencePolicy {
             if rules.iter().any(|rule: &Rule| rule.id == config.id) {
                 return Err(PolicyError::DuplicateRule { id: config.id });
             }
-            if config.client.is_some() && config.client_cidr.is_some() {
+            if config.client.is_some()
+                && (config.client_cidr.is_some() || !config.client_cidrs.is_empty())
+            {
                 return Err(PolicyError::InvalidClientCidr {
                     id: config.id,
                     value: config.client_cidr.clone().unwrap_or_default(),
                 });
             }
-            let client_network =
-                match config.client_cidr.as_deref() {
-                    None => None,
-                    Some(value) => Some(IpNetwork::parse(value).ok_or_else(|| {
-                        PolicyError::InvalidClientCidr {
-                            id: config.id,
-                            value: value.to_owned(),
-                        }
-                    })?),
-                };
+            if config.client_cidr.is_some() && !config.client_cidrs.is_empty() {
+                return Err(PolicyError::InvalidClientCidr {
+                    id: config.id,
+                    value: config.client_cidr.clone().unwrap_or_default(),
+                });
+            }
+            if config.client_cidrs.len() > MAX_CLIENT_CIDRS {
+                return Err(PolicyError::InvalidClientCidr {
+                    id: config.id,
+                    value: format!("more than {MAX_CLIENT_CIDRS} networks"),
+                });
+            }
+            let mut client_networks = Vec::with_capacity(
+                config.client_cidrs.len() + usize::from(config.client_cidr.is_some()),
+            );
+            if let Some(value) = config.client_cidr.as_deref() {
+                client_networks.push(IpNetwork::parse(value).ok_or_else(|| {
+                    PolicyError::InvalidClientCidr {
+                        id: config.id,
+                        value: value.to_owned(),
+                    }
+                })?);
+            }
+            for value in &config.client_cidrs {
+                client_networks.push(IpNetwork::parse(value).ok_or_else(|| {
+                    PolicyError::InvalidClientCidr {
+                        id: config.id,
+                        value: value.clone(),
+                    }
+                })?);
+            }
             rules.push(Rule {
                 id: config.id,
                 domain,
@@ -242,7 +268,7 @@ impl ReferencePolicy {
                 qtype: config.qtype,
                 qclass: config.qclass,
                 client: config.client,
-                client_network,
+                client_networks,
                 wildcard,
             });
         }
@@ -329,9 +355,12 @@ impl Rule {
             && self
                 .client
                 .is_none_or(|client| Some(client) == query.client)
-            && self
-                .client_network
-                .is_none_or(|network| query.client.is_some_and(|client| network.contains(client)))
+            && (self.client_networks.is_empty()
+                || query.client.is_some_and(|client| {
+                    self.client_networks
+                        .iter()
+                        .any(|network| network.contains(client))
+                }))
     }
 
     /// Precedence is a lexicographic contract.  Every independent selector
@@ -352,8 +381,11 @@ impl Rule {
         if self.client.is_some() {
             129
         } else {
-            self.client_network
-                .map_or(0, |network| u16::from(network.prefix))
+            self.client_networks
+                .iter()
+                .map(|network| u16::from(network.prefix))
+                .max()
+                .unwrap_or(0)
         }
     }
 
@@ -388,6 +420,7 @@ mod tests {
             qclass: None,
             client: None,
             client_cidr: None,
+            client_cidrs: Vec::new(),
         }
     }
 
@@ -461,6 +494,74 @@ mod tests {
                 .map(|decision| decision.rule_id),
             Some(1)
         );
+    }
+
+    #[test]
+    fn one_rule_can_cover_multiple_client_networks() {
+        let mut rule = rule(3, "service.example", Action::Reject);
+        rule.client_cidrs = vec!["192.0.2.0/24".into(), "2001:db8::/32".into()];
+        let policy = ReferencePolicy::new(&[rule]).expect("valid client networks");
+        assert_eq!(
+            policy.decide(QueryContext {
+                client: Some("192.0.2.44".parse().expect("IPv4 client")),
+                ..query("service.example")
+            }),
+            Some(Decision {
+                rule_id: 3,
+                action: Action::Reject,
+            })
+        );
+        assert!(
+            policy
+                .decide(QueryContext {
+                    client: Some("198.51.100.44".parse().expect("outside client")),
+                    ..query("service.example")
+                })
+                .is_none()
+        );
+        assert!(
+            policy
+                .decide(QueryContext {
+                    client: Some("2001:db8::44".parse().expect("IPv6 client")),
+                    ..query("service.example")
+                })
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn narrower_client_network_wins_and_network_limits_fail_closed() {
+        let mut broad = rule(4, "service.example", Action::Pass);
+        broad.client_cidr = Some("192.0.2.0/24".into());
+        let mut narrow = rule(5, "service.example", Action::Reject);
+        narrow.client_cidrs = vec!["192.0.2.0/28".into(), "198.51.100.0/24".into()];
+        let policy = ReferencePolicy::new(&[broad, narrow]).expect("valid networks");
+        assert_eq!(
+            policy
+                .decide(QueryContext {
+                    client: Some("192.0.2.8".parse().expect("narrow client")),
+                    ..query("service.example")
+                })
+                .map(|decision| decision.rule_id),
+            Some(5)
+        );
+
+        let mut mixed = rule(6, "service.example", Action::Drop);
+        mixed.client_cidr = Some("192.0.2.0/24".into());
+        mixed.client_cidrs = vec!["198.51.100.0/24".into()];
+        assert!(matches!(
+            ReferencePolicy::new(&[mixed]),
+            Err(PolicyError::InvalidClientCidr { id: 6, .. })
+        ));
+
+        let mut too_many = rule(7, "service.example", Action::Drop);
+        too_many.client_cidrs = (0..=MAX_CLIENT_CIDRS)
+            .map(|_| "192.0.2.0/24".into())
+            .collect();
+        assert!(matches!(
+            ReferencePolicy::new(&[too_many]),
+            Err(PolicyError::InvalidClientCidr { id: 7, .. })
+        ));
     }
 
     #[test]

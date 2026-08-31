@@ -19,6 +19,7 @@ fn rules(count: usize) -> Vec<RuleConfig> {
             qclass: None,
             client: None,
             client_cidr: None,
+            client_cidrs: Vec::new(),
         })
         .collect()
 }

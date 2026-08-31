@@ -58,6 +58,7 @@ mod tests {
             qclass: None,
             client: None,
             client_cidr: None,
+            client_cidrs: Vec::new(),
         }
     }
 

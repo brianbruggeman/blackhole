@@ -28,6 +28,10 @@ are bounded at startup by expression count, pattern bytes, and compiled
 program size. Among matching expressions, priority, qclass/qtype/client filter
 specificity, and rule ID determine the winner.
 
+Client scope accepts either one `client_cidr` or a bounded `client_cidrs` list,
+but not both. A rule matches when the query client belongs to any listed
+network; the longest matching network prefix wins client-scope precedence.
+
 Malformed, response-shaped, flag-invalid, non-single-question, oversized, and
 non-ASCII IDNA names are rejected before policy evaluation. A forward cache is bounded
 by entry count, honors positive record TTLs, applies the configured negative

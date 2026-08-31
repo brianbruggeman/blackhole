@@ -17,6 +17,8 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   precedence.
 - Rule-table authority when rules are configured; legacy settings do not
   silently take over.
+- Client-scoped rules can match one exact address or a bounded list of IPv4
+  and IPv6 CIDRs; the most specific matching network wins.
 - Bounded Pi-hole/AdGuard-compatible blocklist ingestion from hosts/domain files
   with comments, normalization, deduplication, apex-and-subdomain blocking,
   `@@` exceptions, and fail-closed startup reloads.

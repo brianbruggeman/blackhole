@@ -54,6 +54,8 @@ by default; when enabled, it installs and recovers only the platform-native,
 journal-owned DNS redirect rules.
 Named service profiles are also compiled into the authoritative rule table;
 each profile supplies a bounded domain set and action.
+Rules may use `client_cidrs` for a bounded set of IPv4/IPv6 networks; the
+most-specific matching network wins while `client_cidr` remains supported.
 Bounded regular-expression rules are available through `policy.regex_rules`;
 invalid or oversized expressions fail configuration validation, and explicit
 domain rules take precedence when both match.

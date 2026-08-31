@@ -777,6 +777,7 @@ mod runtime {
                 qclass: None,
                 client: None,
                 client_cidr: None,
+                client_cidrs: Vec::new(),
             });
             rules.push(RuleConfig {
                 id: id.saturating_sub(1),
@@ -787,6 +788,7 @@ mod runtime {
                 qclass: None,
                 client: None,
                 client_cidr: None,
+                client_cidrs: Vec::new(),
             });
         }
         Ok(rules)
@@ -973,6 +975,7 @@ mod runtime {
                     qclass: None,
                     client: None,
                     client_cidr: None,
+                    client_cidrs: Vec::new(),
                 });
             }
         }
@@ -2303,6 +2306,7 @@ mod runtime {
                 qclass: None,
                 client: None,
                 client_cidr: None,
+                client_cidrs: Vec::new(),
             }];
             let policy = Policy::new(config).expect("initial policy");
             let cached_key = CacheKey {
@@ -2341,6 +2345,7 @@ mod runtime {
                     qclass: None,
                     client: None,
                     client_cidr: None,
+                    client_cidrs: Vec::new(),
                 }]),
                 Ok(ReloadState::Published)
             );
@@ -2371,6 +2376,7 @@ mod runtime {
                     qclass: None,
                     client: None,
                     client_cidr: None,
+                    client_cidrs: Vec::new(),
                 },
                 RuleConfig {
                     id: 3,
@@ -2381,6 +2387,7 @@ mod runtime {
                     qclass: None,
                     client: None,
                     client_cidr: None,
+                    client_cidrs: Vec::new(),
                 },
             ];
             assert_eq!(
@@ -2511,6 +2518,7 @@ mod runtime {
                 qclass: None,
                 client: None,
                 client_cidr: None,
+                client_cidrs: Vec::new(),
             }];
             let policy = Policy::new(config).expect("valid policy");
             let query = proxima_dns::DnsQuery {
@@ -2640,6 +2648,7 @@ mod runtime {
                 qclass: None,
                 client: None,
                 client_cidr: None,
+                client_cidrs: Vec::new(),
             }];
             let policy = Policy::new(config).unwrap();
             let query = |name: &str| proxima_dns::DnsQuery {
@@ -2666,6 +2675,7 @@ mod runtime {
                 qclass: None,
                 client: None,
                 client_cidr: None,
+                client_cidrs: Vec::new(),
             }];
             let policy = Policy::new(config).expect("valid policy");
             let packet = [
@@ -2689,6 +2699,7 @@ mod runtime {
                 qclass: None,
                 client: Some("192.0.2.10".parse().unwrap()),
                 client_cidr: None,
+                client_cidrs: Vec::new(),
             }];
             let policy = Policy::new(config).expect("valid policy");
             let packet = [
@@ -2849,6 +2860,7 @@ mod runtime {
                 qclass: None,
                 client: None,
                 client_cidr: None,
+                client_cidrs: Vec::new(),
             }];
             config.policy.regex_rules = vec![RegexRuleConfig {
                 id: 2,
@@ -3004,6 +3016,7 @@ mod runtime {
                     qclass: None,
                     client: None,
                     client_cidr: None,
+                    client_cidrs: Vec::new(),
                 }];
                 let policy = Policy::new(config).expect("valid policy");
                 let answer = policy.evaluate(&query(domain)).expect("wire answer");
@@ -3043,6 +3056,7 @@ mod runtime {
                 qclass: None,
                 client: None,
                 client_cidr: None,
+                client_cidrs: Vec::new(),
             }];
             let policy = Policy::new(config).expect("valid rewrites");
             let query = |name: &str, qtype: u16| proxima_dns::DnsQuery {
@@ -3388,6 +3402,7 @@ mod runtime {
                 qclass: None,
                 client: None,
                 client_cidr: None,
+                client_cidrs: Vec::new(),
             }];
             let policy = Policy::new(config).expect("valid policy");
             let query = proxima_dns::DnsQuery {
@@ -3415,6 +3430,7 @@ mod runtime {
                 qclass: None,
                 client: None,
                 client_cidr: None,
+                client_cidrs: Vec::new(),
             }];
             let policy = Policy::new(config).expect("valid policy");
             let query = proxima_dns::DnsQuery {
@@ -3441,6 +3457,7 @@ mod runtime {
                 qclass: None,
                 client: None,
                 client_cidr: None,
+                client_cidrs: Vec::new(),
             }];
             let policy = Policy::new(config).expect("valid policy");
             let answer = policy
