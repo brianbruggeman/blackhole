@@ -23,6 +23,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | Per-client rate limiting | The configured per-second client rate cap sheds the third request in a deterministic focused test, while unidentified callers remain unkeyed and the rate-state table is bounded. |
 | Atomic blocklist reload | A replacement blocklist publishes as one snapshot and an invalid replacement leaves the previous generation active; the focused reload test is included in the current 73-test library suite. |
 | Cache outcome telemetry | Proxima-native counters record fresh hits, misses, stale serves, and capacity evictions; the deterministic bounded-eviction test passes. |
+| Cache TTL telemetry | The focused `cache_ttl_telemetry_reports_effective_positive_and_negative_ttls` test proves the histogram reports the configured post-clamp positive TTL and negative TTL through Proxima's telemetry interface. |
 | Local DNS rewrites | Bounded A/AAAA rewrites answer pass/observe queries, explicit policy actions override them, and malformed or oversized configuration fails closed. |
 | Per-client abuse breaker | Full all-target suite passed with a focused test covering repeated rate-limit violations opening a temporary bounded breaker while unidentified callers remain unaffected. |
 | Named service profiles | Focused tests prove profile domains compile into authoritative rules and duplicate profile names or invalid domains fail closed. |

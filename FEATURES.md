@@ -26,7 +26,8 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   with timeout/retry settings and a bounded outstanding-query limit.
 - Bounded positive and negative response caching with a configured maximum
   protocol TTL, a bounded stale-serving window for upstream outages, plus
-  Proxima-native hit/miss/stale/eviction counters.
+  Proxima-native hit/miss/stale/eviction counters and effective positive/
+  negative TTL histograms.
 - A bounded upstream circuit breaker with configurable failure threshold and
   cooldown; open circuits fail closed unless a stale cached answer is usable.
 - Bounded admission controls that reject malformed/overlong owned queries,

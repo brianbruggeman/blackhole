@@ -1579,6 +1579,35 @@ mod runtime {
             telemetry.counter_inc("blackhole.cache", &labels, 1);
         }
 
+        fn observe_cache_ttl(&self, answer: &DnsAnswer) {
+            let Some(telemetry) = self.telemetry.as_ref() else {
+                return;
+            };
+            if !telemetry.is_active() {
+                return;
+            }
+            let labels = Labels::from_pairs(&[(
+                "kind",
+                if answer.records.is_empty() {
+                    "negative"
+                } else {
+                    "positive"
+                },
+            )]);
+            let (negative_ttl_secs, max_ttl_secs) = {
+                let cache = self.cache.lock().expect("cache lock");
+                (cache.config.negative_ttl_secs, cache.config.max_ttl_secs)
+            };
+            let ttl = answer
+                .records
+                .iter()
+                .map(|record| u64::from(record.ttl))
+                .min()
+                .unwrap_or(negative_ttl_secs)
+                .min(max_ttl_secs);
+            telemetry.histogram_record("blackhole.cache_ttl_seconds", &labels, ttl as f64);
+        }
+
         pub(crate) fn observe_failure(&self, cause: &'static str) {
             let Some(telemetry) = self.telemetry.as_ref() else {
                 return;
@@ -1730,6 +1759,7 @@ mod runtime {
                         }
                         self.breaker.lock().expect("breaker lock").success();
                         if matches!(answer.rcode, 0 | 3) {
+                            self.observe_cache_ttl(&answer);
                             let evicted = self.cache.lock().expect("cache lock").insert(
                                 key.clone(),
                                 answer.clone(),
@@ -2596,6 +2626,54 @@ mod runtime {
                 Policy::new(oversized),
                 Err(policy::PolicyError::InvalidRewrite { .. })
             ));
+        }
+
+        #[test]
+        fn cache_ttl_telemetry_reports_effective_positive_and_negative_ttls() {
+            use proxima::Telemetry;
+            use std::sync::Arc;
+            use std::sync::Mutex;
+
+            struct CacheTtlTelemetry {
+                values: Mutex<Vec<(String, f64)>>,
+            }
+
+            impl Telemetry for CacheTtlTelemetry {
+                fn counter_inc(&self, _: &str, _: &Labels, _: u64) {}
+                fn gauge_set(&self, _: &str, _: &Labels, _: i64) {}
+                fn histogram_record(&self, metric: &str, labels: &Labels, value: f64) {
+                    assert_eq!(metric, "blackhole.cache_ttl_seconds");
+                    assert_eq!(labels.entries().len(), 1);
+                    assert_eq!(labels.entries()[0].0, "kind");
+                    self.values
+                        .lock()
+                        .expect("cache telemetry lock")
+                        .push((labels.entries()[0].1.to_owned(), value));
+                }
+            }
+
+            let telemetry = Arc::new(CacheTtlTelemetry {
+                values: Mutex::new(Vec::new()),
+            });
+            let mut config = Config::default();
+            config.cache.max_ttl_secs = 120;
+            config.cache.negative_ttl_secs = 17;
+            let policy = Policy::new(config)
+                .expect("valid cache config")
+                .with_telemetry(telemetry.clone());
+            policy.observe_cache_ttl(&DnsAnswer::ok(vec![DnsAnswerRecord {
+                name: "answer.example.".into(),
+                rtype: 1,
+                rclass: 1,
+                ttl: 900,
+                rdata: vec![93, 184, 216, 34],
+            }]));
+            policy.observe_cache_ttl(&DnsAnswer::name_error());
+
+            assert_eq!(
+                *telemetry.values.lock().expect("cache telemetry lock"),
+                vec![("positive".into(), 120.0), ("negative".into(), 17.0)]
+            );
         }
 
         #[test]
