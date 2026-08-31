@@ -57,6 +57,13 @@ impl SendPipe for AdminHandler {
                     serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
                 ))),
             },
+            ("POST", "/reload/country") => match self.policy.reload_country_policy() {
+                Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
+                Err(error) => Ok(Response::new(422).with_body(format!(
+                    "{{\"status\":\"error\",\"message\":{}}}",
+                    serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                ))),
+            },
             ("POST", "/reload/policy") => {
                 if request.payload.len() > MAX_POLICY_BODY_BYTES {
                     return Ok(Response::new(413));
@@ -108,7 +115,8 @@ impl SendPipe for AdminHandler {
             }
             (
                 _,
-                "/health" | "/status" | "/reload/blocklists" | "/reload/policy" | "/reload/regex",
+                "/health" | "/status" | "/reload/blocklists" | "/reload/country" | "/reload/policy"
+                | "/reload/regex",
             ) => Ok(Response::new(405)),
             _ => Ok(Response::not_found()),
         }
@@ -172,6 +180,9 @@ mod tests {
         let wrong_method =
             block_on(handler.call(request("GET", "/reload/blocklists"))).expect("405 response");
         assert_eq!(wrong_method.status, 405);
+        let wrong_country_method =
+            block_on(handler.call(request("GET", "/reload/country"))).expect("405 response");
+        assert_eq!(wrong_country_method.status, 405);
         let wrong_status_method =
             block_on(handler.call(request("POST", "/status"))).expect("405 status response");
         assert_eq!(wrong_status_method.status, 405);
@@ -260,6 +271,19 @@ mod tests {
         let response = block_on(handler.call(clear)).expect("clear response");
         assert_eq!(response.status, 200);
         assert_eq!(policy.action_for_view(query), crate::Action::Pass);
+    }
+
+    #[test]
+    fn country_reload_route_reloads_the_configured_snapshot() {
+        let policy = Arc::new(Policy::new(crate::Config::default()).expect("default policy"));
+        let handler = AdminHandler::new(policy);
+        let reload = block_on(handler.call(request("POST", "/reload/country")))
+            .expect("country reload response");
+        assert_eq!(reload.status, 200);
+        assert_eq!(
+            reload.payload,
+            Bytes::from_static(b"{\"status\":\"reloaded\"}")
+        );
     }
 
     #[test]

@@ -43,7 +43,7 @@ mod runtime {
     use std::hash::Hash;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, RwLock};
     use std::time::{Duration, Instant};
 
     use crate::policy;
@@ -1130,7 +1130,7 @@ mod runtime {
     pub struct Policy {
         config: Config,
         base_rules: Mutex<Vec<RuleConfig>>,
-        country_policy: Option<CountryPolicy>,
+        country_policy: Arc<RwLock<Option<CountryPolicy>>>,
         rewrites: RewriteTable,
         reference: PolicyStore,
         regex_rules: Mutex<Vec<RegexRule>>,
@@ -1357,7 +1357,7 @@ mod runtime {
             let policy = Self {
                 config,
                 base_rules: Mutex::new(base_rules),
-                country_policy,
+                country_policy: Arc::new(RwLock::new(country_policy)),
                 rewrites,
                 reference,
                 regex_rules: Mutex::new(regex_rules),
@@ -1452,6 +1452,14 @@ mod runtime {
             );
             self.cache.lock().expect("cache lock").clear();
             Ok(published)
+        }
+
+        /// Reload the configured country/CIDR map and publish it only after
+        /// the complete replacement has passed bounded validation.
+        pub fn reload_country_policy(&self) -> Result<ReloadState, policy::PolicyError> {
+            let next = load_country_policy(&self.config.country_policy)?;
+            *self.country_policy.write().expect("country policy lock") = next;
+            Ok(ReloadState::Published)
         }
 
         /// Compile and atomically replace regex rules. Invalid updates leave
@@ -2086,7 +2094,11 @@ mod runtime {
                 "status": "ok",
                 "rules_configured": self.rules_configured.load(Ordering::Acquire),
                 "upstream_configured": self.upstream.is_some(),
-                "country_policy_configured": self.country_policy.is_some(),
+                "country_policy_configured": self
+                    .country_policy
+                    .read()
+                    .expect("country policy lock")
+                    .is_some(),
                 "cache_entries": cache.entries.len(),
                 "cache_capacity": cache.config.max_entries,
             })
@@ -2140,7 +2152,13 @@ mod runtime {
                 self.observe(Action::Reject);
                 return Ok(DnsPipeReply::typed(200, server_failure_answer()));
             }
-            if let (Some(country_policy), Some(client)) = (self.country_policy.as_ref(), client) {
+            if let (Some(country_policy), Some(client)) = (
+                self.country_policy
+                    .read()
+                    .expect("country policy lock")
+                    .as_ref(),
+                client,
+            ) {
                 if country_policy.denied(client) {
                     self.observe_failure("country_policy_denied");
                     self.observe(Action::Reject);
@@ -2936,10 +2954,18 @@ mod runtime {
             let denied = "192.0.2.10".parse().expect("client address");
             let observed = "198.51.100.10".parse().expect("client address");
             let outside = "203.0.113.10".parse().expect("client address");
-            assert!(policy.country_policy.as_ref().unwrap().denied(denied));
-            assert!(policy.country_policy.as_ref().unwrap().observed(observed));
-            assert!(!policy.country_policy.as_ref().unwrap().denied(outside));
-            assert!(!policy.country_policy.as_ref().unwrap().observed(outside));
+            let country_policy = policy.country_policy.read().expect("country policy lock");
+            let country_policy = country_policy.as_ref().expect("country policy");
+            assert!(country_policy.denied(denied));
+            assert!(country_policy.observed(observed));
+            assert!(!country_policy.denied(outside));
+            assert!(!country_policy.observed(outside));
+            std::fs::write(&path, "not-a-country-map\n").expect("corrupt country map");
+            assert!(policy.reload_country_policy().is_err());
+            let country_policy = policy.country_policy.read().expect("country policy lock");
+            let country_policy = country_policy.as_ref().expect("previous country policy");
+            assert!(country_policy.denied(denied));
+            assert!(country_policy.observed(observed));
 
             let request = |client| DnsPipeRequest {
                 method: proxima_primitives::pipe::method::Method::from_wire(
