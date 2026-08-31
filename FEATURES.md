@@ -14,8 +14,9 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   and qclass filters.
 - Rule-table authority when rules are configured; legacy settings do not
   silently take over.
-- Bounded Pi-hole-compatible blocklist ingestion from hosts/domain files with
-  comments, normalization, deduplication, and fail-closed startup reloads.
+- Bounded Pi-hole/AdGuard-compatible blocklist ingestion from hosts/domain files
+  with comments, normalization, deduplication, apex-and-subdomain blocking,
+  `@@` exceptions, and fail-closed startup reloads.
 - Bounded local A/AAAA rewrites with explicit policy precedence and fail-closed
   validation for malformed, duplicate, or oversized configuration.
 - Named service-blocking profiles compile into the authoritative rule table,

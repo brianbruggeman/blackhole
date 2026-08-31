@@ -46,7 +46,9 @@ breaker; unidentified callers are not assigned a shared abuse identity.
 Encoded responses also consume a bounded per-client byte budget per second;
 when it is exhausted, the listener sheds that client's response rather than
 amplifying the traffic pattern.
-Local A/AAAA rewrites are bounded and apply to `pass`/`observe` queries;
+Blocklist files accept hosts/domain entries and basic AdGuard `||domain^`
+filters; `@@||domain^` exceptions override the generated apex and subdomain
+blocks. Local A/AAAA rewrites are bounded and apply to `pass`/`observe` queries;
 explicit policy actions take precedence. The `[capture]` section is disabled
 by default; when enabled, it installs and recovers only the platform-native,
 journal-owned DNS redirect rules.

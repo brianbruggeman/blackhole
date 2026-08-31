@@ -668,6 +668,7 @@ mod runtime {
 
     fn load_blocklists(paths: &[String]) -> Result<Vec<RuleConfig>, policy::PolicyError> {
         let mut domains = BTreeSet::new();
+        let mut exceptions = BTreeSet::new();
         for path in paths {
             let metadata =
                 std::fs::metadata(path).map_err(|error| policy::PolicyError::InvalidBlocklist {
@@ -708,34 +709,66 @@ mod runtime {
                     0
                 };
                 for raw_domain in fields.iter().skip(start) {
-                    let mut domain = raw_domain.trim_end_matches('.').to_ascii_lowercase();
-                    if let Some(stripped) = domain.strip_prefix("||") {
-                        domain = stripped.trim_end_matches('^').to_owned();
-                    }
+                    let raw_domain = raw_domain.trim_end_matches('.').to_ascii_lowercase();
+                    let (exception, domain) =
+                        if let Some(stripped) = raw_domain.strip_prefix("@@||") {
+                            (true, stripped.trim_end_matches('^').to_owned())
+                        } else if let Some(stripped) = raw_domain.strip_prefix("||") {
+                            (false, stripped.trim_end_matches('^').to_owned())
+                        } else {
+                            (false, raw_domain.clone())
+                        };
                     if !valid_blocklist_domain(&domain) {
                         return Err(policy::PolicyError::InvalidBlocklist {
                             path: path.clone(),
                             reason: format!("invalid domain {raw_domain}"),
                         });
                     }
-                    domains.insert(domain);
+                    domains.insert(domain.clone());
+                    if exception {
+                        exceptions.insert(domain);
+                    }
+                    if domains.len() > policy::MAX_RULES / 2 {
+                        return Err(policy::PolicyError::InvalidBlocklist {
+                            path: path.clone(),
+                            reason: format!("domain count exceeds {}", policy::MAX_RULES / 2),
+                        });
+                    }
                 }
             }
         }
-        Ok(domains
-            .into_iter()
-            .enumerate()
-            .map(|(index, domain)| RuleConfig {
-                id: u32::MAX.saturating_sub(index as u32),
-                domain,
-                action: Action::Nxdomain,
-                priority: i32::MAX,
+        let mut rules = Vec::with_capacity(domains.len().saturating_mul(2));
+        for (index, domain) in domains.into_iter().enumerate() {
+            let exception = exceptions.contains(&domain);
+            let action = if exception {
+                Action::Pass
+            } else {
+                Action::Nxdomain
+            };
+            let priority = if exception { i32::MAX } else { i32::MAX - 1 };
+            let id = u32::MAX.saturating_sub((index.saturating_mul(2)) as u32);
+            rules.push(RuleConfig {
+                id,
+                domain: domain.clone(),
+                action,
+                priority,
                 qtype: None,
                 qclass: None,
                 client: None,
                 client_cidr: None,
-            })
-            .collect())
+            });
+            rules.push(RuleConfig {
+                id: id.saturating_sub(1),
+                domain: format!("*.{domain}"),
+                action,
+                priority,
+                qtype: None,
+                qclass: None,
+                client: None,
+                client_cidr: None,
+            });
+        }
+        Ok(rules)
     }
 
     fn valid_blocklist_domain(domain: &str) -> bool {
@@ -2244,7 +2277,7 @@ mod runtime {
                 .join(format!("blackhole-blocklist-{}.txt", std::process::id()));
             std::fs::write(
                 &path,
-                "# comment\n0.0.0.0 Ads.Example\n||ads.example^\ntelemetry.example.\n",
+                "# comment\n0.0.0.0 Ads.Example\n||ads.example^\n@@||safe.ads.example^\ntelemetry.example.\n",
             )
             .expect("write blocklist");
             let mut config = Config::default();
@@ -2259,6 +2292,21 @@ mod runtime {
                 qclass: 1,
             };
             assert_eq!(policy.evaluate(&query("ads.example.")).unwrap().rcode, 3);
+            assert_eq!(
+                policy.evaluate(&query("sub.ads.example.")).unwrap().rcode,
+                3
+            );
+            assert_eq!(
+                policy.evaluate(&query("safe.ads.example.")).unwrap().rcode,
+                0
+            );
+            assert_eq!(
+                policy
+                    .evaluate(&query("deep.safe.ads.example."))
+                    .unwrap()
+                    .rcode,
+                0
+            );
             assert_eq!(
                 policy.evaluate(&query("telemetry.example.")).unwrap().rcode,
                 3

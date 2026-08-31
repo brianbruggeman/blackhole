@@ -27,8 +27,9 @@ domains = ["ads.example", "telemetry.example"]
 # the [upstream] section below when configured; forward is always explicit.
 default_action = "pass"
 
-# Optional Pi-hole-compatible hosts/domain lists. Every entry becomes a
-# bounded, generated NXDOMAIN rule; missing or malformed files fail startup.
+# Optional Pi-hole/AdGuard-compatible hosts/domain lists. Entries become
+# bounded generated apex and subdomain NXDOMAIN rules; basic @@||domain^
+# exceptions override them. Missing or malformed files fail startup.
 blocklists = []
 
 # Optional local DNS rewrites. A rewrite answers matching A/AAAA queries when
