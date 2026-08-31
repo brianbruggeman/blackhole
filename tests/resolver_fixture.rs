@@ -2,7 +2,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::sync::Arc;
 
 use blackhole::listener::{TcpProtocol, UdpProtocol};
-use blackhole::{Action, Config, Policy, RuleConfig, UpstreamConfig};
+use blackhole::{Action, Config, Policy, RewriteConfig, RuleConfig, UpstreamConfig};
 use bytes::Bytes;
 use futures::io::{AsyncReadExt, AsyncWriteExt};
 use proxima::pipe::into_handle;
@@ -190,4 +190,64 @@ async fn listener_forwards_allowed_query_to_loopback_upstream() {
         assert!(boundaries.encode_output > 0);
         assert!(boundaries.transport_write > 0);
     }
+}
+
+#[proxima::test]
+async fn listener_serves_local_rewrite_on_the_real_udp_path() {
+    let mut config = Config::default();
+    config.policy.rewrites = vec![RewriteConfig {
+        name: "router.home.arpa".into(),
+        ipv4: Some(Ipv4Addr::new(192, 0, 2, 53)),
+        ipv6: None,
+        ttl: 30,
+    }];
+    let policy = Arc::new(Policy::new(config).expect("valid rewrite policy"));
+    let listener_probe = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("probe listener port");
+    let listener_addr = listener_probe.local_addr().expect("listener address");
+    drop(listener_probe);
+    let server = Listener::builder()
+        .bind(listener_addr)
+        .any()
+        .protocol(UdpProtocol::new(Arc::clone(&policy)))
+        .protocol(TcpProtocol::new(Arc::clone(&policy)))
+        .handle(into_handle(Passthrough))
+        .serve()
+        .await
+        .expect("serve listener");
+
+    let mut client = PrimeDatagramFactory
+        .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+        .expect("bind client");
+    let mut query = Vec::new();
+    encode::encode_query(
+        0x4321,
+        true,
+        encode::EncodeQuestion {
+            name: "router.home.arpa.",
+            qtype: 1,
+            qclass: 1,
+        },
+        &mut query,
+    )
+    .expect("encode rewrite query");
+    std::future::poll_fn(|cx| client.poll_send_to(cx, &query, listener_addr))
+        .await
+        .expect("send rewrite query");
+    let mut response = [0u8; 4096];
+    let (len, _) = std::future::poll_fn(|cx| client.poll_recv_from(cx, &mut response))
+        .await
+        .expect("receive rewrite response");
+    let message = parse_message(&response[..len]).expect("parse rewrite response");
+    let answer = message
+        .answers()
+        .next()
+        .expect("rewrite answer present")
+        .expect("valid rewrite answer");
+    assert_eq!(message.header.id, 0x4321);
+    assert_eq!(message.header.flags.rcode(), 0);
+    assert_eq!(
+        answer.rdata,
+        proxima_protocols::dns::RData::A(Ipv4Addr::new(192, 0, 2, 53))
+    );
+    server.stop();
 }
