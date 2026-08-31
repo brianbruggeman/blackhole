@@ -113,6 +113,12 @@ async fn decide<'a>(
         let _ = state.transition(Event::Drop(DropReason::PolicyFailure));
         return Ok(None);
     }
+    if action == crate::Action::Forward {
+        state = state.transition(Event::Forward).map_err(|error| {
+            policy.observe_failure("fsm_transition");
+            ProximaError::Config(error.to_string())
+        })?;
+    }
 
     let query = view.to_owned();
     let request = request(query.clone(), tcp, peer.clone());
@@ -159,12 +165,15 @@ async fn decide<'a>(
     })?;
     #[cfg(feature = "perf-instrument")]
     crate::perf::record_copy(crate::perf::Boundary::EncodeOutput, output.len());
-    state = state
-        .transition(Event::Respond(output.len()))
-        .map_err(|error| {
-            policy.observe_failure("fsm_transition");
-            ProximaError::Config(error.to_string())
-        })?;
+    let event = if action == crate::Action::Forward {
+        Event::Forwarded(output.len())
+    } else {
+        Event::Respond(output.len())
+    };
+    state = state.transition(event).map_err(|error| {
+        policy.observe_failure("fsm_transition");
+        ProximaError::Config(error.to_string())
+    })?;
     Ok(Some((output, state)))
 }
 
