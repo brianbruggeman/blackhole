@@ -5,7 +5,6 @@ use futures::io::{AsyncReadExt, AsyncWriteExt};
 use proxima::ProximaError;
 use proxima_listen::admission::ConnAdmission;
 use proxima_listen::any::{AnyHandler, AnyProtocol, ProbeVerdict};
-use proxima_primitives::pipe::SendPipe;
 use proxima_primitives::pipe::header_list::HeaderList;
 use proxima_primitives::pipe::method::Method;
 use proxima_primitives::pipe::request::{Request, RequestContext};
@@ -118,7 +117,8 @@ async fn decide(
 
     let query = view.to_owned();
     let request = request(query.clone(), tcp, peer.clone());
-    let answer = SendPipe::call(policy, request)
+    let answer = policy
+        .call_owned(request, action)
         .await
         .map_err(|error| {
             policy.observe_failure("policy_call");

@@ -856,7 +856,11 @@ mod runtime {
     }
 
     impl Policy {
-        async fn call_inner(&self, request: DnsPipeRequest) -> Result<DnsPipeReply, ProximaError> {
+        async fn call_inner(
+            &self,
+            request: DnsPipeRequest,
+            selected_action: Option<Action>,
+        ) -> Result<DnsPipeReply, ProximaError> {
             let Ok(_request_slot) = self.request_slots.try_acquire() else {
                 self.observe_failure("admission_overflow");
                 self.observe(Action::Reject);
@@ -869,18 +873,20 @@ mod runtime {
                 self.observe(Action::Reject);
                 return Ok(DnsPipeReply::typed(200, refused_answer()));
             }
-            // Decide exactly once.  In particular, do not run the rule table to
-            // discover forwarding and then run it again to render the outcome.
-            let decision = self.decision(&query, client);
-            let action = if self.config.policy.rules.is_empty() {
-                None
-            } else {
-                Some(
-                    decision.map_or(self.config.policy.default_action, |decision| {
-                        decision.action
-                    }),
-                )
-            };
+            // The raw listener supplies its borrowed decision here. The owned
+            // facade passes None and performs the single policy lookup itself.
+            let action = selected_action.or_else(|| {
+                if self.config.policy.rules.is_empty() {
+                    None
+                } else {
+                    Some(
+                        self.decision(&query, client)
+                            .map_or(self.config.policy.default_action, |decision| {
+                                decision.action
+                            }),
+                    )
+                }
+            });
             if action == Some(Action::Forward) {
                 let Some(slots) = self.upstream_slots.as_ref() else {
                     self.observe_failure("upstream_unconfigured");
@@ -979,6 +985,17 @@ mod runtime {
                 None => Ok(DnsPipeReply::typed(204, DnsAnswer::ok(Vec::new()))),
             }
         }
+
+        pub(crate) async fn call_owned(
+            &self,
+            request: DnsPipeRequest,
+            action: Action,
+        ) -> Result<DnsPipeReply, ProximaError> {
+            let started = Instant::now();
+            let result = self.call_inner(request, Some(action)).await;
+            self.observe_latency(started.elapsed());
+            result
+        }
     }
 
     impl SendPipe for Policy {
@@ -988,7 +1005,7 @@ mod runtime {
 
         async fn call(&self, request: Self::In) -> Result<Self::Out, ProximaError> {
             let started = Instant::now();
-            let result = self.call_inner(request).await;
+            let result = self.call_inner(request, None).await;
             self.observe_latency(started.elapsed());
             result
         }
