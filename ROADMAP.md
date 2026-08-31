@@ -15,8 +15,8 @@ below are future capabilities, grouped by the dependency layer they extend.
 
 ## Resolver completion
 
-- Make the borrowed sans-IO query/decision path the executable listener path.
-- Complete DNS QR-bit, question/name, ID, response, and truncation validation.
+- Complete DNS response, truncation, and transaction validation at the
+  forwarding boundary.
 - Extend the action contract with upstream-aware pass-through and isolated
   honeypot terminal behavior.
 - Add bounded forwarding with matching-question checks, transaction checks,
@@ -26,14 +26,10 @@ below are future capabilities, grouped by the dependency layer they extend.
 
 ## Policy and operator controls
 
-- Add authenticated blocklist administration and incremental background reload;
-  bounded Pi-hole-compatible file ingestion, normalization, deduplication, and
-  fail-closed startup reloads are in the current baseline.
+- Add authenticated blocklist administration and incremental background reload.
 - Add per-client and network scopes, local rewrites, service profiles, and
   authenticated administration.
-- Add per-client/network admission limits and adaptive amplification controls;
-  global bounded admission, `ANY` handling, outstanding-work limits, and
-  upstream circuit breaking are implemented in the current baseline.
+- Add per-client/network admission limits and adaptive amplification controls.
 - Add optional country/region/ASN access policy with allow, deny, and
   observe-only (“snitch”) modes; keep GeoIP uncertainty and database lifecycle
   explicit.
@@ -42,8 +38,8 @@ below are future capabilities, grouped by the dependency layer they extend.
 
 ## Interception and deployment
 
-- Complete Linux nftables and macOS packet-filter capture adapters with
-  ownership, rollback, crash recovery, and platform smoke evidence.
+- Add privileged Linux nftables and macOS packet-filter smoke evidence and
+  complete original-destination capture integration.
 - Keep client and original-destination metadata adapter-owned.
 - Support unprivileged DNS operation with privilege isolated to capture setup.
 - Add cross-platform native deployment adapters.
@@ -51,9 +47,8 @@ below are future capabilities, grouped by the dependency layer they extend.
 ## Incumbent parity and extensions
 
 - Add encrypted upstreams and optional DoH, DoT, and DoQ server endpoints.
-- Add bounded query logs, privacy controls for retention, redaction, access,
-  and deletion; action/error counters and request-latency histograms are in
-  the current baseline.
+- Add bounded query logs and privacy controls for retention, redaction, access,
+  and deletion.
 - Add an authenticated admin API, optional web UI, and optional DHCP adapter.
 - Add named service-blocking profiles and the remaining Pi-hole/AdGuard Home
   policy features.
