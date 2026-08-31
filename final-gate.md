@@ -19,6 +19,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | Resolver fixture | The actual loopback UDP/TCP listener fixture passed. |
 | Capture lifecycle | Planner, rollback, ownership, recovery, and cleanup tests pass. Capture is explicitly opt-in and wired through the shared controller. |
 | Per-client admission | The configured per-client concurrent-request cap rejects a second in-flight request at the limit, releases on completion, and passes the focused unit test. |
+| Response amplification cap | The configured response-ratio cap is validated and applied below the absolute response ceiling; the focused cap test and full 62-test library suite pass. |
 
 ## Evidence still required
 

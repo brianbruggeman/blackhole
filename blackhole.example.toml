@@ -53,6 +53,8 @@ max_name_bytes = 253
 max_response_records = 64
 # Bound the approximate DNS wire size of local and forwarded answers.
 max_response_bytes = 4096
+# Also bound the response to four times the validated query's wire size.
+max_response_amplification = 4
 # Bound all policy requests, not only upstream exchanges.
 max_inflight_requests = 1024
 # Bound concurrent requests attributed to one client address.

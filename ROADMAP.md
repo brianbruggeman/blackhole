@@ -29,8 +29,8 @@ below are future capabilities, grouped by the dependency layer they extend.
 - Add authenticated blocklist administration and incremental background reload.
 - Add richer per-client and network policy controls, local rewrites, service
   profiles, and authenticated administration.
-- Add adaptive amplification controls beyond the current bounded response and
-  per-client admission limits.
+- Add adaptive amplification controls for repeated abusive patterns beyond the
+  current per-query response-ratio cap and per-client admission limits.
 - Add optional country/region/ASN access policy with allow, deny, and
   observe-only (“snitch”) modes; keep GeoIP uncertainty and database lifecycle
   explicit.

@@ -250,6 +250,8 @@ mod runtime {
         pub max_response_records: usize,
         #[serde(default = "default_max_response_bytes")]
         pub max_response_bytes: usize,
+        #[serde(default = "default_max_response_amplification")]
+        pub max_response_amplification: usize,
         #[serde(default = "default_max_inflight_requests")]
         pub max_inflight_requests: usize,
         #[serde(default = "default_max_inflight_per_client")]
@@ -263,6 +265,7 @@ mod runtime {
                 reject_any: default_reject_any(),
                 max_response_records: default_max_response_records(),
                 max_response_bytes: default_max_response_bytes(),
+                max_response_amplification: default_max_response_amplification(),
                 max_inflight_requests: default_max_inflight_requests(),
                 max_inflight_per_client: default_max_inflight_per_client(),
             }
@@ -477,6 +480,9 @@ mod runtime {
     fn default_max_response_bytes() -> usize {
         4096
     }
+    fn default_max_response_amplification() -> usize {
+        4
+    }
     fn default_reject_private_upstream_addresses() -> bool {
         true
     }
@@ -613,6 +619,11 @@ mod runtime {
             if config.admission.max_response_bytes < 12 {
                 return Err(policy::PolicyError::InvalidAdmission {
                     reason: "max_response_bytes must be at least 12".into(),
+                });
+            }
+            if config.admission.max_response_amplification == 0 {
+                return Err(policy::PolicyError::InvalidAdmission {
+                    reason: "max_response_amplification must be non-zero".into(),
                 });
             }
             if config.admission.max_inflight_requests == 0 {
@@ -817,7 +828,11 @@ mod runtime {
             let mut bytes = 12usize
                 .saturating_add(wire_name_bytes(&query.name))
                 .saturating_add(4);
-            let max_bytes = self.config.admission.max_response_bytes;
+            let max_bytes = self
+                .config
+                .admission
+                .max_response_bytes
+                .min(bytes.saturating_mul(self.config.admission.max_response_amplification));
             answer.records.retain(|record| {
                 let record_bytes = wire_name_bytes(&record.name)
                     .saturating_add(10)
@@ -1766,6 +1781,14 @@ mod runtime {
             assert!(
                 Policy::new({
                     let mut config = Config::default();
+                    config.admission.max_response_amplification = 0;
+                    config
+                })
+                .is_err()
+            );
+            assert!(
+                Policy::new({
+                    let mut config = Config::default();
                     config.admission.max_inflight_requests = 0;
                     config
                 })
@@ -1805,6 +1828,33 @@ mod runtime {
         fn admission_caps_answer_wire_size() {
             let mut config = Config::default();
             config.admission.max_response_bytes = 40;
+            config.policy.rules = vec![RuleConfig {
+                id: 1,
+                domain: "honeypot.example".into(),
+                action: Action::Honeypot,
+                priority: 0,
+                qtype: None,
+                qclass: None,
+                client: None,
+                client_cidr: None,
+            }];
+            let policy = Policy::new(config).expect("valid policy");
+            let query = proxima_dns::DnsQuery {
+                id: 1,
+                recursion_desired: true,
+                name: "honeypot.example.".into(),
+                qtype: 1,
+                qclass: 1,
+            };
+            let answer = policy.evaluate(&query).expect("wire answer");
+            assert!(answer.records.is_empty());
+        }
+
+        #[test]
+        fn admission_caps_response_amplification_relative_to_query() {
+            let mut config = Config::default();
+            config.admission.max_response_bytes = 4096;
+            config.admission.max_response_amplification = 1;
             config.policy.rules = vec![RuleConfig {
                 id: 1,
                 domain: "honeypot.example".into(),
