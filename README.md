@@ -63,6 +63,10 @@ Bounded regular-expression rules are available through `policy.regex_rules`;
 invalid or oversized expressions fail configuration validation, and explicit
 domain rules take precedence when both match.
 
+Proxima is consumed from GitHub. Prime is the default runtime; use the
+opt-in `tokio-compat` feature to compile the same core with Proxima's Tokio
+capability available.
+
 An optional authenticated control plane can be enabled with `[admin]`:
 
 ```toml

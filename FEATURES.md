@@ -81,4 +81,5 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   expose the corresponding `pfctl` capability without including either
   privileged backend in the policy core.
 - Proxima consumed from its GitHub source, with Prime as the default runtime
-  path and Tokio compatibility supplied by the dependency configuration.
+  path and an opt-in `tokio-compat` feature that compiles the same core with
+  Proxima's Tokio capability available.

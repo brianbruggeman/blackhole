@@ -933,6 +933,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "h2"
+version = "0.4.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef8e5e5a340588f4452631496976cf8636d4a7ecf600239fdc27615d2530bc16"
+dependencies = [
+ "atomic-waker",
+ "bytes",
+ "fnv",
+ "futures-core",
+ "futures-sink",
+ "http",
+ "indexmap",
+ "slab",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "halfbrown"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1632,6 +1651,7 @@ dependencies = [
  "proxima-runtime",
  "proxima-telemetry",
  "socket2 0.5.10",
+ "tokio",
  "toml",
 ]
 
@@ -1675,6 +1695,7 @@ dependencies = [
  "futures",
  "getrandom 0.3.4",
  "getrandom 0.4.3",
+ "h2",
  "hdrhistogram",
  "http",
  "http-body",
@@ -1720,6 +1741,8 @@ dependencies = [
  "thiserror 2.0.20",
  "thread_local",
  "time",
+ "tokio",
+ "tokio-util",
  "toml",
  "tracing",
  "ulid",
@@ -1892,6 +1915,7 @@ dependencies = [
  "serde",
  "serde_json",
  "socket2 0.5.10",
+ "tokio",
  "toml",
 ]
 
@@ -1914,8 +1938,12 @@ dependencies = [
  "bytes",
  "futures",
  "prime",
+ "proxima-core",
  "proxima-primitives",
  "proxima-protocols",
+ "socket2 0.5.10",
+ "tokio",
+ "tokio-util",
  "toml",
 ]
 
@@ -1974,6 +2002,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "tokio",
  "toml",
  "tracing",
 ]
@@ -2018,6 +2047,7 @@ dependencies = [
  "sha1",
  "smallvec",
  "thiserror 2.0.20",
+ "tokio",
  "toml",
 ]
 
@@ -2098,6 +2128,7 @@ dependencies = [
  "libc",
  "prime",
  "proxima-runtime",
+ "tokio",
 ]
 
 [[package]]
@@ -2116,6 +2147,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
+ "tokio-rustls",
  "webpki-roots",
 ]
 
@@ -2500,6 +2532,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
+name = "signal-hook-registry"
+version = "1.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b"
+dependencies = [
+ "errno",
+ "libc",
+]
+
+[[package]]
 name = "simd-adler32"
 version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2720,6 +2762,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2 0.6.5",
  "tokio-macros",
  "windows-sys 0.61.2",
@@ -2737,6 +2780,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-rustls"
+version = "0.26.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1729aa945f29d91ba541258c8df89027d5792d85a8841fb65e8bf0f4ede4ef61"
+dependencies = [
+ "rustls",
+ "tokio",
+]
+
+[[package]]
 name = "tokio-util"
 version = "0.7.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2746,6 +2799,8 @@ dependencies = [
  "futures-core",
  "futures-io",
  "futures-sink",
+ "futures-util",
+ "libc",
  "pin-project-lite",
  "tokio",
 ]

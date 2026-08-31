@@ -29,6 +29,9 @@ std = [
     "serde/std",
 ]
 perf-instrument = ["std"]
+# Compile the same sans-IO core with Proxima's optional Tokio capability
+# available; Prime remains the default runtime and executable path.
+tokio-compat = ["std", "proxima/tokio", "proxima-net/tokio"]
 
 [dependencies]
 bytes = { version = "1", optional = true }

@@ -22,6 +22,7 @@ jobs:
       - run: cargo test --test resolver_fixture -- --nocapture
       - run: cargo test --doc
       - run: cargo check --no-default-features --target thumbv7m-none-eabi
+      - run: cargo check --features tokio-compat --all-targets
       - run: cargo install cargo-audit --locked
       - run: cargo audit
       - run: cargo audit --file fuzz/Cargo.lock
