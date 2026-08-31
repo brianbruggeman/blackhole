@@ -234,6 +234,23 @@ mod tests {
         let query = crate::query::QueryView::parse(&query_wire).expect("query");
         assert_eq!(policy.action_for_view(query), crate::Action::Nxdomain);
 
+        let conflicting_domain_rule = crate::RuleConfig {
+            id: 9,
+            domain: "other.example".into(),
+            action: crate::Action::Drop,
+            priority: 0,
+            qtype: None,
+            qclass: None,
+            client: None,
+            client_cidr: None,
+            client_cidrs: Vec::new(),
+        };
+        assert_eq!(
+            policy.reload_rules(&[conflicting_domain_rule]),
+            Err(crate::policy::PolicyError::DuplicateRule { id: 9 })
+        );
+        assert_eq!(policy.action_for_view(query), crate::Action::Nxdomain);
+
         let clear = Request::builder()
             .method("POST")
             .path("/reload/regex")

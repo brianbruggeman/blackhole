@@ -1262,6 +1262,16 @@ mod runtime {
             &self,
             rules: &[RuleConfig],
         ) -> Result<ReloadState, policy::PolicyError> {
+            let regex_ids = self
+                .regex_rules
+                .lock()
+                .expect("regex rules lock")
+                .iter()
+                .map(|rule| rule.id)
+                .collect::<BTreeSet<_>>();
+            if let Some(rule) = rules.iter().find(|rule| regex_ids.contains(&rule.id)) {
+                return Err(policy::PolicyError::DuplicateRule { id: rule.id });
+            }
             let published = self.reference.reload(rules)?;
             *self.base_rules.lock().expect("base rules lock") = rules.to_vec();
             self.domain_rules_configured
@@ -1286,6 +1296,16 @@ mod runtime {
         pub fn reload_blocklists(&self) -> Result<ReloadState, policy::PolicyError> {
             let mut rules = self.base_rules.lock().expect("base rules lock").clone();
             rules.extend(load_blocklists(&self.config.policy.blocklists)?);
+            let regex_ids = self
+                .regex_rules
+                .lock()
+                .expect("regex rules lock")
+                .iter()
+                .map(|rule| rule.id)
+                .collect::<BTreeSet<_>>();
+            if let Some(rule) = rules.iter().find(|rule| regex_ids.contains(&rule.id)) {
+                return Err(policy::PolicyError::DuplicateRule { id: rule.id });
+            }
             let published = self.reference.reload(&rules)?;
             self.domain_rules_configured
                 .store(!rules.is_empty(), Ordering::Release);
@@ -1308,13 +1328,7 @@ mod runtime {
             &self,
             configs: &[RegexRuleConfig],
         ) -> Result<ReloadState, policy::PolicyError> {
-            let rule_ids = self
-                .base_rules
-                .lock()
-                .expect("base rules lock")
-                .iter()
-                .map(|rule| rule.id)
-                .collect();
+            let rule_ids = self.reference.rule_ids();
             let compiled = compile_regex_rules(configs, rule_ids)?;
             *self.regex_rules.lock().expect("regex rules lock") = compiled;
             self.rules_configured.store(

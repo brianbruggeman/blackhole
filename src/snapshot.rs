@@ -2,6 +2,7 @@
 
 use crate::policy::{PolicyError, ReferencePolicy, RuleConfig};
 use proxima_core::live::{Live, LiveControl, live};
+use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReloadState {
@@ -24,6 +25,12 @@ impl PolicyStore {
     /// Read one complete immutable snapshot without taking a lock.
     pub fn read<R>(&self, with: impl FnOnce(&ReferencePolicy) -> R) -> R {
         self.current.read(with)
+    }
+
+    /// Return the IDs in the currently published snapshot for cross-table
+    /// validation performed by the runtime's regex table.
+    pub fn rule_ids(&self) -> BTreeSet<u32> {
+        self.current.read(ReferencePolicy::rule_ids)
     }
 
     /// Validate off the request path, then publish one whole snapshot.

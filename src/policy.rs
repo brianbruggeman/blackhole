@@ -304,6 +304,10 @@ impl ReferencePolicy {
                 action: rule.action,
             })
     }
+
+    pub(crate) fn rule_ids(&self) -> alloc::collections::BTreeSet<u32> {
+        self.rules.iter().map(|rule| rule.id).collect()
+    }
 }
 
 impl IndexedPolicy {
