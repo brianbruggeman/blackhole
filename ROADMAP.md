@@ -31,9 +31,9 @@ below are future capabilities, grouped by the dependency layer they extend.
   profiles, and authenticated administration.
 - Add adaptive amplification controls for repeated abusive patterns beyond the
   current per-query response-ratio cap and per-client admission limits.
-- Add optional country/region/ASN access policy with allow, deny, and
-  observe-only (“snitch”) modes; keep GeoIP uncertainty and database lifecycle
-  explicit.
+- Add managed GeoIP/region/ASN data lifecycle and richer country policy beyond
+  the current explicit country-to-CIDR map; keep uncertainty and database
+  freshness explicit.
 - Add authenticated configuration reload and incremental background updates on
   top of the current in-process atomic rule-table reload API.
 

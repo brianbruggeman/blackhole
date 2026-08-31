@@ -64,6 +64,13 @@ max_inflight_per_client = 64
 # Prevent forwarded answers from rebinding clients to private/local networks.
 reject_private_upstream_addresses = true
 
+[country_policy]
+# Optional operator-supplied classification map. Each line is COUNTRY CIDR.
+# No GeoIP database is bundled; classification is only as current as this file.
+# map_path = "/etc/blackhole/country-cidrs.txt"
+# deny = ["CN", "RU"]
+# observe = ["US"]
+
 [honeypot]
 ipv4 = "192.0.2.1"
 ipv6 = "2001:db8::1"

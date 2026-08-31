@@ -66,6 +66,8 @@ mod runtime {
         #[serde(default)]
         pub security: SecurityConfig,
         #[serde(default)]
+        pub country_policy: CountryPolicyConfig,
+        #[serde(default)]
         pub capture: CaptureConfig,
     }
 
@@ -279,6 +281,52 @@ mod runtime {
                 max_inflight_per_client: default_max_inflight_per_client(),
                 max_queries_per_client_per_second: default_max_queries_per_client_per_second(),
             }
+        }
+    }
+
+    #[derive(Debug, Clone, Deserialize, Default)]
+    pub struct CountryPolicyConfig {
+        /// Operator-supplied lines of `COUNTRY CIDR`; no database is bundled.
+        #[serde(default)]
+        pub map_path: Option<String>,
+        /// Country codes whose clients are denied before DNS policy evaluation.
+        #[serde(default)]
+        pub deny: Vec<String>,
+        /// Country codes whose requests are observed but otherwise unchanged.
+        #[serde(default)]
+        pub observe: Vec<String>,
+    }
+
+    #[derive(Debug, Clone)]
+    struct CountryEntry {
+        country: String,
+        network: policy::IpNetwork,
+    }
+
+    #[derive(Debug, Clone)]
+    struct CountryPolicy {
+        entries: Vec<CountryEntry>,
+        deny: BTreeSet<String>,
+        observe: BTreeSet<String>,
+    }
+
+    impl CountryPolicy {
+        fn country_for(&self, client: IpAddr) -> Option<&str> {
+            self.entries
+                .iter()
+                .filter(|entry| entry.network.contains(client))
+                .max_by_key(|entry| entry.network.prefix())
+                .map(|entry| entry.country.as_str())
+        }
+
+        fn denied(&self, client: IpAddr) -> bool {
+            self.country_for(client)
+                .is_some_and(|country| self.deny.contains(country))
+        }
+
+        fn observed(&self, client: IpAddr) -> bool {
+            self.country_for(client)
+                .is_some_and(|country| self.observe.contains(country))
         }
     }
 
@@ -587,6 +635,119 @@ mod runtime {
                 .split('.')
                 .all(|label| !label.is_empty() && label.len() <= 63 && label.is_ascii())
     }
+
+    const MAX_COUNTRY_MAP_BYTES: u64 = 16 * 1024 * 1024;
+    const MAX_COUNTRY_MAP_LINE_BYTES: usize = 256;
+
+    fn country_code(value: &str) -> Option<String> {
+        (value.len() == 2 && value.bytes().all(|byte| byte.is_ascii_alphabetic()))
+            .then(|| value.to_ascii_uppercase())
+    }
+
+    fn load_country_policy(
+        config: &CountryPolicyConfig,
+    ) -> Result<Option<CountryPolicy>, policy::PolicyError> {
+        if config.map_path.is_none() && config.deny.is_empty() && config.observe.is_empty() {
+            return Ok(None);
+        }
+        let path =
+            config
+                .map_path
+                .as_deref()
+                .ok_or_else(|| policy::PolicyError::InvalidCountryMap {
+                    path: "<none>".into(),
+                    reason: "map_path is required when country rules are configured".into(),
+                })?;
+        let deny: BTreeSet<String> = config
+            .deny
+            .iter()
+            .map(|country| {
+                country_code(country).ok_or_else(|| policy::PolicyError::InvalidCountryMap {
+                    path: path.into(),
+                    reason: format!("invalid deny country code: {country}"),
+                })
+            })
+            .collect::<Result<_, _>>()?;
+        let observe: BTreeSet<String> = config
+            .observe
+            .iter()
+            .map(|country| {
+                country_code(country).ok_or_else(|| policy::PolicyError::InvalidCountryMap {
+                    path: path.into(),
+                    reason: format!("invalid observe country code: {country}"),
+                })
+            })
+            .collect::<Result<_, _>>()?;
+        if deny.iter().any(|country| observe.contains(country)) {
+            return Err(policy::PolicyError::InvalidCountryMap {
+                path: path.into(),
+                reason: "a country cannot be both denied and observed".into(),
+            });
+        }
+        let metadata =
+            std::fs::metadata(path).map_err(|error| policy::PolicyError::InvalidCountryMap {
+                path: path.into(),
+                reason: error.to_string(),
+            })?;
+        if metadata.len() > MAX_COUNTRY_MAP_BYTES {
+            return Err(policy::PolicyError::InvalidCountryMap {
+                path: path.into(),
+                reason: format!("file exceeds {MAX_COUNTRY_MAP_BYTES} bytes"),
+            });
+        }
+        let contents = std::fs::read_to_string(path).map_err(|error| {
+            policy::PolicyError::InvalidCountryMap {
+                path: path.into(),
+                reason: error.to_string(),
+            }
+        })?;
+        let mut entries = Vec::new();
+        for (line_number, raw_line) in contents.lines().enumerate() {
+            if raw_line.len() > MAX_COUNTRY_MAP_LINE_BYTES {
+                return Err(policy::PolicyError::InvalidCountryMap {
+                    path: path.into(),
+                    reason: format!(
+                        "line {} exceeds {MAX_COUNTRY_MAP_LINE_BYTES} bytes",
+                        line_number + 1
+                    ),
+                });
+            }
+            let line = raw_line.split('#').next().unwrap_or_default().trim();
+            if line.is_empty() {
+                continue;
+            }
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            if fields.len() != 2 {
+                return Err(policy::PolicyError::InvalidCountryMap {
+                    path: path.into(),
+                    reason: format!("line {} must contain COUNTRY CIDR", line_number + 1),
+                });
+            }
+            let country =
+                country_code(fields[0]).ok_or_else(|| policy::PolicyError::InvalidCountryMap {
+                    path: path.into(),
+                    reason: format!("line {} has an invalid country code", line_number + 1),
+                })?;
+            let network = policy::IpNetwork::parse(fields[1]).ok_or_else(|| {
+                policy::PolicyError::InvalidCountryMap {
+                    path: path.into(),
+                    reason: format!("line {} has an invalid CIDR", line_number + 1),
+                }
+            })?;
+            entries.push(CountryEntry { country, network });
+        }
+        if entries.is_empty() {
+            return Err(policy::PolicyError::InvalidCountryMap {
+                path: path.into(),
+                reason: "map contains no entries".into(),
+            });
+        }
+        Ok(Some(CountryPolicy {
+            entries,
+            deny,
+            observe,
+        }))
+    }
     fn default_breaker_failures() -> u32 {
         3
     }
@@ -607,6 +768,7 @@ mod runtime {
     pub struct Policy {
         config: Config,
         base_rules: Mutex<Vec<RuleConfig>>,
+        country_policy: Option<CountryPolicy>,
         reference: PolicyStore,
         rules_configured: AtomicBool,
         telemetry: Option<TelemetryHandle>,
@@ -658,6 +820,7 @@ mod runtime {
             }
             let base_rules = config.policy.rules.clone();
             let blocklist_rules = load_blocklists(&config.policy.blocklists)?;
+            let country_policy = load_country_policy(&config.country_policy)?;
             config.policy.rules.extend(blocklist_rules);
             config.policy.domains = config.policy.domains.into_iter().map(normalize).collect();
             let reference = PolicyStore::new(&config.policy.rules)?;
@@ -681,6 +844,7 @@ mod runtime {
             let policy = Self {
                 config,
                 base_rules: Mutex::new(base_rules),
+                country_policy,
                 reference,
                 rules_configured: AtomicBool::new(rules_configured),
                 telemetry: None,
@@ -1083,6 +1247,17 @@ mod runtime {
             telemetry.counter_inc("blackhole.decisions", &labels, 1);
         }
 
+        fn observe_country(&self, country: &str) {
+            let Some(telemetry) = self.telemetry.as_ref() else {
+                return;
+            };
+            if !telemetry.is_active() {
+                return;
+            }
+            let labels = Labels::from_pairs(&[("country", country)]);
+            telemetry.counter_inc("blackhole.country_observations", &labels, 1);
+        }
+
         pub(crate) fn observe_failure(&self, cause: &'static str) {
             let Some(telemetry) = self.telemetry.as_ref() else {
                 return;
@@ -1132,6 +1307,18 @@ mod runtime {
                 self.observe_failure("client_rate_overflow");
                 self.observe(Action::Reject);
                 return Ok(DnsPipeReply::typed(200, server_failure_answer()));
+            }
+            if let (Some(country_policy), Some(client)) = (self.country_policy.as_ref(), client) {
+                if country_policy.denied(client) {
+                    self.observe_failure("country_policy_denied");
+                    self.observe(Action::Reject);
+                    return Ok(DnsPipeReply::typed(200, refused_answer()));
+                }
+                if let Some(country) = country_policy.country_for(client) {
+                    if country_policy.observed(client) {
+                        self.observe_country(country);
+                    }
+                }
             }
             let query = request.payload;
             if !self.admission_allows(&query) {
@@ -1357,6 +1544,7 @@ mod runtime {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use proxima_primitives::pipe::request::RequestContext;
 
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
         enum ProofAction {
@@ -1746,6 +1934,61 @@ mod runtime {
                 policy.action_for_view_with_client(view, Some("192.0.2.11".parse().unwrap())),
                 Action::Pass
             );
+        }
+
+        #[test]
+        fn country_map_denies_and_observes_adapter_owned_clients() {
+            let path = std::env::temp_dir().join(format!(
+                "blackhole-country-map-{}-{}.txt",
+                std::process::id(),
+                1
+            ));
+            std::fs::write(&path, "US 192.0.2.0/24\nCA 198.51.100.0/24\n")
+                .expect("write country map");
+            let mut config = Config::default();
+            config.country_policy = CountryPolicyConfig {
+                map_path: Some(path.to_string_lossy().into_owned()),
+                deny: vec!["us".into()],
+                observe: vec!["CA".into()],
+            };
+            let policy = Policy::new(config).expect("valid country policy");
+            let denied = "192.0.2.10".parse().expect("client address");
+            let observed = "198.51.100.10".parse().expect("client address");
+            let outside = "203.0.113.10".parse().expect("client address");
+            assert!(policy.country_policy.as_ref().unwrap().denied(denied));
+            assert!(policy.country_policy.as_ref().unwrap().observed(observed));
+            assert!(!policy.country_policy.as_ref().unwrap().denied(outside));
+            assert!(!policy.country_policy.as_ref().unwrap().observed(outside));
+
+            let request = |client| DnsPipeRequest {
+                method: proxima_primitives::pipe::method::Method::from_wire(
+                    bytes::Bytes::from_static(b"DNS"),
+                ),
+                path: bytes::Bytes::from_static(b"/"),
+                query: proxima_primitives::pipe::header_list::HeaderList::new(),
+                metadata: proxima_primitives::pipe::header_list::HeaderList::new(),
+                payload: proxima_dns::DnsQuery {
+                    id: 1,
+                    recursion_desired: true,
+                    name: "example.com.".into(),
+                    qtype: 1,
+                    qclass: 1,
+                },
+                stream: None,
+                context: RequestContext {
+                    peer: Some(PeerInfo::Tcp(std::net::SocketAddr::new(client, 1234))),
+                    ..RequestContext::default()
+                },
+            };
+            let denied_answer = futures::executor::block_on(policy.call(request(denied)))
+                .expect("country deny returns a DNS answer")
+                .payload;
+            assert_eq!(denied_answer.rcode, 5);
+            let outside_answer = futures::executor::block_on(policy.call(request(outside)))
+                .expect("outside country map returns a DNS answer")
+                .payload;
+            assert_eq!(outside_answer.rcode, 0);
+            std::fs::remove_file(path).expect("remove country map");
         }
 
         #[test]

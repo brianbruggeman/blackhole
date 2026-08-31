@@ -63,6 +63,7 @@ pub enum PolicyError {
     InvalidUpstream { reason: String },
     InvalidAdmission { reason: String },
     InvalidBlocklist { path: String, reason: String },
+    InvalidCountryMap { path: String, reason: String },
 }
 
 impl core::fmt::Display for PolicyError {
@@ -82,6 +83,9 @@ impl core::fmt::Display for PolicyError {
             Self::InvalidAdmission { reason } => write!(formatter, "invalid admission: {reason}"),
             Self::InvalidBlocklist { path, reason } => {
                 write!(formatter, "invalid blocklist {path}: {reason}")
+            }
+            Self::InvalidCountryMap { path, reason } => {
+                write!(formatter, "invalid country map {path}: {reason}")
             }
         }
     }
@@ -103,13 +107,13 @@ struct Rule {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct IpNetwork {
+pub(crate) struct IpNetwork {
     address: IpAddr,
     prefix: u8,
 }
 
 impl IpNetwork {
-    fn parse(value: &str) -> Option<Self> {
+    pub(crate) fn parse(value: &str) -> Option<Self> {
         let (address, prefix) = value.split_once('/')?;
         let address = address.parse().ok()?;
         let prefix = prefix.parse().ok()?;
@@ -120,7 +124,7 @@ impl IpNetwork {
         (prefix <= max).then_some(Self { address, prefix })
     }
 
-    fn contains(self, candidate: IpAddr) -> bool {
+    pub(crate) fn contains(self, candidate: IpAddr) -> bool {
         match (self.address, candidate) {
             (IpAddr::V4(network), IpAddr::V4(candidate)) => {
                 let network = u32::from(network);
@@ -144,6 +148,11 @@ impl IpNetwork {
             }
             _ => false,
         }
+    }
+
+    #[cfg(feature = "std")]
+    pub(crate) fn prefix(self) -> u8 {
+        self.prefix
     }
 }
 

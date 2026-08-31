@@ -30,6 +30,9 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   in-flight work with bounded global and per-client limits.
 - Upstream rebinding protection for private, local, link-local, unspecified,
   multicast, and IPv6 unique-local A/AAAA answers, with fail-closed SERVFAIL.
+- Optional country deny and observe-only (“snitch”) policy from a bounded,
+  operator-supplied country-to-CIDR map; longest-prefix entries win and the
+  classification is not treated as exact identity.
 - A committed libFuzzer target for the borrowed DNS query boundary, with a
   privacy-safe corpus location for minimized wire samples.
 - Proxima-native action counters, failure-cause counters, and request-latency
