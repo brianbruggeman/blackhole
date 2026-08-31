@@ -17,11 +17,12 @@ below are future capabilities, grouped by the dependency layer they extend.
 
 - Make the borrowed sans-IO query/decision path the executable listener path.
 - Complete DNS QR-bit, question/name, ID, response, and truncation validation.
-- Define transport semantics for every policy action, including pass, reject,
-  drop, NXDOMAIN, sink, honeypot, forward, and observe.
+- Extend the action contract with upstream-aware pass-through and isolated
+  honeypot terminal behavior.
 - Add bounded forwarding with matching-question checks, transaction checks,
   timeout behavior, TCP fallback, loop prevention, and fail-closed errors.
-- Add bounded positive, negative, and stale caching.
+- Expand the bounded cache with protocol-aware validation and richer eviction
+  telemetry.
 
 ## Policy and operator controls
 

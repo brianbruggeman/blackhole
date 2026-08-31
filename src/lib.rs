@@ -527,10 +527,13 @@ impl Policy {
             .map(|decision| decision.action)
             .or(Some(self.config.policy.default_action))
         {
-            Some(Action::Ignore | Action::Drop | Action::Forward | Action::Honeypot) => None,
+            Some(Action::Ignore | Action::Drop | Action::Forward) => None,
             Some(Action::Nxdomain) => Some(DnsAnswer::name_error()),
-            Some(Action::Reject) => Some(DnsAnswer::name_error()),
-            Some(Action::Sink) => Some(honeypot(&query.name, query.qtype, &self.config.honeypot)),
+            Some(Action::Reject) => Some(refused_answer()),
+            Some(Action::Sink) => Some(DnsAnswer::ok(Vec::new())),
+            Some(Action::Honeypot) => {
+                Some(honeypot(&query.name, query.qtype, &self.config.honeypot))
+            }
             Some(Action::Pass | Action::Observe) | None => Some(DnsAnswer::ok(Vec::new())),
         }
     }
@@ -642,11 +645,12 @@ impl SendPipe for Policy {
         } else {
             match action {
                 Some(Action::Ignore | Action::Drop) => None,
-                Some(Action::Nxdomain | Action::Reject) => Some(DnsAnswer::name_error()),
-                Some(Action::Honeypot) => None,
-                Some(Action::Sink) => {
+                Some(Action::Nxdomain) => Some(DnsAnswer::name_error()),
+                Some(Action::Reject) => Some(refused_answer()),
+                Some(Action::Honeypot) => {
                     Some(honeypot(&query.name, query.qtype, &self.config.honeypot))
                 }
+                Some(Action::Sink) => Some(DnsAnswer::ok(Vec::new())),
                 Some(Action::Pass | Action::Observe) | None => Some(DnsAnswer::ok(Vec::new())),
                 Some(Action::Forward) => unreachable!("forwarding handled above"),
             }
@@ -672,6 +676,15 @@ fn action_label(action: Action) -> &'static str {
         Action::Honeypot => "honeypot",
         Action::Forward => "forward",
         Action::Observe => "observe",
+    }
+}
+
+fn refused_answer() -> DnsAnswer {
+    DnsAnswer {
+        rcode: 5,
+        authoritative: false,
+        recursion_available: true,
+        records: Vec::new(),
     }
 }
 
@@ -961,6 +974,44 @@ mod tests {
         assert!(!breaker.allows(now));
         breaker.success();
         assert!(breaker.allows(now));
+    }
+
+    #[test]
+    fn explicit_actions_have_distinct_wire_contracts() {
+        let query = |name: &str| proxima_dns::DnsQuery {
+            id: 1,
+            recursion_desired: true,
+            name: name.into(),
+            qtype: 1,
+            qclass: 1,
+        };
+        let actions = [
+            ("reject.example", Action::Reject),
+            ("nxdomain.example", Action::Nxdomain),
+            ("sink.example", Action::Sink),
+            ("honeypot.example", Action::Honeypot),
+        ];
+        for (domain, action) in actions {
+            let mut config = Config::default();
+            config.policy.rules = vec![RuleConfig {
+                id: 1,
+                domain: domain.into(),
+                action,
+                priority: 0,
+                qtype: None,
+                qclass: None,
+                client: None,
+            }];
+            let policy = Policy::new(config).expect("valid policy");
+            let answer = policy.evaluate(&query(domain)).expect("wire answer");
+            match action {
+                Action::Reject => assert_eq!(answer.rcode, 5),
+                Action::Nxdomain => assert_eq!(answer.rcode, 3),
+                Action::Sink => assert!(answer.records.is_empty()),
+                Action::Honeypot => assert_eq!(answer.records.len(), 1),
+                _ => unreachable!("test action set"),
+            }
+        }
     }
 
     #[test]
