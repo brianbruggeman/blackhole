@@ -132,7 +132,18 @@ impl SendPipe for AnyHandler {
 #[cfg(feature = "std")]
 #[proxima::main]
 async fn main() -> Result<(), ProximaError> {
-    let explicit_config_path = env::args().nth(1);
+    let arguments: Vec<String> = env::args().skip(1).collect();
+    let (check_only, explicit_config_path) = match arguments.as_slice() {
+        [] => (false, None),
+        [flag] if flag == "--check" => (true, None),
+        [flag, path] if flag == "--check" => (true, Some(path.as_str())),
+        [path] => (false, Some(path.as_str())),
+        _ => {
+            return Err(ProximaError::Config(
+                "usage: blackhole [--check] [config.toml]".into(),
+            ));
+        }
+    };
     let config = if let Some(config_path) = explicit_config_path {
         Config::from_file(Path::new(&config_path))
             .map_err(|error| ProximaError::Config(format!("cannot load {config_path}: {error}")))?
@@ -144,6 +155,12 @@ async fn main() -> Result<(), ProximaError> {
         .listen
         .parse()
         .map_err(|error| ProximaError::Config(format!("invalid server.listen: {error}")))?;
+    if check_only {
+        Policy::new(config)
+            .map_err(|error| ProximaError::Config(format!("invalid configuration: {error}")))?;
+        println!("configuration valid (listener bind: {bind})");
+        return Ok(());
+    }
     let capture_config = config.capture.clone();
     let mut capture = install_capture(&capture_config, bind.port())?;
     let upstream = config.upstream.clone();

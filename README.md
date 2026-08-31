@@ -21,6 +21,13 @@ cargo run --release -- blackhole.example.toml
 dig @127.0.0.1 -p 5353 ads.example A
 ```
 
+Validate a configuration without opening the DNS listener or installing the
+optional capture rules:
+
+```sh
+cargo run --release -- --check blackhole.example.toml
+```
+
 Use port 53 only with the platform's normal low-port capability mechanism.
 The default configuration binds only to loopback. An explicitly supplied
 configuration path must exist and parse successfully before the listener is

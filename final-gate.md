@@ -17,6 +17,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | Dependency audit | `cargo audit --no-fetch` passed with one allowed warning: unmaintained `paste` (`RUSTSEC-2024-0436`). The fuzz lockfile audit also passed. |
 | Fuzz smoke | The `query_view` nightly fuzz target ran 1,000 iterations without a crash; the bounded corpus contains 50 inputs. |
 | Resolver fixture | The actual loopback UDP/TCP listener fixture passed. |
+| Configuration validation | `cargo run --offline -- --check blackhole.example.toml` and `cargo run --offline -- --check` both exited successfully before listener startup. |
 | Capture lifecycle | Planner, rollback, ownership, recovery, and cleanup tests pass. Capture is explicitly opt-in and wired through the shared controller. |
 | Per-client admission | The configured per-client concurrent-request cap rejects a second in-flight request at the limit, releases on completion, and passes the focused unit test. |
 | Response amplification cap | The configured response-ratio cap is validated and applied below the absolute response ceiling; the focused cap test is included in the current 73-test library suite. |
