@@ -28,6 +28,8 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   in-flight work with a bounded global breaker.
 - Upstream rebinding protection for private, local, link-local, unspecified,
   multicast, and IPv6 unique-local A/AAAA answers, with fail-closed SERVFAIL.
+- A committed libFuzzer target for the borrowed DNS query boundary, with a
+  privacy-safe corpus location for minimized wire samples.
 - Proxima-native action counters, failure-cause counters, and request-latency
   histograms that preserve the complete action identity.
 - A tested policy/FSM/snapshot core that does not require privileged capture
