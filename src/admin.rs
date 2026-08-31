@@ -50,6 +50,7 @@ impl SendPipe for AdminHandler {
         match (method, path) {
             ("GET", "/health") => Ok(Response::ok("{\"status\":\"ok\"}")),
             ("GET", "/status") => Ok(Response::ok(self.policy.admin_status())),
+            ("GET", "/rules") => Ok(Response::ok(self.policy.admin_rules())),
             ("POST", "/reload/blocklists") => match self.policy.reload_blocklists() {
                 Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
                 Err(error) => Ok(Response::new(500).with_body(format!(
@@ -115,8 +116,8 @@ impl SendPipe for AdminHandler {
             }
             (
                 _,
-                "/health" | "/status" | "/reload/blocklists" | "/reload/country" | "/reload/policy"
-                | "/reload/regex",
+                "/health" | "/status" | "/rules" | "/reload/blocklists" | "/reload/country"
+                | "/reload/policy" | "/reload/regex",
             ) => Ok(Response::new(405)),
             _ => Ok(Response::not_found()),
         }
@@ -175,6 +176,11 @@ mod tests {
         assert_eq!(status["upstream_configured"], false);
         assert_eq!(status["country_policy_configured"], false);
         assert_eq!(status["cache_entries"], 0);
+        let rules = block_on(handler.call(request("GET", "/rules"))).expect("rules response");
+        assert_eq!(rules.status, 200);
+        let rules: serde_json::Value = serde_json::from_slice(&rules.payload).expect("rules JSON");
+        assert_eq!(rules["total"], 0);
+        assert_eq!(rules["truncated"], false);
         let unknown = block_on(handler.call(request("GET", "/private"))).expect("404 response");
         assert_eq!(unknown.status, 404);
         let wrong_method =
@@ -186,6 +192,46 @@ mod tests {
         let wrong_status_method =
             block_on(handler.call(request("POST", "/status"))).expect("405 status response");
         assert_eq!(wrong_status_method.status, 405);
+        let wrong_rules_method =
+            block_on(handler.call(request("POST", "/rules"))).expect("405 rules response");
+        assert_eq!(wrong_rules_method.status, 405);
+    }
+
+    #[test]
+    fn rules_route_lists_metadata_and_caps_large_responses() {
+        let mut config = crate::Config::default();
+        config.policy.rules = vec![RuleConfig {
+            id: 7,
+            domain: "blocked.example".into(),
+            action: crate::Action::Nxdomain,
+            priority: 4,
+            qtype: Some(1),
+            qclass: Some(1),
+            client: None,
+            client_cidr: None,
+            client_cidrs: Vec::new(),
+        }];
+        config.policy.regex_rules = (0..80)
+            .map(|id| RegexRuleConfig {
+                id: 100 + id,
+                pattern: format!("^host{id}{}$", "a".repeat(900)),
+                action: crate::Action::Drop,
+                priority: 0,
+                qtype: None,
+                qclass: None,
+                client: None,
+            })
+            .collect();
+        let handler = AdminHandler::new(Arc::new(Policy::new(config).expect("valid rules")));
+        let response = block_on(handler.call(request("GET", "/rules"))).expect("rules response");
+        assert_eq!(response.status, 200);
+        assert!(response.payload.len() <= 64 * 1024);
+        let body: serde_json::Value =
+            serde_json::from_slice(&response.payload).expect("rules JSON");
+        assert_eq!(body["total"], 81);
+        assert_eq!(body["truncated"], true);
+        assert_eq!(body["rules"][0]["kind"], "domain");
+        assert_eq!(body["rules"][0]["action"], "nxdomain");
     }
 
     #[test]

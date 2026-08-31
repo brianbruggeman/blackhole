@@ -58,6 +58,7 @@ mod runtime {
     const MAX_REGEX_RULES: usize = 4096;
     const MAX_REGEX_PATTERN_BYTES: usize = 4096;
     const MAX_REGEX_PROGRAM_BYTES: usize = 1 << 20;
+    const MAX_ADMIN_RULES_BODY_BYTES: usize = 64 * 1024;
 
     #[derive(Debug, Clone, Deserialize, Default)]
     pub struct Config {
@@ -2117,6 +2118,53 @@ mod runtime {
                 "cache_capacity": cache.config.max_entries,
             })
             .to_string()
+        }
+
+        pub(crate) fn admin_rules(&self) -> String {
+            let base_rules = self.base_rules.lock().expect("base rules lock").clone();
+            let regex_rules = self.regex_rules.lock().expect("regex rules lock");
+            let total = base_rules.len().saturating_add(regex_rules.len());
+            let mut rules = Vec::with_capacity(total.min(256));
+            for rule in &base_rules {
+                rules.push(serde_json::json!({
+                    "kind": "domain",
+                    "id": rule.id,
+                    "domain": rule.domain,
+                    "action": action_label(rule.action),
+                    "priority": rule.priority,
+                    "qtype": rule.qtype,
+                    "qclass": rule.qclass,
+                    "client": rule.client,
+                    "client_cidr": rule.client_cidr,
+                    "client_cidrs": rule.client_cidrs,
+                }));
+            }
+            for rule in regex_rules.iter() {
+                rules.push(serde_json::json!({
+                    "kind": "regex",
+                    "id": rule.id,
+                    "pattern": rule.pattern.as_str(),
+                    "action": action_label(rule.action),
+                    "priority": rule.priority,
+                    "qtype": rule.qtype,
+                    "qclass": rule.qclass,
+                    "client": rule.client,
+                }));
+            }
+            let mut truncated = false;
+            loop {
+                let response = serde_json::json!({
+                    "rules": rules,
+                    "total": total,
+                    "truncated": truncated,
+                })
+                .to_string();
+                if response.len() <= MAX_ADMIN_RULES_BODY_BYTES || rules.len() <= 1 {
+                    return response;
+                }
+                rules.pop();
+                truncated = true;
+            }
         }
 
         fn observe_latency(&self, elapsed: Duration) {
