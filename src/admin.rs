@@ -9,7 +9,9 @@ use proxima::middlewares::auth::Auth;
 use proxima::pipe::{PipeHandle, into_handle};
 use proxima::{ProximaError, Request, Response, SendPipe};
 
-use crate::Policy;
+use crate::{Policy, RuleConfig};
+
+const MAX_POLICY_BODY_BYTES: usize = 64 * 1024;
 
 /// The current control plane is HTTP bearer auth without TLS. Keep credentials
 /// on the local host until a TLS listener is added to the admin surface.
@@ -54,7 +56,29 @@ impl SendPipe for AdminHandler {
                     serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
                 ))),
             },
-            (_, "/health" | "/reload/blocklists") => Ok(Response::new(405)),
+            ("POST", "/reload/policy") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let rules = match serde_json::from_slice::<Vec<RuleConfig>>(&request.payload) {
+                    Ok(rules) => rules,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                match self.policy.reload_rules(&rules) {
+                    Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
+            (_, "/health" | "/reload/blocklists" | "/reload/policy") => Ok(Response::new(405)),
             _ => Ok(Response::not_found()),
         }
     }
@@ -108,6 +132,35 @@ mod tests {
         let wrong_method =
             block_on(handler.call(request("GET", "/reload/blocklists"))).expect("405 response");
         assert_eq!(wrong_method.status, 405);
+    }
+
+    #[test]
+    fn policy_reload_publishes_valid_rules_and_rejects_bad_json() {
+        let policy = Arc::new(Policy::new(crate::Config::default()).expect("default policy"));
+        let handler = AdminHandler::new(Arc::clone(&policy));
+        let valid = Request::builder()
+            .method("POST")
+            .path("/reload/policy")
+            .payload(
+                r#"[{"id":7,"domain":"blocked.example","action":"nxdomain","priority":0,"qtype":null,"qclass":null,"client":null,"client_cidr":null}]"#,
+            )
+            .build()
+            .expect("valid policy request");
+        let response = block_on(handler.call(valid)).expect("reload response");
+        assert_eq!(response.status, 200);
+        let mut query_wire = vec![0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0];
+        query_wire.extend_from_slice(b"\x07blocked\x07example\0\0\x01\0\x01");
+        let query = crate::query::QueryView::parse(&query_wire).expect("query");
+        assert_eq!(policy.action_for_view(query), crate::Action::Nxdomain);
+
+        let invalid = Request::builder()
+            .method("POST")
+            .path("/reload/policy")
+            .payload("not-json")
+            .build()
+            .expect("invalid request shape");
+        let response = block_on(handler.call(invalid)).expect("error response");
+        assert_eq!(response.status, 400);
     }
 
     #[test]

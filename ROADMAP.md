@@ -25,8 +25,8 @@ below are future capabilities, grouped by the dependency layer they extend.
 
 ## Policy and operator controls
 
-- Extend the authenticated blocklist administration with incremental background
-  reload and richer management operations.
+- Extend the authenticated blocklist and policy administration with
+  incremental background reload and richer management operations.
 - Add richer per-client and network policy controls and authenticated
   administration.
 - Add adaptive amplification controls for repeated abusive patterns beyond the

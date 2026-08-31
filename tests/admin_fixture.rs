@@ -26,6 +26,7 @@ async fn request(
     method: &str,
     path: &str,
     authorization: Option<&str>,
+    body: Option<&str>,
 ) -> io::Result<Vec<u8>> {
     let mut stream = PrimeTcpUpstream::new(addr)
         .connect()
@@ -37,7 +38,13 @@ async fn request(
         request.push_str(authorization);
         request.push_str("\r\n");
     }
+    if let Some(body) = body {
+        request.push_str(&format!("Content-Length: {}\r\n", body.len()));
+    }
     request.push_str("Connection: close\r\n\r\n");
+    if let Some(body) = body {
+        request.push_str(body);
+    }
     stream.write_all(request.as_bytes()).await?;
     let mut response = Vec::new();
     stream.read_to_end(&mut response).await?;
@@ -56,13 +63,19 @@ async fn admin_http_listener_enforces_bearer_auth() {
         .await
         .expect("admin listener");
 
-    let unauthorized = request(addr, "GET", "/health", None)
+    let unauthorized = request(addr, "GET", "/health", None, None)
         .await
         .expect("unauthorized response");
     assert!(String::from_utf8_lossy(&unauthorized).starts_with("HTTP/1.1 401"));
-    let authorized = request(addr, "GET", "/health", Some("Bearer integration-secret"))
-        .await
-        .expect("authorized response");
+    let authorized = request(
+        addr,
+        "GET",
+        "/health",
+        Some("Bearer integration-secret"),
+        None,
+    )
+    .await
+    .expect("authorized response");
     let authorized = String::from_utf8_lossy(&authorized);
     assert!(authorized.starts_with("HTTP/1.1 200"));
     assert!(authorized.contains("{\"status\":\"ok\"}"));
@@ -71,11 +84,26 @@ async fn admin_http_listener_enforces_bearer_auth() {
         "POST",
         "/reload/blocklists",
         Some("Bearer integration-secret"),
+        None,
     )
     .await
     .expect("reload response");
     let reloaded = String::from_utf8_lossy(&reloaded);
     assert!(reloaded.starts_with("HTTP/1.1 200"));
     assert!(reloaded.contains("{\"status\":\"reloaded\"}"));
+    let policy = request(
+        addr,
+        "POST",
+        "/reload/policy",
+        Some("Bearer integration-secret"),
+        Some(
+            r#"[{"id":7,"domain":"blocked.example","action":"nxdomain","priority":0,"qtype":null,"qclass":null,"client":null,"client_cidr":null}]"#,
+        ),
+    )
+    .await
+    .expect("policy reload response");
+    let policy = String::from_utf8_lossy(&policy);
+    assert!(policy.starts_with("HTTP/1.1 200"));
+    assert!(policy.contains("{\"status\":\"reloaded\"}"));
     server.stop();
 }
