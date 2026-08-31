@@ -606,6 +606,7 @@ mod runtime {
 
     pub struct Policy {
         config: Config,
+        base_rules: Mutex<Vec<RuleConfig>>,
         reference: PolicyStore,
         rules_configured: AtomicBool,
         telemetry: Option<TelemetryHandle>,
@@ -655,6 +656,7 @@ mod runtime {
                     reason: "max_queries_per_client_per_second must be non-zero".into(),
                 });
             }
+            let base_rules = config.policy.rules.clone();
             let blocklist_rules = load_blocklists(&config.policy.blocklists)?;
             config.policy.rules.extend(blocklist_rules);
             config.policy.domains = config.policy.domains.into_iter().map(normalize).collect();
@@ -678,6 +680,7 @@ mod runtime {
             let rules_configured = !config.policy.rules.is_empty();
             let policy = Self {
                 config,
+                base_rules: Mutex::new(base_rules),
                 reference,
                 rules_configured: AtomicBool::new(rules_configured),
                 telemetry: None,
@@ -709,6 +712,20 @@ mod runtime {
             rules: &[RuleConfig],
         ) -> Result<ReloadState, policy::PolicyError> {
             let published = self.reference.reload(rules)?;
+            *self.base_rules.lock().expect("base rules lock") = rules.to_vec();
+            self.rules_configured
+                .store(!rules.is_empty(), Ordering::Release);
+            Ok(published)
+        }
+
+        /// Reload the configured blocklist files and publish their rules as
+        /// one immutable snapshot alongside the current explicit rules.
+        /// Files are read and validated before the live snapshot is touched,
+        /// so an unreadable or malformed update keeps the last good generation.
+        pub fn reload_blocklists(&self) -> Result<ReloadState, policy::PolicyError> {
+            let mut rules = self.base_rules.lock().expect("base rules lock").clone();
+            rules.extend(load_blocklists(&self.config.policy.blocklists)?);
+            let published = self.reference.reload(&rules)?;
             self.rules_configured
                 .store(!rules.is_empty(), Ordering::Release);
             Ok(published)
@@ -1530,6 +1547,38 @@ mod runtime {
                 3
             );
             assert_eq!(policy.evaluate(&query("clear.example.")).unwrap().rcode, 0);
+            std::fs::remove_file(path).expect("remove blocklist");
+        }
+
+        #[test]
+        fn blocklist_reload_publishes_atomically_and_keeps_last_good_snapshot() {
+            let path = std::env::temp_dir().join(format!(
+                "blackhole-blocklist-reload-{}-{}.txt",
+                std::process::id(),
+                1
+            ));
+            std::fs::write(&path, "old.example\n").expect("write initial blocklist");
+            let mut config = Config::default();
+            config.policy.default_action = Action::Pass;
+            config.policy.blocklists = vec![path.to_string_lossy().into_owned()];
+            let policy = Policy::new(config).expect("valid blocklist");
+            let query = |name: &str| proxima_dns::DnsQuery {
+                id: 1,
+                recursion_desired: true,
+                name: name.into(),
+                qtype: 1,
+                qclass: 1,
+            };
+            assert_eq!(policy.evaluate(&query("old.example.")).unwrap().rcode, 3);
+
+            std::fs::write(&path, "new.example\n").expect("write replacement blocklist");
+            assert_eq!(policy.reload_blocklists(), Ok(ReloadState::Published));
+            assert_eq!(policy.evaluate(&query("old.example.")).unwrap().rcode, 0);
+            assert_eq!(policy.evaluate(&query("new.example.")).unwrap().rcode, 3);
+
+            std::fs::write(&path, "bad..name\n").expect("write invalid blocklist");
+            assert!(policy.reload_blocklists().is_err());
+            assert_eq!(policy.evaluate(&query("new.example.")).unwrap().rcode, 3);
             std::fs::remove_file(path).expect("remove blocklist");
         }
 

@@ -36,6 +36,8 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   histograms that preserve the complete action identity.
 - Atomic in-process rule-table reloads over Proxima's immutable `Live` snapshot
   primitive, with failed reloads retaining the last valid generation.
+- Atomic operator-triggered blocklist reloads rebuild the explicit rules plus
+  current bounded files and retain the last good snapshot on failure.
 - A tested policy/FSM/snapshot core that does not require privileged capture
   APIs.
 - Shared capture-controller orchestration with exact ownership journaling,
