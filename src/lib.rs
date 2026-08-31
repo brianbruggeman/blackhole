@@ -604,6 +604,10 @@ mod runtime {
         pub priority: i32,
         #[serde(default)]
         pub client_cidrs: Vec<String>,
+        #[serde(default)]
+        pub qtype: Option<u16>,
+        #[serde(default)]
+        pub qclass: Option<u16>,
     }
 
     #[derive(Debug, Clone, Deserialize)]
@@ -1037,8 +1041,8 @@ mod runtime {
                     domain,
                     action: profile.action,
                     priority: profile.priority,
-                    qtype: None,
-                    qclass: None,
+                    qtype: profile.qtype,
+                    qclass: profile.qclass,
                     client: None,
                     client_cidr: None,
                     client_cidrs: profile.client_cidrs.clone(),
@@ -3425,6 +3429,8 @@ mod runtime {
                 action: Action::Nxdomain,
                 priority: 10,
                 client_cidrs: vec!["192.0.2.0/24".into()],
+                qtype: Some(1),
+                qclass: Some(1),
             }];
             let policy = Policy::new(config).expect("valid service profile");
             let query = proxima_dns::DnsQuery {
@@ -3447,6 +3453,20 @@ mod runtime {
                     .is_none()
             );
             assert!(policy.decision(&query, None).is_none());
+            let mut wrong_type = query.clone();
+            wrong_type.qtype = 28;
+            assert!(
+                policy
+                    .decision(&wrong_type, Some("192.0.2.53".parse().unwrap()))
+                    .is_none()
+            );
+            let mut wrong_class = query;
+            wrong_class.qclass = 3;
+            assert!(
+                policy
+                    .decision(&wrong_class, Some("192.0.2.53".parse().unwrap()))
+                    .is_none()
+            );
         }
 
         #[test]
@@ -3460,6 +3480,8 @@ mod runtime {
                     action: Action::Nxdomain,
                     priority: 0,
                     client_cidrs: Vec::new(),
+                    qtype: None,
+                    qclass: None,
                 },
                 ServiceProfileConfig {
                     id: 2,
@@ -3468,6 +3490,8 @@ mod runtime {
                     action: Action::Nxdomain,
                     priority: 0,
                     client_cidrs: Vec::new(),
+                    qtype: None,
+                    qclass: None,
                 },
             ];
             assert!(matches!(
@@ -3488,6 +3512,8 @@ mod runtime {
                     action: Action::Nxdomain,
                     priority: 0,
                     client_cidrs: Vec::new(),
+                    qtype: None,
+                    qclass: None,
                 },
                 ServiceProfileConfig {
                     id: 200_000,
@@ -3496,6 +3522,8 @@ mod runtime {
                     action: Action::Nxdomain,
                     priority: 0,
                     client_cidrs: Vec::new(),
+                    qtype: None,
+                    qclass: None,
                 },
             ];
             assert!(matches!(
