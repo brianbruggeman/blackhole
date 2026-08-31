@@ -46,7 +46,8 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Proxima-native action counters, failure-cause counters, and request-latency
   histograms that preserve the complete action identity.
 - Atomic in-process rule-table reloads over Proxima's immutable `Live` snapshot
-  primitive, with failed reloads retaining the last valid generation.
+  primitive, with failed reloads retaining the last valid generation and
+  successful policy reloads invalidating cached forwarding answers.
 - Atomic operator-triggered blocklist reloads rebuild the explicit rules plus
   current bounded files and retain the last good snapshot on failure.
 - A tested policy/FSM/snapshot core that does not require privileged capture

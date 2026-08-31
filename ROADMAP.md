@@ -21,8 +21,7 @@ below are future capabilities, grouped by the dependency layer they extend.
   honeypot terminal behavior.
 - Add bounded forwarding with matching-question checks, transaction checks,
   timeout behavior, TCP fallback, loop prevention, and fail-closed errors.
-- Expand the bounded cache with richer TTL telemetry and admission-aware
-  invalidation.
+- Expand the bounded cache with richer TTL telemetry.
 
 ## Policy and operator controls
 

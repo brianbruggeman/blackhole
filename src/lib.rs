@@ -140,6 +140,10 @@ mod runtime {
             None
         }
 
+        fn clear(&mut self) {
+            self.entries.clear();
+        }
+
         fn insert(&mut self, key: CacheKey, answer: DnsAnswer, now: Instant) -> bool {
             if self.config.max_entries == 0 {
                 return false;
@@ -1108,6 +1112,7 @@ mod runtime {
             *self.base_rules.lock().expect("base rules lock") = rules.to_vec();
             self.rules_configured
                 .store(!rules.is_empty(), Ordering::Release);
+            self.cache.lock().expect("cache lock").clear();
             Ok(published)
         }
 
@@ -1121,6 +1126,7 @@ mod runtime {
             let published = self.reference.reload(&rules)?;
             self.rules_configured
                 .store(!rules.is_empty(), Ordering::Release);
+            self.cache.lock().expect("cache lock").clear();
             Ok(published)
         }
 
@@ -1971,6 +1977,24 @@ mod runtime {
                 client_cidr: None,
             }];
             let policy = Policy::new(config).expect("initial policy");
+            let cached_key = CacheKey {
+                name: "cached.example".into(),
+                qtype: 1,
+                qclass: 1,
+            };
+            policy.cache.lock().expect("cache lock").insert(
+                cached_key.clone(),
+                DnsAnswer::name_error(),
+                Instant::now(),
+            );
+            assert!(
+                policy
+                    .cache
+                    .lock()
+                    .expect("cache lock")
+                    .fresh(&cached_key)
+                    .is_some()
+            );
             assert_eq!(
                 policy
                     .decision(&query("old.example."), None)
@@ -1991,6 +2015,14 @@ mod runtime {
                     client_cidr: None,
                 }]),
                 Ok(ReloadState::Published)
+            );
+            assert!(
+                policy
+                    .cache
+                    .lock()
+                    .expect("cache lock")
+                    .fresh(&cached_key)
+                    .is_none()
             );
             assert!(policy.decision(&query("old.example."), None).is_none());
             assert_eq!(
