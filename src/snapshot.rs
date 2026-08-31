@@ -152,4 +152,67 @@ mod tests {
             }));
         }
     }
+
+    #[test]
+    fn concurrent_readers_observe_only_complete_generations() {
+        use std::sync::{
+            Arc, Barrier,
+            atomic::{AtomicBool, Ordering},
+        };
+        use std::thread;
+
+        let store = Arc::new(
+            PolicyStore::new(&[
+                rule(0, "generation-0-a.example", Action::Drop),
+                rule(1, "generation-0-b.example", Action::Reject),
+            ])
+            .unwrap(),
+        );
+        let inconsistent = Arc::new(AtomicBool::new(false));
+        let start = Arc::new(Barrier::new(5));
+        let mut readers = Vec::new();
+        for _ in 0..4 {
+            let store = Arc::clone(&store);
+            let inconsistent = Arc::clone(&inconsistent);
+            let start = Arc::clone(&start);
+            readers.push(thread::spawn(move || {
+                start.wait();
+                for _ in 0..1_000 {
+                    let ids = store.read(|snapshot| snapshot.rule_ids());
+                    if ids.len() != 2 {
+                        inconsistent.store(true, Ordering::Relaxed);
+                        continue;
+                    }
+                    let mut ids = ids.into_iter();
+                    let first = ids.next().unwrap_or_default();
+                    let second = ids.next().unwrap_or_default();
+                    if second != first + 1 {
+                        inconsistent.store(true, Ordering::Relaxed);
+                    }
+                }
+            }));
+        }
+
+        start.wait();
+        for generation in 1..64 {
+            let first = generation * 2;
+            let rules = [
+                rule(
+                    first,
+                    &format!("generation-{generation}-a.example"),
+                    Action::Drop,
+                ),
+                rule(
+                    first + 1,
+                    &format!("generation-{generation}-b.example"),
+                    Action::Reject,
+                ),
+            ];
+            assert_eq!(store.reload(&rules), Ok(ReloadState::Published));
+        }
+        for reader in readers {
+            reader.join().expect("reader thread");
+        }
+        assert!(!inconsistent.load(Ordering::Relaxed));
+    }
 }
