@@ -15,7 +15,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | Doctests | `cargo test --doc --offline` passed at Blackhole `f7e2518`: 1 doctest. |
 | No-std and WASM | `cargo build --offline --no-default-features --target thumbv7m-none-eabi` and the equivalent `wasm32-unknown-unknown` command passed at Blackhole `b35d471` with GitHub Proxima revision `0652a0c0`; both completed without warnings. |
 | Tokio compatibility build | `cargo check --offline --features tokio-compat --all-targets` passed at Blackhole `e8d1a9d` with GitHub Proxima revision `0652a0c0`; the lane compiles Tokio capability support while the default executable remains Prime-backed. |
-| Dependency audit | Root `cargo audit --no-fetch` passed at Blackhole `f7e2518` with one allowed warning: unmaintained `paste` (`RUSTSEC-2024-0436`). |
+| Dependency audit | Root `cargo audit --no-fetch` and `cargo audit --no-fetch --file fuzz/Cargo.lock` passed at Blackhole `6cf5a71`; the root graph reports one allowed warning for unmaintained `paste` (`RUSTSEC-2024-0436`), while the fuzz lockfile reports no findings. |
 | Fuzz smoke | The installed nightly `rustc 1.100.0-nightly` `query_view` target ran 1,000 iterations over the 56 tracked corpus inputs without a crash at Blackhole `0f48c4e`; generated corpus files were discarded after the smoke run. |
 | Resolver fixture | The actual loopback UDP/TCP listener fixture passed. |
 | Configuration validation | At Blackhole `1455ec5`, `cargo run --offline -- --check blackhole.example.toml` exited successfully before listener startup; enabled capture plans are validated through the platform planner without installation. |
