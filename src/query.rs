@@ -24,6 +24,7 @@ pub struct QueryView<'packet> {
 pub enum QueryParseError {
     Wire(ParseError),
     Response,
+    UnsupportedName,
     NotSingleQuestion,
     Oversized,
 }
@@ -34,6 +35,9 @@ impl core::fmt::Display for QueryParseError {
             Self::Wire(error) => write!(formatter, "invalid DNS message: {error}"),
             Self::Response => {
                 formatter.write_str("DNS response received where a query was expected")
+            }
+            Self::UnsupportedName => {
+                formatter.write_str("DNS name contains non-ASCII labels; IDNA is unsupported")
             }
             Self::NotSingleQuestion => formatter.write_str("DNS message is not one question"),
             Self::Oversized => write!(formatter, "DNS message exceeds {MAX_QUERY_BYTES} bytes"),
@@ -66,6 +70,9 @@ impl<'packet> QueryView<'packet> {
             .questions()
             .next()
             .ok_or(QueryParseError::NotSingleQuestion)??;
+        if question.name.labels().any(|label| !label.is_ascii()) {
+            return Err(QueryParseError::UnsupportedName);
+        }
         Ok(Self {
             id: message.header.id,
             recursion_desired: message.header.flags.rd(),
@@ -136,6 +143,15 @@ mod tests {
         let mut packet = query(b"\x07example\x03com\0", 1);
         packet[2] |= 0x80;
         assert_eq!(QueryView::parse(&packet), Err(QueryParseError::Response));
+    }
+
+    #[test]
+    fn rejects_non_ascii_names_instead_of_lossy_canonicalization() {
+        let packet = query(b"\x01\xff\0", 1);
+        assert_eq!(
+            QueryView::parse(&packet),
+            Err(QueryParseError::UnsupportedName)
+        );
     }
 
     #[test]
