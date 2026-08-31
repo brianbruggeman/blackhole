@@ -27,7 +27,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | Per-client admission | The configured per-client concurrent-request cap rejects a second in-flight request at the limit, releases on completion, and passes the focused unit test. |
 | Response amplification cap | The configured response-ratio cap is validated and applied below the absolute response ceiling; the focused cap test passes in the current 81-test library suite. |
 | Per-client rate limiting | The configured per-second client rate cap sheds the third request in a deterministic focused test, while unidentified callers remain unkeyed and the rate-state table is bounded. |
-| Atomic blocklist reload | A replacement blocklist publishes as one snapshot and an invalid replacement leaves the previous generation active; the focused reload test passes in the current 81-test library suite. |
+| Atomic blocklist reload | A replacement blocklist publishes as one snapshot and an invalid replacement leaves the previous generation active; the focused reload test passes in the current 89-test library suite. |
 | Cache outcome telemetry | Proxima-native counters record fresh hits, misses, stale serves, and capacity evictions; the deterministic bounded-eviction test passes. |
 | Cache TTL telemetry | The focused `cache_ttl_telemetry_reports_effective_positive_and_negative_ttls` test proves the histogram reports the configured post-clamp positive TTL and negative TTL through Proxima's telemetry interface. |
 | Local DNS rewrites | Bounded A/AAAA rewrites answer pass/observe queries, explicit policy actions override them, and malformed or oversized configuration fails closed. |
@@ -40,6 +40,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | Listener profile path | Full all-target suite includes a real loopback UDP test proving a configured service profile is enforced by the listener's actual policy path. |
 | Cache TTL bound | Full all-target suite includes tests proving positive and negative cache entries remain bounded, protocol TTLs above the configured ceiling are clamped, and a zero ceiling fails configuration validation. |
 | Cache invalidation | Rule-table reload tests prove successful policy publication clears cached forwarding answers while failed reloads retain the previous snapshot. |
+| Concurrent snapshot readers | `concurrent_readers_observe_only_complete_generations` runs four readers across 63 reloads and proves each read sees a complete generation, not a mixed rule table, at Blackhole `dcee4fd`. |
 | Bounded upstream exchange | Current tree validates `query_timeout_ms` to 1–60,000 ms, `max_attempts` to 1–8, and `max_outstanding` to 1–4096 before listener construction; upstream answers also reject impossible RCODE values above DNS’s 4-bit range. Focused validation and the full all-target suite pass against GitHub Proxima `0652a0c0`. |
 | Upstream CNAME validation | Upstream CNAME targets are parsed through Proxima’s DNS name parser and rejected on pointer loops, trailing bytes, or invalid names; valid targets pass. Focused and full all-target tests pass. |
 | Upstream loop prevention | Upstream configuration rejects exact listener endpoints and same-family unspecified listener binds that overlap the upstream address and port; IPv4 and IPv6 proofs pass. |
