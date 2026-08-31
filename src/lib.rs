@@ -1487,6 +1487,9 @@ mod runtime {
             query: &proxima_dns::DnsQuery,
             answer: &DnsAnswer,
         ) -> Result<(), &'static str> {
+            if answer.rcode > 0x0f {
+                return Err("upstream_malformed");
+            }
             let query_name = normalize(&query.name);
             let mut has_question_owner = false;
             for record in &answer.records {
@@ -3173,6 +3176,15 @@ mod runtime {
             };
             assert_eq!(
                 policy.validate_upstream_answer(&query, &malformed),
+                Err("upstream_malformed")
+            );
+
+            let invalid_rcode = DnsAnswer {
+                rcode: 16,
+                ..DnsAnswer::ok(Vec::new())
+            };
+            assert_eq!(
+                policy.validate_upstream_answer(&query, &invalid_rcode),
                 Err("upstream_malformed")
             );
         }
