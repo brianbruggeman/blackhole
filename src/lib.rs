@@ -701,7 +701,10 @@ mod runtime {
             let mut has_question_owner = false;
             for record in &answer.records {
                 let record_name = normalize(&record.name);
-                if !valid_dns_name(&record_name) || record.rclass != query.qclass {
+                if !valid_dns_name(&record_name)
+                    || record.rclass != query.qclass
+                    || (query.qtype != 255 && record.rtype != query.qtype && record.rtype != 5)
+                {
                     return Err("upstream_question_mismatch");
                 }
                 if record_name == query_name {
