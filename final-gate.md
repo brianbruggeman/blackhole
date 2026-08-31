@@ -12,9 +12,9 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | Unit and integration tests | `cargo nextest run --offline --workspace` passed at Blackhole `b35d471`: 102 tests, 102 passed, 0 skipped, including the real HTTP admin fixture, 3 real loopback UDP/TCP resolver fixture tests, and 10 fake-upstream tests against GitHub Proxima revision `0652a0c0`. |
 | Cache failure behavior | `fake_upstream_servfail_is_not_cached` passes in the current 100-test nextest run; SERVFAIL causes a second upstream exchange rather than a reusable negative cache entry. |
 | Nextest | `cargo nextest run --offline --workspace` passed at Blackhole `b35d471`: 102 tests, 102 passed, 0 skipped, against GitHub Proxima revision `0652a0c0`; the real admin and resolver fixtures use OS-assigned loopback ports and pass under the parallel runner. |
-| Doctests | `cargo test --doc --offline` passed at Blackhole `72aa9d0`: 1 doctest. |
+| Doctests | `cargo test --doc --offline` passed at Blackhole `f7e2518`: 1 doctest. |
 | No-std and WASM | `cargo build --offline --no-default-features --target thumbv7m-none-eabi` and the equivalent `wasm32-unknown-unknown` command passed at Blackhole `b35d471` with GitHub Proxima revision `0652a0c0`; both completed without warnings. |
-| Dependency audit | Root `cargo audit --no-fetch` and the fuzz lockfile audit both passed with one allowed warning: unmaintained `paste` (`RUSTSEC-2024-0436`). |
+| Dependency audit | Root `cargo audit --no-fetch` passed at Blackhole `f7e2518` with one allowed warning: unmaintained `paste` (`RUSTSEC-2024-0436`). |
 | Fuzz smoke | The installed nightly `rustc 1.100.0-nightly` `query_view` target ran 1,000 iterations over 56 corpus inputs without a crash at Blackhole `b1fb896`; generated corpus files were discarded after the smoke run. |
 | Resolver fixture | The actual loopback UDP/TCP listener fixture passed. |
 | Configuration validation | At Blackhole `1455ec5`, `cargo run --offline -- --check blackhole.example.toml` exited successfully before listener startup; enabled capture plans are validated through the platform planner without installation. |
