@@ -25,8 +25,8 @@ pub enum Event<'packet> {
     NeedMore(&'packet [u8]),
     Matched(Action),
     Forward,
-    Forwarded(&'packet [u8]),
-    Respond(&'packet [u8]),
+    Forwarded(usize),
+    Respond(usize),
     Sent,
     NextMessage(&'packet [u8]),
     Drop(DropReason),
@@ -55,10 +55,10 @@ pub enum DecisionState<'packet> {
     },
     Responding {
         query: QueryView<'packet>,
-        output: &'packet [u8],
+        output_len: usize,
     },
     Sent {
-        query: QueryView<'packet>,
+        _marker: core::marker::PhantomData<&'packet ()>,
     },
     Dropped {
         reason: DropReason,
@@ -120,24 +120,26 @@ impl<'packet> DecisionState<'packet> {
                 },
                 Event::Forward,
             ) => Ok(Self::Forwarding { query }),
-            (Self::Matched { query, .. }, Event::Respond(output)) => {
-                if output.is_empty() {
+            (Self::Matched { query, .. }, Event::Respond(output_len)) => {
+                if output_len == 0 {
                     return Err(TransitionError::OutputTooSmall);
                 }
-                Ok(Self::Responding { query, output })
+                Ok(Self::Responding { query, output_len })
             }
             (Self::Matched { .. }, Event::Drop(reason)) => Ok(Self::Dropped { reason }),
-            (Self::Forwarding { query }, Event::Forwarded(output)) => {
-                if output.is_empty() {
+            (Self::Forwarding { query }, Event::Forwarded(output_len)) => {
+                if output_len == 0 {
                     return Err(TransitionError::OutputTooSmall);
                 }
-                Ok(Self::Responding { query, output })
+                Ok(Self::Responding { query, output_len })
             }
             (Self::Forwarding { .. }, Event::Drop(reason)) => Ok(Self::Dropped { reason }),
             (Self::Forwarding { .. }, Event::PeerClosed) => Ok(Self::Closed {
                 reason: CloseReason::Peer,
             }),
-            (Self::Responding { query, .. }, Event::Sent) => Ok(Self::Sent { query }),
+            (Self::Responding { .. }, Event::Sent) => Ok(Self::Sent {
+                _marker: core::marker::PhantomData,
+            }),
             (Self::Responding { .. }, Event::PeerClosed) => Ok(Self::Closed {
                 reason: CloseReason::Peer,
             }),
@@ -206,7 +208,7 @@ mod tests {
             .expect("parse")
             .transition(Event::Matched(Action::Nxdomain))
             .expect("match")
-            .transition(Event::Respond(b"dns response"))
+            .transition(Event::Respond(12))
             .expect("response");
         assert!(matches!(state, DecisionState::Responding { .. }));
     }
@@ -221,7 +223,7 @@ mod tests {
         assert!(matches!(state, DecisionState::Parsing { .. }));
         let next = DecisionState::Responding {
             query: query(),
-            output: b"reply",
+            output_len: 5,
         }
         .transition(Event::Sent)
         .expect("response sent")
@@ -234,7 +236,7 @@ mod tests {
     fn sent_is_distinct_from_waiting_for_the_next_message() {
         let sent = DecisionState::Responding {
             query: query(),
-            output: b"reply",
+            output_len: 5,
         }
         .transition(Event::Sent)
         .expect("response sent");
@@ -275,7 +277,7 @@ mod tests {
             .expect("match")
             .transition(Event::Forward)
             .expect("forward")
-            .transition(Event::Forwarded(b"upstream reply"))
+            .transition(Event::Forwarded(14))
             .expect("upstream");
         assert!(matches!(state, DecisionState::Responding { .. }));
         assert_eq!(
@@ -283,14 +285,14 @@ mod tests {
                 query: query(),
                 disposition: Action::Sink,
             }
-            .transition(Event::Respond(b"")),
+            .transition(Event::Respond(0)),
             Err(TransitionError::OutputTooSmall)
         );
     }
 
     #[test]
     fn illegal_transition_is_named_and_closed_is_terminal() {
-        let error = DecisionState::received(b"input").transition(Event::Respond(b"reply"));
+        let error = DecisionState::received(b"input").transition(Event::Respond(5));
         assert_eq!(
             error,
             Err(TransitionError::Illegal {

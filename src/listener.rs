@@ -75,18 +75,17 @@ fn request(
     }
 }
 
-async fn decide(
+async fn decide<'a>(
     policy: &Policy,
-    packet: &[u8],
+    mut state: DecisionState<'a>,
+    packet: &'a [u8],
     peer: Option<PeerInfo>,
     tcp: bool,
-) -> Result<Option<Vec<u8>>, ProximaError> {
-    let mut state = DecisionState::received(packet)
-        .transition(Event::BeginParse)
-        .map_err(|error| {
-            policy.observe_failure("fsm_transition");
-            ProximaError::Config(error.to_string())
-        })?;
+) -> Result<Option<(Vec<u8>, DecisionState<'a>)>, ProximaError> {
+    state = state.transition(Event::BeginParse).map_err(|error| {
+        policy.observe_failure("fsm_transition");
+        ProximaError::Config(error.to_string())
+    })?;
     let view = match QueryView::parse(packet) {
         Ok(view) => view,
         Err(_) => {
@@ -158,11 +157,13 @@ async fn decide(
         policy.observe_failure("encode_failure");
         ProximaError::Config(error.to_string())
     })?;
-    state.transition(Event::Respond(&output)).map_err(|error| {
-        policy.observe_failure("fsm_transition");
-        ProximaError::Config(error.to_string())
-    })?;
-    Ok(Some(output))
+    state = state
+        .transition(Event::Respond(output.len()))
+        .map_err(|error| {
+            policy.observe_failure("fsm_transition");
+            ProximaError::Config(error.to_string())
+        })?;
+    Ok(Some((output, state)))
 }
 
 fn probe_udp(prefix: &[u8]) -> ProbeVerdict {
@@ -218,10 +219,15 @@ impl AnyProtocol for UdpProtocol {
                 self.policy.observe_failure("transport_read");
                 ProximaError::Io(error)
             })?;
-            if let Some(reply) = decide(&self.policy, &packet, peer, false).await? {
+            let state = DecisionState::received(&packet);
+            if let Some((reply, state)) = decide(&self.policy, state, &packet, peer, false).await? {
                 stream.write_all(&reply).await.map_err(|error| {
                     self.policy.observe_failure("transport_write");
                     ProximaError::Io(error)
+                })?;
+                state.transition(Event::Sent).map_err(|error| {
+                    self.policy.observe_failure("fsm_transition");
+                    ProximaError::Config(error.to_string())
                 })?;
             }
             stream.close().await.map_err(|error| {
@@ -272,7 +278,10 @@ impl AnyProtocol for TcpProtocol {
                 }
                 let length = usize::from(u16::from_be_bytes([input[0], input[1]]));
                 let frame = input.split_to(2 + length).split_off(2);
-                if let Some(reply) = decide(&self.policy, &frame, peer.clone(), true).await? {
+                let state = DecisionState::received(&frame);
+                if let Some((reply, responding)) =
+                    decide(&self.policy, state, &frame, peer.clone(), true).await?
+                {
                     let length = u16::try_from(reply.len()).map_err(|_| {
                         self.policy.observe_failure("frame_overflow");
                         ProximaError::Config("DNS response exceeds TCP framing".into())
@@ -287,6 +296,10 @@ impl AnyProtocol for TcpProtocol {
                     stream.write_all(&reply).await.map_err(|error| {
                         self.policy.observe_failure("transport_write");
                         ProximaError::Io(error)
+                    })?;
+                    responding.transition(Event::Sent).map_err(|error| {
+                        self.policy.observe_failure("fsm_transition");
+                        ProximaError::Config(error.to_string())
                     })?;
                 }
             }
