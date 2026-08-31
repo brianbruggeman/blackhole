@@ -900,7 +900,7 @@ mod runtime {
                 let key = CacheKey::from_query(&query);
                 if let Some(answer) = self.cache.lock().expect("cache lock").fresh(&key) {
                     self.observe(Action::Forward);
-                    return Ok(DnsPipeReply::typed(200, answer));
+                    return Ok(DnsPipeReply::typed(200, self.cap_answer(answer)));
                 }
                 if !self
                     .breaker
