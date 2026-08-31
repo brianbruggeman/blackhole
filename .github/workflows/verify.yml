@@ -21,6 +21,7 @@ jobs:
       - run: cargo check --no-default-features --target thumbv7m-none-eabi
       - run: cargo install cargo-audit --locked
       - run: cargo audit
+      - run: cargo audit --file fuzz/Cargo.lock
 
   macos:
     runs-on: macos-latest
