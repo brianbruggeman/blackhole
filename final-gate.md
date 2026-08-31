@@ -37,6 +37,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | Cache TTL bound | Full all-target suite includes tests proving positive and negative cache entries remain bounded, protocol TTLs above the configured ceiling are clamped, and a zero ceiling fails configuration validation. |
 | Cache invalidation | Rule-table reload tests prove successful policy publication clears cached forwarding answers while failed reloads retain the previous snapshot. |
 | Bounded upstream exchange | Current tree validates `query_timeout_ms` to 1–60,000 ms, `max_attempts` to 1–8, and `max_outstanding` to 1–4096 before listener construction; upstream answers also reject impossible RCODE values above DNS’s 4-bit range. Focused validation and the full all-target suite pass against GitHub Proxima `0652a0c0`. |
+| Upstream CNAME validation | Upstream CNAME targets are parsed through Proxima’s DNS name parser and rejected on pointer loops, trailing bytes, or invalid names; valid targets pass. Focused and full all-target tests pass. |
 
 ## Evidence still required
 

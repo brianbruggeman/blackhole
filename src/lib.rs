@@ -1509,6 +1509,17 @@ mod runtime {
                 if record.rtype == 28 && record.rdata.len() != 16 {
                     return Err("upstream_malformed");
                 }
+                if record.rtype == 5 {
+                    let Ok((target, used)) = proxima_protocols::dns::parse_name(&record.rdata, 0)
+                    else {
+                        return Err("upstream_malformed");
+                    };
+                    if used != record.rdata.len()
+                        || !valid_dns_name(&normalize(&target.to_dotted()))
+                    {
+                        return Err("upstream_malformed");
+                    }
+                }
                 if !self.config.security.reject_private_upstream_addresses {
                     continue;
                 }
@@ -3185,6 +3196,39 @@ mod runtime {
             };
             assert_eq!(
                 policy.validate_upstream_answer(&query, &invalid_rcode),
+                Err("upstream_malformed")
+            );
+
+            let mut cname_rdata = Vec::new();
+            proxima_protocols::dns::encode::encode_name("target.example.", &mut cname_rdata)
+                .expect("valid cname target");
+            let valid_cname = DnsAnswer {
+                records: vec![DnsAnswerRecord {
+                    name: "answer.example.".into(),
+                    rtype: 5,
+                    rclass: 1,
+                    ttl: 30,
+                    rdata: cname_rdata,
+                }],
+                ..DnsAnswer::ok(Vec::new())
+            };
+            assert_eq!(
+                policy.validate_upstream_answer(&query, &valid_cname),
+                Ok(())
+            );
+
+            let malformed_cname = DnsAnswer {
+                records: vec![DnsAnswerRecord {
+                    name: "answer.example.".into(),
+                    rtype: 5,
+                    rclass: 1,
+                    ttl: 30,
+                    rdata: vec![0xc0, 0x00],
+                }],
+                ..DnsAnswer::ok(Vec::new())
+            };
+            assert_eq!(
+                policy.validate_upstream_answer(&query, &malformed_cname),
                 Err("upstream_malformed")
             );
         }
