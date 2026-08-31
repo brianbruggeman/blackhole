@@ -1,0 +1,36 @@
+# Blackhole final gate
+
+This is an evidence ledger, not a completion claim. A gate is marked proven
+only for the exact command and scope that ran. Missing evidence remains open.
+
+## Proven
+
+| Gate | Evidence |
+| --- | --- |
+| Formatting | `cargo fmt --all -- --check` passed on the current Blackhole changes. |
+| Compilation | `cargo check --offline --all-targets` passed with Proxima from GitHub revision `0652a0c0`. |
+| Unit and integration tests | `cargo test --offline --all-targets` passed: 60 library tests, the UDP/TCP resolver fixture, and 7 fake-upstream tests at `eb3fbd0`. |
+| Cache failure behavior | `fake_upstream_servfail_is_not_cached` passed at `3e463c8`; SERVFAIL caused two upstream exchanges. |
+| Nextest | `cargo nextest run --offline --workspace` passed: 68 tests at `794caa5`. |
+| Doctests | `cargo test --doc --offline` passed: 1 doctest. |
+| No-std and WASM | `cargo check --offline --no-default-features` passed for `thumbv7m-none-eabi` and `wasm32-unknown-unknown` after the response-size work. |
+| Dependency audit | `cargo audit --no-fetch` passed with one allowed warning: unmaintained `paste` (`RUSTSEC-2024-0436`). The fuzz lockfile audit also passed. |
+| Fuzz smoke | The `query_view` nightly fuzz target ran 1,000 iterations without a crash; the bounded corpus contains 50 inputs. |
+| Resolver fixture | The actual loopback UDP/TCP listener fixture passed. |
+| Capture lifecycle | Planner, rollback, ownership, recovery, and cleanup tests pass. Capture is explicitly opt-in and wired through the shared controller. |
+
+## Evidence still required
+
+| Gate | Current state |
+| --- | --- |
+| Privileged capture smoke | Not produced here. The process has no effective capabilities (`CapEff: 0`); non-mutating `nft --check` returned netlink `EPERM`. |
+| macOS build and PF smoke | CI workflow exists, but no local macOS execution evidence is recorded here. |
+| TCP upstream fallback | Open. GitHub-pinned Proxima `0652a0c0` exposes only UDP `DnsClientUpstream` and discards `TC` and response-question metadata. |
+| Proxima metadata change publication | Local Proxima commits `e41c8ac8` and `49146ea3` are not on GitHub; push was rejected for `slot-0` access. Blackhole remains on the published GitHub revision. |
+| Performance gate | The example records provenance and allocator data, but copy boundaries are not fully instrumented; no zero-copy or production-performance claim is supported. |
+| Privacy and honeypot terminal | Retention, redaction, access control, and deletion verification for raw payloads are not implemented. |
+| GeoIP/country/ASN policy | Not implemented; CIDR client/network scopes are implemented instead. |
+| Incumbent parity | Pi-hole/AdGuard parity is incomplete: encrypted upstreams, admin/API/UI, DHCP, service profiles, and richer policy controls remain open. |
+
+The open rows must be resolved and rerun with fresh evidence before this file
+can support a release or a completion claim.
