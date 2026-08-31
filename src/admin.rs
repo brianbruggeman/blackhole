@@ -1,6 +1,7 @@
 //! Authenticated operator control plane built from Proxima's HTTP pipe path.
 
 use std::collections::BTreeSet;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -9,6 +10,18 @@ use proxima::pipe::{PipeHandle, into_handle};
 use proxima::{ProximaError, Request, Response, SendPipe};
 
 use crate::Policy;
+
+/// The current control plane is HTTP bearer auth without TLS. Keep credentials
+/// on the local host until a TLS listener is added to the admin surface.
+pub fn validate_bind(bind: SocketAddr) -> Result<(), ProximaError> {
+    if bind.ip().is_loopback() {
+        Ok(())
+    } else {
+        Err(ProximaError::Config(
+            "admin.listen must be a loopback address until admin TLS is available".into(),
+        ))
+    }
+}
 
 /// The minimal authenticated control surface. It deliberately exposes no
 /// query data or configuration secrets: health is read-only and reload only
@@ -112,5 +125,12 @@ mod tests {
             .expect("authorized request");
         let response = block_on(handle.call(authorized)).expect("authorized response");
         assert_eq!(response.status, 200);
+    }
+
+    #[test]
+    fn admin_bind_must_be_loopback_without_tls() {
+        assert!(validate_bind("127.0.0.1:8081".parse().expect("address")).is_ok());
+        assert!(validate_bind("[::1]:8081".parse().expect("address")).is_ok());
+        assert!(validate_bind("192.0.2.1:8081".parse().expect("address")).is_err());
     }
 }

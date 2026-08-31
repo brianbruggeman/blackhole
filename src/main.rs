@@ -1,6 +1,6 @@
 #![cfg(feature = "std")]
 
-use blackhole::admin::authenticated_handle;
+use blackhole::admin::{authenticated_handle, validate_bind};
 #[cfg(target_os = "macos")]
 use blackhole::linux_capture::FileOwnershipStore;
 #[cfg(target_os = "linux")]
@@ -65,6 +65,7 @@ fn admin_endpoint(
             let bind = listen
                 .parse()
                 .map_err(|error| ProximaError::Config(format!("invalid admin.listen: {error}")))?;
+            validate_bind(bind)?;
             Ok(Some((bind, token.clone())))
         }
     }
