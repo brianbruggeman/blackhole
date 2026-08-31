@@ -30,6 +30,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | Atomic blocklist reload | A replacement blocklist publishes as one snapshot and an invalid replacement leaves the previous generation active; the focused reload test passes in the current 89-test library suite. |
 | Cache outcome telemetry | Proxima-native counters record fresh hits, misses, stale serves, and capacity evictions; the deterministic bounded-eviction test passes. |
 | Cache TTL telemetry | The focused `cache_ttl_telemetry_reports_effective_positive_and_negative_ttls` test proves the histogram reports the configured post-clamp positive TTL and negative TTL through Proxima's telemetry interface. |
+| Reload latency telemetry | `telemetry_records_reload_latency_by_reload_kind` proves Proxima's histogram surface receives successful rules and regex reload durations labeled by reload kind at Blackhole `3bd1062`. |
 | Local DNS rewrites | Bounded A/AAAA rewrites answer pass/observe queries, explicit policy actions override them, and malformed or oversized configuration fails closed. |
 | Per-client abuse breaker | Full all-target suite passed with a focused test covering repeated rate-limit violations opening a temporary bounded breaker while unidentified callers remain unaffected. |
 | Network abuse breaker | Focused coverage proves repeated violations from clients in one configured IPv4/IPv6 network open a bounded network breaker while another network and unidentified callers remain unaffected. |
