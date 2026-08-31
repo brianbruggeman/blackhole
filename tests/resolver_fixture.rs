@@ -80,6 +80,7 @@ async fn listener_forwards_allowed_query_to_loopback_upstream() {
         qtype: None,
         qclass: None,
         client: None,
+        client_cidr: None,
     }];
     config.upstream = Some(UpstreamConfig {
         resolver_ip: upstream_addr.ip().to_string(),

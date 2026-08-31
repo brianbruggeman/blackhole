@@ -181,6 +181,7 @@ fn policy(mode: ReplyMode) -> (Policy, FakeSocket) {
         qtype: None,
         qclass: None,
         client: None,
+        client_cidr: None,
     }];
     config.upstream = Some(UpstreamConfig {
         resolver_ip: resolver_addr().ip().to_string(),

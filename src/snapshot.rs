@@ -57,6 +57,7 @@ mod tests {
             qtype: None,
             qclass: None,
             client: None,
+            client_cidr: None,
         }
     }
 

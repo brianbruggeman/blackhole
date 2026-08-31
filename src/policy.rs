@@ -34,6 +34,8 @@ pub struct RuleConfig {
     pub qtype: Option<u16>,
     pub qclass: Option<u16>,
     pub client: Option<IpAddr>,
+    #[serde(default)]
+    pub client_cidr: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,6 +56,7 @@ pub struct Decision {
 pub enum PolicyError {
     EmptyDomain { id: u32 },
     InvalidWildcard { id: u32, domain: String },
+    InvalidClientCidr { id: u32, value: String },
     DuplicateRule { id: u32 },
     TooManyRules { max: usize },
     DomainTooLong { id: u32 },
@@ -68,6 +71,9 @@ impl core::fmt::Display for PolicyError {
             Self::EmptyDomain { id } => write!(formatter, "rule {id} has an empty domain"),
             Self::InvalidWildcard { id, domain } => {
                 write!(formatter, "rule {id} has an invalid wildcard: {domain}")
+            }
+            Self::InvalidClientCidr { id, value } => {
+                write!(formatter, "rule {id} has an invalid client CIDR: {value}")
             }
             Self::DuplicateRule { id } => write!(formatter, "duplicate rule id: {id}"),
             Self::TooManyRules { max } => write!(formatter, "rule count exceeds {max}"),
@@ -92,7 +98,53 @@ struct Rule {
     qtype: Option<u16>,
     qclass: Option<u16>,
     client: Option<IpAddr>,
+    client_network: Option<IpNetwork>,
     wildcard: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct IpNetwork {
+    address: IpAddr,
+    prefix: u8,
+}
+
+impl IpNetwork {
+    fn parse(value: &str) -> Option<Self> {
+        let (address, prefix) = value.split_once('/')?;
+        let address = address.parse().ok()?;
+        let prefix = prefix.parse().ok()?;
+        let max = match address {
+            IpAddr::V4(_) => 32,
+            IpAddr::V6(_) => 128,
+        };
+        (prefix <= max).then_some(Self { address, prefix })
+    }
+
+    fn contains(self, candidate: IpAddr) -> bool {
+        match (self.address, candidate) {
+            (IpAddr::V4(network), IpAddr::V4(candidate)) => {
+                let network = u32::from(network);
+                let candidate = u32::from(candidate);
+                let mask = if self.prefix == 0 {
+                    0
+                } else {
+                    u32::MAX << (32 - self.prefix)
+                };
+                network & mask == candidate & mask
+            }
+            (IpAddr::V6(network), IpAddr::V6(candidate)) => {
+                let network = u128::from(network);
+                let candidate = u128::from(candidate);
+                let mask = if self.prefix == 0 {
+                    0
+                } else {
+                    u128::MAX << (128 - self.prefix)
+                };
+                network & mask == candidate & mask
+            }
+            _ => false,
+        }
+    }
 }
 
 /// A simple linear matcher used as the semantic oracle for compact indexes.
@@ -139,6 +191,22 @@ impl ReferencePolicy {
             if rules.iter().any(|rule: &Rule| rule.id == config.id) {
                 return Err(PolicyError::DuplicateRule { id: config.id });
             }
+            if config.client.is_some() && config.client_cidr.is_some() {
+                return Err(PolicyError::InvalidClientCidr {
+                    id: config.id,
+                    value: config.client_cidr.clone().unwrap_or_default(),
+                });
+            }
+            let client_network =
+                match config.client_cidr.as_deref() {
+                    None => None,
+                    Some(value) => Some(IpNetwork::parse(value).ok_or_else(|| {
+                        PolicyError::InvalidClientCidr {
+                            id: config.id,
+                            value: value.to_owned(),
+                        }
+                    })?),
+                };
             rules.push(Rule {
                 id: config.id,
                 domain,
@@ -147,6 +215,7 @@ impl ReferencePolicy {
                 qtype: config.qtype,
                 qclass: config.qclass,
                 client: config.client,
+                client_network,
                 wildcard,
             });
         }
@@ -229,20 +298,32 @@ impl Rule {
             && self
                 .client
                 .is_none_or(|client| Some(client) == query.client)
+            && self
+                .client_network
+                .is_none_or(|network| query.client.is_some_and(|client| network.contains(client)))
     }
 
     /// Precedence is a lexicographic contract.  Every independent selector
     /// gets its own component: a qtype selector must not accidentally tie
     /// with a qclass selector, and a deeper suffix must beat a shallower one.
-    fn precedence(&self) -> (i32, u16, u8, u8, u8, u32) {
+    fn precedence(&self) -> (i32, u16, u16, u8, u8, u32) {
         (
             self.priority,
             self.domain_specificity(),
-            u8::from(self.client.is_some()),
+            self.client_specificity(),
             u8::from(self.qclass.is_some()),
             u8::from(self.qtype.is_some()),
             self.id,
         )
+    }
+
+    fn client_specificity(&self) -> u16 {
+        if self.client.is_some() {
+            129
+        } else {
+            self.client_network
+                .map_or(0, |network| u16::from(network.prefix))
+        }
     }
 
     fn domain_specificity(&self) -> u16 {
@@ -275,6 +356,7 @@ mod tests {
             qtype: None,
             qclass: None,
             client: None,
+            client_cidr: None,
         }
     }
 
@@ -474,5 +556,79 @@ mod tests {
                 .rule_id,
             2
         );
+    }
+
+    #[test]
+    fn cidr_scopes_match_only_members_and_rank_by_prefix() {
+        let mut broad = rule(1, "example", Action::Drop);
+        broad.client_cidr = Some("192.0.2.0/24".into());
+        let mut narrow = rule(2, "example", Action::Reject);
+        narrow.client_cidr = Some("192.0.2.128/25".into());
+        let policy = ReferencePolicy::new(&[broad, narrow]).unwrap();
+
+        assert_eq!(
+            policy
+                .decide(QueryContext {
+                    client: Some("192.0.2.200".parse().unwrap()),
+                    ..query("example")
+                })
+                .unwrap()
+                .rule_id,
+            2
+        );
+        assert_eq!(
+            policy
+                .decide(QueryContext {
+                    client: Some("192.0.2.20".parse().unwrap()),
+                    ..query("example")
+                })
+                .unwrap()
+                .rule_id,
+            1
+        );
+        assert_eq!(
+            policy.decide(QueryContext {
+                client: Some("198.51.100.20".parse().unwrap()),
+                ..query("example")
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn exact_client_scope_beats_cidr_scope() {
+        let mut network = rule(1, "example", Action::Drop);
+        network.client_cidr = Some("192.0.2.0/24".into());
+        let mut exact = rule(2, "example", Action::Reject);
+        exact.client = Some("192.0.2.10".parse().unwrap());
+        let policy = ReferencePolicy::new(&[network, exact]).unwrap();
+        assert_eq!(
+            policy
+                .decide(QueryContext {
+                    client: Some("192.0.2.10".parse().unwrap()),
+                    ..query("example")
+                })
+                .unwrap()
+                .rule_id,
+            2
+        );
+    }
+
+    #[test]
+    fn invalid_client_scopes_are_rejected() {
+        let mut invalid = rule(1, "example", Action::Drop);
+        invalid.client_cidr = Some("192.0.2.0/33".into());
+        assert!(matches!(
+            ReferencePolicy::new(&[invalid]),
+            Err(PolicyError::InvalidClientCidr { id: 1, .. })
+        ));
+
+        let mut ambiguous = rule(2, "example", Action::Drop);
+        ambiguous.client = Some("192.0.2.10".parse().unwrap());
+        ambiguous.client_cidr = Some("192.0.2.0/24".into());
+        assert!(matches!(
+            ReferencePolicy::new(&[ambiguous]),
+            Err(PolicyError::InvalidClientCidr { id: 2, .. })
+        ));
     }
 }

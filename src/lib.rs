@@ -478,6 +478,7 @@ mod runtime {
                 qtype: None,
                 qclass: None,
                 client: None,
+                client_cidr: None,
             })
             .collect())
     }
@@ -1221,6 +1222,7 @@ mod runtime {
                 qtype: None,
                 qclass: None,
                 client: None,
+                client_cidr: None,
             }];
             let policy = Policy::new(config).expect("initial policy");
             assert_eq!(
@@ -1240,6 +1242,7 @@ mod runtime {
                     qtype: None,
                     qclass: None,
                     client: None,
+                    client_cidr: None,
                 }]),
                 Ok(ReloadState::Published)
             );
@@ -1261,6 +1264,7 @@ mod runtime {
                     qtype: None,
                     qclass: None,
                     client: None,
+                    client_cidr: None,
                 },
                 RuleConfig {
                     id: 3,
@@ -1270,6 +1274,7 @@ mod runtime {
                     qtype: None,
                     qclass: None,
                     client: None,
+                    client_cidr: None,
                 },
             ];
             assert_eq!(
@@ -1352,6 +1357,7 @@ mod runtime {
                 qtype: None,
                 qclass: None,
                 client: None,
+                client_cidr: None,
             }];
             let policy = Policy::new(config).expect("valid policy");
             let query = proxima_dns::DnsQuery {
@@ -1412,6 +1418,7 @@ mod runtime {
                 qtype: None,
                 qclass: None,
                 client: None,
+                client_cidr: None,
             }];
             let policy = Policy::new(config).unwrap();
             let query = |name: &str| proxima_dns::DnsQuery {
@@ -1437,6 +1444,7 @@ mod runtime {
                 qtype: Some(1),
                 qclass: None,
                 client: None,
+                client_cidr: None,
             }];
             let policy = Policy::new(config).expect("valid policy");
             let packet = [
@@ -1459,6 +1467,7 @@ mod runtime {
                 qtype: None,
                 qclass: None,
                 client: Some("192.0.2.10".parse().unwrap()),
+                client_cidr: None,
             }];
             let policy = Policy::new(config).expect("valid policy");
             let packet = [
@@ -1562,6 +1571,7 @@ mod runtime {
                     qtype: None,
                     qclass: None,
                     client: None,
+                    client_cidr: None,
                 }];
                 let policy = Policy::new(config).expect("valid policy");
                 let answer = policy.evaluate(&query(domain)).expect("wire answer");
@@ -1630,6 +1640,7 @@ mod runtime {
                 qtype: None,
                 qclass: None,
                 client: None,
+                client_cidr: None,
             }];
             let policy = Policy::new(config).expect("valid policy");
             let answer = policy

@@ -10,7 +10,8 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - TOML configuration with bounded file size and fail-fast parsing.
 - Legacy domain matching with `ignore`, `nxdomain`, and `honeypot` modes.
 - Rule-table matching with explicit actions, stable rule identity, priority,
-  exact/deep-wildcard specificity, client scope, qtype, and qclass filters.
+  exact/deep-wildcard specificity, exact-client and CIDR network scopes, qtype,
+  and qclass filters.
 - Rule-table authority when rules are configured; legacy settings do not
   silently take over.
 - Bounded Pi-hole-compatible blocklist ingestion from hosts/domain files with

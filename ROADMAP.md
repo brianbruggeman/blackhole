@@ -27,8 +27,8 @@ below are future capabilities, grouped by the dependency layer they extend.
 ## Policy and operator controls
 
 - Add authenticated blocklist administration and incremental background reload.
-- Add per-client and network scopes, local rewrites, service profiles, and
-  authenticated administration.
+- Add richer per-client and network policy controls, local rewrites, service
+  profiles, and authenticated administration.
 - Add per-client/network admission limits and adaptive amplification controls.
 - Add optional country/region/ASN access policy with allow, deny, and
   observe-only (“snitch”) modes; keep GeoIP uncertainty and database lifecycle
