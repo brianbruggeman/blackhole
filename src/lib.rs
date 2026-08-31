@@ -828,7 +828,7 @@ mod runtime {
             telemetry.counter_inc("blackhole.decisions", &labels, 1);
         }
 
-        fn observe_failure(&self, cause: &'static str) {
+        pub(crate) fn observe_failure(&self, cause: &'static str) {
             let Some(telemetry) = self.telemetry.as_ref() else {
                 return;
             };
