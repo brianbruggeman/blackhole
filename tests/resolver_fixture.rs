@@ -17,11 +17,11 @@ use proxima_protocols::dns::{Flags, encode, parse_message};
 static NEXT_LISTENER_SLOT: AtomicU16 = AtomicU16::new(0);
 
 fn test_listener_addr() -> SocketAddr {
-    let process_slot = (std::process::id() % 1_000) as u16;
+    let process_slot = (std::process::id() % 19_000) as u16;
     let slot = NEXT_LISTENER_SLOT.fetch_add(1, Ordering::Relaxed) % 20;
     SocketAddr::new(
         IpAddr::V4(Ipv4Addr::LOCALHOST),
-        30_000 + process_slot.saturating_mul(20) + slot,
+        40_000 + process_slot + slot,
     )
 }
 
