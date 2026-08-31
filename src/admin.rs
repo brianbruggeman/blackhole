@@ -70,6 +70,11 @@ impl SendPipe for AdminHandler {
                         )));
                     }
                 };
+                if rules.is_empty() {
+                    return Ok(Response::new(422).with_body(
+                        "{\"status\":\"error\",\"message\":\"policy must contain at least one rule\"}",
+                    ));
+                }
                 match self.policy.reload_rules(&rules) {
                     Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
                     Err(error) => Ok(Response::new(422).with_body(format!(
@@ -161,6 +166,15 @@ mod tests {
             .expect("invalid request shape");
         let response = block_on(handler.call(invalid)).expect("error response");
         assert_eq!(response.status, 400);
+
+        let empty = Request::builder()
+            .method("POST")
+            .path("/reload/policy")
+            .payload("[]")
+            .build()
+            .expect("empty request shape");
+        let response = block_on(handler.call(empty)).expect("empty policy response");
+        assert_eq!(response.status, 422);
     }
 
     #[test]
