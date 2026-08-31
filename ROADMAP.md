@@ -33,8 +33,8 @@ below are future capabilities, grouped by the dependency layer they extend.
 - Add optional country/region/ASN access policy with allow, deny, and
   observe-only (“snitch”) modes; keep GeoIP uncertainty and database lifecycle
   explicit.
-- Add reloadable snapshots with bounded retirement and concurrent-reader
-  guarantees.
+- Add authenticated configuration reload and incremental background updates on
+  top of the current in-process atomic rule-table reload API.
 
 ## Interception and deployment
 

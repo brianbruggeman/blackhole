@@ -32,6 +32,8 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   privacy-safe corpus location for minimized wire samples.
 - Proxima-native action counters, failure-cause counters, and request-latency
   histograms that preserve the complete action identity.
+- Atomic in-process rule-table reloads over Proxima's immutable `Live` snapshot
+  primitive, with failed reloads retaining the last valid generation.
 - A tested policy/FSM/snapshot core that does not require privileged capture
   APIs.
 - Shared capture-controller orchestration with exact ownership journaling,
