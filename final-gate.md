@@ -39,6 +39,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | Bounded upstream exchange | Current tree validates `query_timeout_ms` to 1–60,000 ms, `max_attempts` to 1–8, and `max_outstanding` to 1–4096 before listener construction; upstream answers also reject impossible RCODE values above DNS’s 4-bit range. Focused validation and the full all-target suite pass against GitHub Proxima `0652a0c0`. |
 | Upstream CNAME validation | Upstream CNAME targets are parsed through Proxima’s DNS name parser and rejected on pointer loops, trailing bytes, or invalid names; valid targets pass. Focused and full all-target tests pass. |
 | Upstream loop prevention | Upstream configuration rejects exact listener endpoints and same-family unspecified listener binds that overlap the upstream address and port; IPv4 and IPv6 proofs pass. |
+| Bounded upstream records | Upstream answers exceeding the configured `max_response_records` are rejected before validation can reach cache insertion; focused and full all-target suites pass. |
 
 ## Evidence still required
 

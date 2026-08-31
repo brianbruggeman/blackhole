@@ -1494,6 +1494,9 @@ mod runtime {
             if answer.rcode > 0x0f {
                 return Err("upstream_malformed");
             }
+            if answer.records.len() > self.config.admission.max_response_records {
+                return Err("upstream_overflow");
+            }
             let query_name = normalize(&query.name);
             let mut has_question_owner = false;
             for record in &answer.records {
@@ -3266,6 +3269,24 @@ mod runtime {
             assert_eq!(
                 policy.validate_upstream_answer(&query, &malformed_cname),
                 Err("upstream_malformed")
+            );
+
+            let oversized_records = DnsAnswer {
+                records: vec![
+                    DnsAnswerRecord {
+                        name: "answer.example.".into(),
+                        rtype: 1,
+                        rclass: 1,
+                        ttl: 30,
+                        rdata: vec![93, 184, 216, 34],
+                    };
+                    policy.config.admission.max_response_records + 1
+                ],
+                ..DnsAnswer::ok(Vec::new())
+            };
+            assert_eq!(
+                policy.validate_upstream_answer(&query, &oversized_records),
+                Err("upstream_overflow")
             );
         }
 
