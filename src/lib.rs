@@ -1394,7 +1394,7 @@ mod runtime {
             true
         }
 
-        fn record_client_abuse(&self, client: Option<IpAddr>) -> bool {
+        pub(crate) fn record_client_abuse(&self, client: Option<IpAddr>) -> bool {
             let Some(client) = client else {
                 return false;
             };
@@ -2963,11 +2963,18 @@ mod runtime {
         fn response_byte_budget_sheds_a_client_without_affecting_unidentified_callers() {
             let mut config = Config::default();
             config.admission.max_response_bytes_per_client_per_second = 10;
+            config.admission.max_client_abuse_violations = 2;
             let policy = Policy::new(config).expect("valid policy");
             let client = Some("192.0.2.10".parse().expect("client address"));
             assert!(policy.allow_client_response_bytes(client, 6));
             assert!(!policy.allow_client_response_bytes(client, 5));
+            assert!(!policy.record_client_abuse(client));
+            assert!(policy.allow_client_abuse(client));
+            assert!(!policy.allow_client_response_bytes(client, 5));
+            assert!(policy.record_client_abuse(client));
+            assert!(!policy.allow_client_abuse(client));
             assert!(policy.allow_client_response_bytes(None, 4096));
+            assert!(policy.allow_client_abuse(None));
         }
 
         #[test]

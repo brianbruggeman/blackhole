@@ -29,9 +29,9 @@ below are future capabilities, grouped by the dependency layer they extend.
   incremental background reload and richer management operations.
 - Add richer per-client and network policy controls and authenticated
   administration.
-- Add adaptive amplification controls for repeated abusive patterns beyond the
-  current per-query response-ratio cap, per-client admission limits, and
-  bounded rate-abuse breaker.
+- Extend adaptive amplification controls for repeated abusive patterns beyond
+  the current per-query response-ratio cap, per-client admission limits, and
+  bounded rate/response-budget abuse breaker.
 - Add managed GeoIP/region/ASN data lifecycle and richer country policy beyond
   the current explicit country-to-CIDR map; keep uncertainty and database
   freshness explicit.

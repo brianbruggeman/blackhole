@@ -35,8 +35,8 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   size, cap response amplification relative to the query, and shed excess
   in-flight work with bounded global and per-client limits.
 - A bounded per-client abuse breaker that temporarily sheds clients which
-  repeatedly exceed the configured query-rate limit, without affecting
-  unidentified callers.
+  repeatedly exceed the configured query-rate or encoded-response-byte budget,
+  without affecting unidentified callers.
 - A bounded per-client encoded-response-byte budget that sheds identified
   clients after their configured one-second egress budget is exhausted,
   without applying a shared identity to unidentified callers.

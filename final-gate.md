@@ -30,6 +30,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | Local DNS rewrites | Bounded A/AAAA rewrites answer pass/observe queries, explicit policy actions override them, and malformed or oversized configuration fails closed. |
 | Per-client abuse breaker | Full all-target suite passed with a focused test covering repeated rate-limit violations opening a temporary bounded breaker while unidentified callers remain unaffected. |
 | Per-client response-byte budget | Focused tests prove encoded-response budget accumulation sheds a client at the configured one-second ceiling, unidentified callers remain unkeyed, and zero-value configuration fails closed. |
+| Adaptive response-budget abuse breaker | The actual listener now records identified-client response-budget violations in the existing bounded abuse state; repeated violations trigger its configured cooldown breaker, while unidentified callers remain unaffected. Focused coverage passes. |
 | Named service profiles | Focused tests prove profile domains compile into authoritative rules and duplicate profile names or invalid domains fail closed. |
 | Listener rewrite path | Full all-target suite includes a real loopback UDP test proving a local rewrite is encoded and returned through the Proxima listener adapter. |
 | Listener profile path | Full all-target suite includes a real loopback UDP test proving a configured service profile is enforced by the listener's actual policy path. |

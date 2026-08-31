@@ -169,6 +169,9 @@ async fn decide<'a>(
     };
     if !policy.allow_client_response_bytes(client_ip, output.len()) {
         policy.observe_failure("client_response_budget");
+        if policy.record_client_abuse(client_ip) {
+            policy.observe_failure("client_abuse_breaker_open");
+        }
         let _ = state.transition(Event::Drop(DropReason::PolicyFailure));
         return Ok(None);
     }
