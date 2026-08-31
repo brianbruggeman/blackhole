@@ -50,8 +50,9 @@ below are future capabilities, grouped by the dependency layer they extend.
 ## Incumbent parity and extensions
 
 - Add encrypted upstreams and optional DoH, DoT, and DoQ server endpoints.
-- Add bounded query logs, statistics, action/error/latency histograms, and
-  privacy controls for retention, redaction, access, and deletion.
+- Add bounded query logs, privacy controls for retention, redaction, access,
+  and deletion; action/error counters and request-latency histograms are in
+  the current baseline.
 - Add an authenticated admin API, optional web UI, and optional DHCP adapter.
 - Add named service-blocking profiles and the remaining Pi-hole/AdGuard Home
   policy features.

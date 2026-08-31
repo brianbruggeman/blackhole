@@ -645,15 +645,39 @@ mod runtime {
             let labels = Labels::from_pairs(&[("action", action_label(action))]);
             telemetry.counter_inc("blackhole.decisions", &labels, 1);
         }
+
+        fn observe_failure(&self, cause: &'static str) {
+            let Some(telemetry) = self.telemetry.as_ref() else {
+                return;
+            };
+            if !telemetry.is_active() {
+                return;
+            }
+            let labels = Labels::from_pairs(&[("cause", cause)]);
+            telemetry.counter_inc("blackhole.failures", &labels, 1);
+        }
+
+        fn observe_latency(&self, elapsed: Duration) {
+            let Some(telemetry) = self.telemetry.as_ref() else {
+                return;
+            };
+            if !telemetry.is_active() {
+                return;
+            }
+            let labels = Labels::from_pairs(&[("operation", "dns_request")]);
+            telemetry.histogram_record(
+                "blackhole.request_latency_ns",
+                &labels,
+                elapsed.as_nanos() as f64,
+            );
+        }
     }
 
-    impl SendPipe for Policy {
-        type In = DnsPipeRequest;
-        type Out = DnsPipeReply;
-        type Err = ProximaError;
-        async fn call(&self, request: Self::In) -> Result<Self::Out, ProximaError> {
+    impl Policy {
+        async fn call_inner(&self, request: DnsPipeRequest) -> Result<DnsPipeReply, ProximaError> {
             let query = request.payload;
             if !self.admission_allows(&query) {
+                self.observe_failure("admission_rejected");
                 self.observe(Action::Reject);
                 return Ok(DnsPipeReply::typed(200, refused_answer()));
             }
@@ -671,14 +695,17 @@ mod runtime {
             };
             if action == Some(Action::Forward) {
                 let Some(slots) = self.upstream_slots.as_ref() else {
+                    self.observe_failure("upstream_unconfigured");
                     self.observe(Action::Forward);
                     return Ok(DnsPipeReply::typed(204, DnsAnswer::ok(Vec::new())));
                 };
                 let Ok(_slot) = slots.try_acquire() else {
+                    self.observe_failure("upstream_overflow");
                     self.observe(Action::Forward);
                     return Ok(DnsPipeReply::typed(204, DnsAnswer::ok(Vec::new())));
                 };
                 let Some(upstream) = self.upstream.as_ref() else {
+                    self.observe_failure("upstream_unconfigured");
                     self.observe(Action::Forward);
                     return Ok(DnsPipeReply::typed(204, DnsAnswer::ok(Vec::new())));
                 };
@@ -697,6 +724,7 @@ mod runtime {
                         self.observe(Action::Forward);
                         return Ok(DnsPipeReply::typed(200, self.cap_answer(answer)));
                     }
+                    self.observe_failure("upstream_circuit_open");
                     self.observe(Action::Forward);
                     return Err(ProximaError::Io(std::io::Error::new(
                         std::io::ErrorKind::TimedOut,
@@ -723,6 +751,7 @@ mod runtime {
                             self.observe(Action::Forward);
                             return Ok(DnsPipeReply::typed(200, self.cap_answer(answer)));
                         }
+                        self.observe_failure("upstream_error");
                         self.observe(Action::Forward);
                         return Err(ProximaError::Io(std::io::Error::other(error.to_string())));
                     }
@@ -752,6 +781,19 @@ mod runtime {
                 // the current owned DNS facade has no silent-response variant.
                 None => Ok(DnsPipeReply::typed(204, DnsAnswer::ok(Vec::new()))),
             }
+        }
+    }
+
+    impl SendPipe for Policy {
+        type In = DnsPipeRequest;
+        type Out = DnsPipeReply;
+        type Err = ProximaError;
+
+        async fn call(&self, request: Self::In) -> Result<Self::Out, ProximaError> {
+            let started = Instant::now();
+            let result = self.call_inner(request).await;
+            self.observe_latency(started.elapsed());
+            result
         }
     }
 
@@ -1206,6 +1248,49 @@ mod runtime {
             policy.observe(Action::Drop);
             assert!(outcome.is_none());
             assert_eq!(telemetry.calls.load(Ordering::Relaxed), 1);
+        }
+
+        #[test]
+        fn telemetry_preserves_failure_cause_and_records_latency_histograms() {
+            use proxima::Telemetry;
+            use std::sync::Arc;
+            use std::sync::atomic::{AtomicU64, Ordering};
+
+            struct FailureLatencyTelemetry {
+                failures: AtomicU64,
+                latencies: AtomicU64,
+            }
+
+            impl Telemetry for FailureLatencyTelemetry {
+                fn counter_inc(&self, metric: &str, labels: &Labels, by: u64) {
+                    assert_eq!(metric, "blackhole.failures");
+                    assert_eq!(labels.entries().len(), 1);
+                    assert_eq!(labels.entries()[0].0, "cause");
+                    assert_eq!(labels.entries()[0].1, "upstream_error");
+                    self.failures.fetch_add(by, Ordering::Relaxed);
+                }
+                fn gauge_set(&self, _: &str, _: &Labels, _: i64) {}
+                fn histogram_record(&self, metric: &str, labels: &Labels, value: f64) {
+                    assert_eq!(metric, "blackhole.request_latency_ns");
+                    assert_eq!(labels.entries().len(), 1);
+                    assert_eq!(labels.entries()[0].0, "operation");
+                    assert_eq!(labels.entries()[0].1, "dns_request");
+                    assert!(value >= 0.0);
+                    self.latencies.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+
+            let telemetry = Arc::new(FailureLatencyTelemetry {
+                failures: AtomicU64::new(0),
+                latencies: AtomicU64::new(0),
+            });
+            let policy = Policy::new(Config::default())
+                .expect("valid policy")
+                .with_telemetry(telemetry.clone());
+            policy.observe_failure("upstream_error");
+            policy.observe_latency(Duration::from_nanos(7));
+            assert_eq!(telemetry.failures.load(Ordering::Relaxed), 1);
+            assert_eq!(telemetry.latencies.load(Ordering::Relaxed), 1);
         }
     }
 }
