@@ -37,12 +37,14 @@ mod runtime {
     use serde::Deserialize;
     use std::collections::{BTreeSet, HashMap};
     use std::net::{Ipv4Addr, Ipv6Addr};
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
     use crate::policy;
-    use crate::policy::{QueryContext, ReferencePolicy};
+    use crate::policy::QueryContext;
     use crate::query::QueryView;
+    use crate::snapshot::{PolicyStore, ReloadState};
     use crate::{Action, RuleConfig};
 
     #[derive(Debug, Clone, Deserialize, Default)]
@@ -506,7 +508,8 @@ mod runtime {
 
     pub struct Policy {
         config: Config,
-        reference: ReferencePolicy,
+        reference: PolicyStore,
+        rules_configured: AtomicBool,
         telemetry: Option<TelemetryHandle>,
         upstream: Option<DnsClientUpstream>,
         upstream_slots: Option<Arc<Semaphore>>,
@@ -535,7 +538,7 @@ mod runtime {
             let blocklist_rules = load_blocklists(&config.policy.blocklists)?;
             config.policy.rules.extend(blocklist_rules);
             config.policy.domains = config.policy.domains.into_iter().map(normalize).collect();
-            let reference = ReferencePolicy::new(&config.policy.rules)?;
+            let reference = PolicyStore::new(&config.policy.rules)?;
             let cache = Arc::new(Mutex::new(DnsCache::new(&config.cache)));
             let max_inflight_requests = config.admission.max_inflight_requests;
             let breaker = Arc::new(Mutex::new(CircuitBreaker::new(
@@ -552,9 +555,11 @@ mod runtime {
                         upstream.breaker_cooldown_secs
                     }),
             )));
+            let rules_configured = !config.policy.rules.is_empty();
             let policy = Self {
                 config,
                 reference,
+                rules_configured: AtomicBool::new(rules_configured),
                 telemetry: None,
                 upstream: None,
                 upstream_slots: None,
@@ -572,6 +577,19 @@ mod runtime {
         pub fn with_telemetry(mut self, telemetry: TelemetryHandle) -> Self {
             self.telemetry = Some(telemetry);
             self
+        }
+
+        /// Validate and atomically publish a complete replacement rule table.
+        /// Existing readers finish against their old immutable snapshot; new
+        /// readers observe the replacement as one generation.
+        pub fn reload_rules(
+            &self,
+            rules: &[RuleConfig],
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let published = self.reference.reload(rules)?;
+            self.rules_configured
+                .store(!rules.is_empty(), Ordering::Release);
+            Ok(published)
         }
 
         /// Attach Proxima's existing bounded DNS upstream pipe. Forwarding is
@@ -655,11 +673,13 @@ mod runtime {
             query: &proxima_dns::DnsQuery,
             client: Option<std::net::IpAddr>,
         ) -> Option<policy::Decision> {
-            self.reference.decide(QueryContext {
-                name: &query.name,
-                qtype: query.qtype,
-                qclass: query.qclass,
-                client,
+            self.reference.read(|reference| {
+                reference.decide(QueryContext {
+                    name: &query.name,
+                    qtype: query.qtype,
+                    qclass: query.qclass,
+                    client,
+                })
             })
         }
 
@@ -774,7 +794,7 @@ mod runtime {
             client: Option<std::net::IpAddr>,
         ) -> Action {
             let name = query.name.to_dotted();
-            if self.config.policy.rules.is_empty() {
+            if !self.rules_configured.load(Ordering::Acquire) {
                 if !self.matches(&name) {
                     return Action::Pass;
                 }
@@ -785,11 +805,13 @@ mod runtime {
                 };
             }
             self.reference
-                .decide(QueryContext {
-                    name: &name,
-                    qtype: query.qtype,
-                    qclass: query.qclass,
-                    client,
+                .read(|reference| {
+                    reference.decide(QueryContext {
+                        name: &name,
+                        qtype: query.qtype,
+                        qclass: query.qclass,
+                        client,
+                    })
                 })
                 .map_or(self.config.policy.default_action, |decision| {
                     decision.action
@@ -810,7 +832,7 @@ mod runtime {
                 return Some(refused_answer());
             }
             let decision = self.decision(query, None);
-            if self.config.policy.rules.is_empty() {
+            if !self.rules_configured.load(Ordering::Acquire) {
                 return self
                     .evaluate_legacy(query)
                     .map(|answer| self.cap_answer(answer));
@@ -901,7 +923,7 @@ mod runtime {
             // The raw listener supplies its borrowed decision here. The owned
             // facade passes None and performs the single policy lookup itself.
             let action = selected_action.or_else(|| {
-                if self.config.policy.rules.is_empty() {
+                if !self.rules_configured.load(Ordering::Acquire) {
                     None
                 } else {
                     Some(
@@ -987,7 +1009,7 @@ mod runtime {
                 self.observe(Action::Forward);
                 return Ok(DnsPipeReply::typed(200, self.cap_answer(answer)));
             }
-            let outcome = if self.config.policy.rules.is_empty() {
+            let outcome = if !self.rules_configured.load(Ordering::Acquire) {
                 self.evaluate_legacy(&query)
             } else {
                 match action {
@@ -1179,6 +1201,88 @@ mod runtime {
         #[test]
         fn default_config_is_safe_for_local_testing() {
             assert_eq!(Config::default().server.listen, "127.0.0.1:5353");
+        }
+
+        #[test]
+        fn policy_reload_replaces_authoritative_rules_atomically() {
+            let query = |name: &str| proxima_dns::DnsQuery {
+                id: 1,
+                recursion_desired: true,
+                name: name.into(),
+                qtype: 1,
+                qclass: 1,
+            };
+            let mut config = Config::default();
+            config.policy.rules = vec![RuleConfig {
+                id: 1,
+                domain: "old.example".into(),
+                action: Action::Drop,
+                priority: 0,
+                qtype: None,
+                qclass: None,
+                client: None,
+            }];
+            let policy = Policy::new(config).expect("initial policy");
+            assert_eq!(
+                policy
+                    .decision(&query("old.example."), None)
+                    .unwrap()
+                    .action,
+                Action::Drop
+            );
+
+            assert_eq!(
+                policy.reload_rules(&[RuleConfig {
+                    id: 2,
+                    domain: "new.example".into(),
+                    action: Action::Reject,
+                    priority: 0,
+                    qtype: None,
+                    qclass: None,
+                    client: None,
+                }]),
+                Ok(ReloadState::Published)
+            );
+            assert!(policy.decision(&query("old.example."), None).is_none());
+            assert_eq!(
+                policy
+                    .decision(&query("new.example."), None)
+                    .unwrap()
+                    .action,
+                Action::Reject
+            );
+
+            let invalid = [
+                RuleConfig {
+                    id: 3,
+                    domain: "failed.example".into(),
+                    action: Action::Pass,
+                    priority: 0,
+                    qtype: None,
+                    qclass: None,
+                    client: None,
+                },
+                RuleConfig {
+                    id: 3,
+                    domain: "other.example".into(),
+                    action: Action::Drop,
+                    priority: 0,
+                    qtype: None,
+                    qclass: None,
+                    client: None,
+                },
+            ];
+            assert_eq!(
+                policy.reload_rules(&invalid),
+                Err(policy::PolicyError::DuplicateRule { id: 3 })
+            );
+            assert_eq!(
+                policy
+                    .decision(&query("new.example."), None)
+                    .unwrap()
+                    .action,
+                Action::Reject
+            );
         }
 
         #[test]
