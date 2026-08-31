@@ -49,6 +49,8 @@ mod runtime {
     use crate::snapshot::{PolicyStore, ReloadState};
     use crate::{Action, RuleConfig};
 
+    const MAX_UPSTREAM_OUTSTANDING: usize = 4096;
+
     #[derive(Debug, Clone, Deserialize, Default)]
     pub struct Config {
         #[serde(default)]
@@ -1141,7 +1143,9 @@ mod runtime {
             max_outstanding: usize,
         ) -> Self {
             self.upstream = Some(DnsClientUpstream::new(factory, config));
-            self.upstream_slots = Some(Arc::new(Semaphore::new(max_outstanding.max(1))));
+            self.upstream_slots = Some(Arc::new(Semaphore::new(
+                max_outstanding.clamp(1, MAX_UPSTREAM_OUTSTANDING),
+            )));
             self
         }
 
@@ -1162,9 +1166,14 @@ mod runtime {
                     reason: "query_timeout_ms must be non-zero".into(),
                 });
             }
-            if upstream.max_attempts == 0 || upstream.max_outstanding == 0 {
+            if upstream.max_attempts == 0
+                || upstream.max_outstanding == 0
+                || upstream.max_outstanding > MAX_UPSTREAM_OUTSTANDING
+            {
                 return Err(policy::PolicyError::InvalidUpstream {
-                    reason: "max_attempts and max_outstanding must be non-zero".into(),
+                    reason: format!(
+                        "max_attempts and max_outstanding must be non-zero; max_outstanding must be at most {MAX_UPSTREAM_OUTSTANDING}"
+                    ),
                 });
             }
             if upstream.breaker_failures == 0 || upstream.breaker_cooldown_secs == 0 {
@@ -2205,6 +2214,18 @@ mod runtime {
                 upstream: Some(UpstreamConfig {
                     resolver_ip: "127.0.0.1".into(),
                     port: 5353,
+                    ..UpstreamConfig::default()
+                }),
+                ..Config::default()
+            };
+            assert!(matches!(
+                Policy::new(config),
+                Err(policy::PolicyError::InvalidUpstream { .. })
+            ));
+
+            let config = Config {
+                upstream: Some(UpstreamConfig {
+                    max_outstanding: MAX_UPSTREAM_OUTSTANDING + 1,
                     ..UpstreamConfig::default()
                 }),
                 ..Config::default()
