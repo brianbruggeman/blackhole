@@ -47,6 +47,24 @@ fn rules(count: usize) -> Vec<RuleConfig> {
 }
 
 fn main() {
+    println!(
+        "source_commit={} package_version={} target_os={} target_arch={}",
+        option_env!("BLACKHOLE_SOURCE_COMMIT").unwrap_or("working-tree"),
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
+    println!(
+        "rustc_version={}",
+        String::from_utf8_lossy(
+            &std::process::Command::new("rustc")
+                .arg("--version")
+                .output()
+                .map(|output| output.stdout)
+                .unwrap_or_default()
+        )
+        .trim()
+    );
     let before_build = snapshot();
     let configs = rules(10_000);
     let build_start = Instant::now();

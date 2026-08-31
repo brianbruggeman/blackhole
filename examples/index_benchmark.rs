@@ -48,6 +48,26 @@ fn measure(policy: &ReferencePolicy, count: usize, hit: bool, samples: usize) ->
 fn benchmark(mut sink: impl Write) -> std::io::Result<()> {
     writeln!(
         sink,
+        "source_commit={} package_version={} target_os={} target_arch={}",
+        option_env!("BLACKHOLE_SOURCE_COMMIT").unwrap_or("working-tree"),
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    )?;
+    writeln!(
+        sink,
+        "rustc_version={}",
+        String::from_utf8_lossy(
+            &std::process::Command::new("rustc")
+                .arg("--version")
+                .output()
+                .map(|output| output.stdout)
+                .unwrap_or_default()
+        )
+        .trim()
+    )?;
+    writeln!(
+        sink,
         "implementation=reference-linear; workload=shared-suffix"
     )?;
     for count in [100usize, 10_000, MAX_RULES] {
