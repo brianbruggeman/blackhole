@@ -15,18 +15,17 @@ below are future capabilities, grouped by the dependency layer they extend.
 
 ## Resolver completion
 
-- Complete DNS response, truncation, and transaction validation at the
-  forwarding boundary.
+- Extend the forwarding boundary with response-question and truncation metadata
+  so DNS-over-TCP fallback can be implemented through the GitHub Proxima client
+  without weakening transaction validation.
 - Isolate the synthetic honeypot answer from any future payload-collection
   terminal and preserve its bounded DNS-only contract.
-- Add bounded forwarding with matching-question checks, transaction checks,
-  timeout behavior, TCP fallback, loop prevention, and fail-closed errors.
-- Expand the bounded cache with richer TTL telemetry.
 
 ## Policy and operator controls
 
 - Extend the authenticated blocklist and policy administration with
-  incremental background reload and richer management operations.
+  incremental background reload and richer management operations beyond the
+  current read-only status and complete-snapshot reload routes.
 - Add richer per-client and network policy controls and authenticated
   administration.
 - Extend adaptive amplification controls for repeated abusive patterns beyond
@@ -53,8 +52,8 @@ below are future capabilities, grouped by the dependency layer they extend.
   and deletion.
 - Extend the authenticated admin API with an optional web UI and optional DHCP
   adapter.
-- Add named service-blocking profiles and the remaining Pi-hole/AdGuard Home
-  policy features.
+- Add the remaining Pi-hole/AdGuard Home policy features, including regex
+  blocking and richer client/group controls.
 - Add a separately isolated honeypot terminal with explicit retention and
   access controls.
 - Add a measured policy/codec WASM edge experiment while retaining scalar
