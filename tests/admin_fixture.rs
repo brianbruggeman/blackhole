@@ -124,6 +124,19 @@ async fn admin_http_listener_enforces_bearer_auth() {
     let policy = String::from_utf8_lossy(&policy);
     assert!(policy.starts_with("HTTP/1.1 200"));
     assert!(policy.contains("{\"status\":\"reloaded\"}"));
+    let rules = request(
+        addr,
+        "GET",
+        "/rules",
+        Some("Bearer integration-secret"),
+        None,
+    )
+    .await
+    .expect("rules response");
+    let rules = String::from_utf8_lossy(&rules);
+    assert!(rules.starts_with("HTTP/1.1 200"));
+    assert!(rules.contains("\"domain\":\"blocked.example\""));
+    assert!(rules.contains("\"action\":\"nxdomain\""));
     let regex = request(
         addr,
         "POST",
