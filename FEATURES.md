@@ -17,6 +17,10 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Explicit fail-closed behavior when a forward rule has no upstream attached.
 - Configured UDP upstream forwarding through Proxima's `DnsClientUpstream`,
   with timeout/retry settings and a bounded outstanding-query limit.
+- Bounded positive and negative response caching with a bounded stale-serving
+  window for upstream outages.
+- A bounded upstream circuit breaker with configurable failure threshold and
+  cooldown; open circuits fail closed unless a stale cached answer is usable.
 - Optional action counters through Proxima telemetry.
 - A tested policy/FSM/snapshot core that does not require privileged capture
   APIs.
