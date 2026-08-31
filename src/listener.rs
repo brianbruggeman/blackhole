@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use crate::Policy;
 use crate::fsm::{DecisionState, DropReason, Event};
-use crate::query::QueryView;
+use crate::query::{QueryView, valid_query_flags};
 
 const MAX_TCP_FRAME: usize = 4096;
 const UDP_HEADER: usize = 12;
@@ -47,8 +47,7 @@ impl TcpProtocol {
 
 fn is_query(prefix: &[u8]) -> bool {
     prefix.len() >= UDP_HEADER
-        && prefix[2] & 0x80 == 0
-        && prefix[2] & 0x78 == 0
+        && valid_query_flags(prefix)
         && u16::from_be_bytes([prefix[4], prefix[5]]) == 1
 }
 

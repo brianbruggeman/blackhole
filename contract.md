@@ -22,8 +22,8 @@ Named service profiles are configuration shorthand for bounded sets of policy
 rules. Their generated rules participate in the same domain, client, qtype,
 qclass, priority, and action precedence contract as explicit rules.
 
-Malformed, response-shaped, non-single-question, oversized, and non-ASCII
-IDNA names are rejected before policy evaluation. A forward cache is bounded
+Malformed, response-shaped, flag-invalid, non-single-question, oversized, and
+non-ASCII IDNA names are rejected before policy evaluation. A forward cache is bounded
 by entry count, honors positive record TTLs, applies the configured negative
 TTL to empty negative answers, and may serve stale data only within the
 configured stale window during an upstream failure. The upstream circuit

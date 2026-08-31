@@ -24,6 +24,7 @@ pub struct QueryView<'packet> {
 pub enum QueryParseError {
     Wire(ParseError),
     Response,
+    InvalidFlags,
     UnsupportedName,
     NotSingleQuestion,
     Oversized,
@@ -35,6 +36,9 @@ impl core::fmt::Display for QueryParseError {
             Self::Wire(error) => write!(formatter, "invalid DNS message: {error}"),
             Self::Response => {
                 formatter.write_str("DNS response received where a query was expected")
+            }
+            Self::InvalidFlags => {
+                formatter.write_str("DNS query contains response or reserved flag bits")
             }
             Self::UnsupportedName => {
                 formatter.write_str("DNS name contains non-ASCII labels; IDNA is unsupported")
@@ -62,6 +66,9 @@ impl<'packet> QueryView<'packet> {
         let message = parse_message(packet)?;
         if message.header.flags.is_response() {
             return Err(QueryParseError::Response);
+        }
+        if !valid_query_flags(packet) {
+            return Err(QueryParseError::InvalidFlags);
         }
         if message.header.qdcount != 1 {
             return Err(QueryParseError::NotSingleQuestion);
@@ -103,6 +110,15 @@ impl<'packet> QueryView<'packet> {
             qclass: self.qclass,
         }
     }
+}
+
+/// Return whether the fixed DNS header flags are valid for a query.
+///
+/// QR, AA, and TC are response-state bits; RA is supplied by a resolver in a
+/// response. The opcode, Z, and RCODE fields must be zero. AD/CD remain
+/// available for DNSSEC-aware clients.
+pub(crate) fn valid_query_flags(packet: &[u8]) -> bool {
+    packet.len() >= 4 && packet[2] & 0x7e == 0 && packet[3] & 0xcf == 0
 }
 
 #[cfg(test)]
@@ -152,6 +168,28 @@ mod tests {
         let mut packet = query(b"\x07example\x03com\0", 1);
         packet[2] |= 0x80;
         assert_eq!(QueryView::parse(&packet), Err(QueryParseError::Response));
+    }
+
+    #[test]
+    fn rejects_response_and_reserved_query_flags() {
+        for mask in [
+            [0x04, 0x00],
+            [0x02, 0x00],
+            [0x00, 0x80],
+            [0x00, 0x40],
+            [0x00, 0x01],
+        ] {
+            let mut packet = query(b"\x07example\x03com\0", 1);
+            packet[2] |= mask[0];
+            packet[3] |= mask[1];
+            assert_eq!(
+                QueryView::parse(&packet),
+                Err(QueryParseError::InvalidFlags),
+                "flags {:02x}{:02x} must not enter policy",
+                packet[2],
+                packet[3]
+            );
+        }
     }
 
     #[test]

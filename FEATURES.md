@@ -34,7 +34,7 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - A bounded upstream circuit breaker with configurable failure threshold and
   cooldown; open circuits fail closed unless a stale cached answer is usable.
 - Bounded admission controls that reject malformed/overlong owned queries,
-  optionally reject `ANY`, cap emitted answer records and approximate wire
+  response/reserved DNS query flags, optionally reject `ANY`, cap emitted answer records and approximate wire
   size, cap response amplification relative to the query, and shed excess
   in-flight work with bounded global and per-client limits.
 - A bounded per-client abuse breaker that temporarily sheds clients which

@@ -41,6 +41,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | Upstream loop prevention | Upstream configuration rejects exact listener endpoints and same-family unspecified listener binds that overlap the upstream address and port; IPv4 and IPv6 proofs pass. |
 | Bounded upstream records | Upstream answers exceeding the configured `max_response_records` are rejected before validation can reach cache insertion; focused and full all-target suites pass. |
 | Upstream pass-through | `pass` and `observe` actions use the configured upstream after local rewrites, while explicit `forward` remains distinct and fail-closed without an upstream; deterministic fake-upstream proofs pass. |
+| DNS query flag validation | The shared borrowed query boundary and UDP/TCP probes reject AA, TC, RA, Z, and nonzero RCODE bits before policy evaluation; focused and full all-target suites pass. |
 
 ## Evidence still required
 
