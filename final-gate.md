@@ -9,7 +9,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | --- | --- |
 | Formatting | `cargo fmt --all -- --check` passed at Blackhole `c23c1ac` with Rust `1.98.0`. |
 | Compilation | `cargo check --offline --all-targets` passed at Blackhole `c23c1ac` with GitHub Proxima revision `0652a0c0`, Rust `1.98.0`, and Cargo `1.98.0`. |
-| Unit and integration tests | `cargo test --offline --all-targets` passed at Blackhole `c23c1ac`: 103 tests, 103 passed, including the real HTTP admin fixture, 3 real loopback UDP/TCP resolver fixture tests, and 10 fake-upstream tests against GitHub Proxima revision `0652a0c0`. |
+| Unit and integration tests | `cargo test --offline --all-targets` passed at Blackhole `b67b8da`: 106 tests, 106 passed, including the bounded admin rule-metadata proof, the real HTTP admin fixture, 3 real loopback UDP/TCP resolver fixture tests, and 10 fake-upstream tests against GitHub Proxima revision `0652a0c0`. |
 | Cache failure behavior | `fake_upstream_servfail_is_not_cached` passes in the current 103-test run at Blackhole `c23c1ac`; SERVFAIL causes a second upstream exchange rather than a reusable negative cache entry. |
 | Nextest | `cargo nextest run --offline --workspace` passed at Blackhole `c23c1ac`: 103 tests, 103 passed, 0 skipped, against GitHub Proxima revision `0652a0c0`; the real admin and resolver fixtures use OS-assigned loopback ports and pass under the parallel runner. |
 | Doctests | `cargo test --doc --offline` passed at Blackhole `f7e2518`: 1 doctest. |
@@ -50,6 +50,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | DNS query flag validation | The shared borrowed query boundary and UDP/TCP probes reject AA, TC, RA, Z, and nonzero RCODE bits before policy evaluation; focused and full all-target suites pass. |
 | Blocklist exceptions and subdomains | Bounded blocklist ingestion generates apex and subdomain rules, honors basic AdGuard `@@||domain^` exceptions, and proves normalization/deduplication and fail-closed parsing in the full suite. |
 | Authenticated status endpoint | The existing Proxima bearer-authenticated admin handler exposes bounded non-sensitive status fields; unit and real HTTP listener proofs pass. |
+| Authenticated rule inspection | The bearer-authenticated `GET /rules` route returns policy metadata without query payloads and caps serialized output at 64 KiB; focused tests prove non-empty output, truncation, and wrong-method rejection. |
 | Bounded regex policy rules | Regex expressions compile with count, pattern, and program-size bounds; invalid expressions fail closed, filter specificity is deterministic, explicit domain rules win, and focused policy proofs pass. |
 | Multi-network client scopes | Existing rule configuration accepts one bounded `client_cidrs` list of IPv4/IPv6 networks, rejects ambiguous or oversized scopes, and selects the longest matching prefix; focused policy proofs pass. |
 
