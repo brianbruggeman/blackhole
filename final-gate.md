@@ -43,7 +43,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | Privileged capture smoke | Not produced here. The process has no effective capabilities (`CapEff: 0`); non-mutating `nft --check` returned netlink `EPERM`. |
 | macOS build and PF smoke | CI workflow exists, but no local macOS execution evidence is recorded here. |
 | TCP upstream fallback | Open. GitHub-pinned Proxima `0652a0c0` exposes only UDP `DnsClientUpstream` and discards `TC` and response-question metadata. |
-| Proxima metadata change publication | Local Proxima commits `e41c8ac8` and `49146ea3` are not on GitHub; push was rejected for `slot-0` access. Blackhole remains on the published GitHub revision. |
+| Proxima metadata change publication | Published GitHub Proxima `main` is `67704934788cb576e78c2d4506e076f890b5ec50`; inspecting that source still shows `DnsAnswer` omits the response question and TC bit. Blackhole remains on the compatible pinned revision `0652a0c0`, so TCP fallback is not claimed. |
 | Performance gate | `cargo run --release --features perf-instrument --example performance_gate` ran three times on Linux x86_64. Allocator data and policy/owned boundaries are measured; listener TCP/encode/transport boundaries are instrumented but were not exercised by this example. No zero-copy or production-performance claim is supported. |
 | Privacy and honeypot terminal | The retention contract is documented in `PRIVACY.md`; retention, redaction, access control, and deletion verification controls are not implemented. |
 | Managed GeoIP/region/ASN policy | Open. The current implementation supports only an explicit operator-supplied country-to-CIDR map; managed database lifecycle and region/ASN sources are not implemented. |
