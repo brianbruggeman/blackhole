@@ -53,6 +53,7 @@ mod runtime {
 
     const MAX_UPSTREAM_OUTSTANDING: usize = 4096;
     const MAX_UPSTREAM_ATTEMPTS: u32 = 8;
+    const MAX_UPSTREAM_TIMEOUT_MS: u64 = 60_000;
 
     #[derive(Debug, Clone, Deserialize, Default)]
     pub struct Config {
@@ -1193,9 +1194,12 @@ mod runtime {
                     reason: "port must be non-zero".into(),
                 });
             }
-            if upstream.query_timeout_ms == 0 {
+            if upstream.query_timeout_ms == 0 || upstream.query_timeout_ms > MAX_UPSTREAM_TIMEOUT_MS
+            {
                 return Err(policy::PolicyError::InvalidUpstream {
-                    reason: "query_timeout_ms must be non-zero".into(),
+                    reason: format!(
+                        "query_timeout_ms must be between 1 and {MAX_UPSTREAM_TIMEOUT_MS}"
+                    ),
                 });
             }
             if upstream.max_attempts == 0
@@ -2356,6 +2360,18 @@ mod runtime {
             let config = Config {
                 upstream: Some(UpstreamConfig {
                     max_attempts: MAX_UPSTREAM_ATTEMPTS + 1,
+                    ..UpstreamConfig::default()
+                }),
+                ..Config::default()
+            };
+            assert!(matches!(
+                Policy::new(config),
+                Err(policy::PolicyError::InvalidUpstream { .. })
+            ));
+
+            let config = Config {
+                upstream: Some(UpstreamConfig {
+                    query_timeout_ms: MAX_UPSTREAM_TIMEOUT_MS + 1,
                     ..UpstreamConfig::default()
                 }),
                 ..Config::default()

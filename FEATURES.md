@@ -23,8 +23,8 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Synthetic IPv4/IPv6 honeypot answers with configurable TTL.
 - Explicit fail-closed behavior when a forward rule has no upstream attached.
 - Configured UDP upstream forwarding through Proxima's `DnsClientUpstream`,
-  with timeout/retry settings, at most eight attempts per exchange, and a
-  bounded outstanding-query limit.
+  with timeout bounded to 60 seconds, at most eight attempts per exchange, and
+  a bounded outstanding-query limit.
 - Bounded positive and negative response caching with a configured maximum
   protocol TTL, a bounded stale-serving window for upstream outages, plus
   Proxima-native hit/miss/stale/eviction counters and effective positive/

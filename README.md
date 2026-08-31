@@ -36,9 +36,10 @@ DNS edge. When `policy.rules` is configured, it is authoritative and legacy
 `mode`/`domains` are ignored; unmatched queries use `policy.default_action`.
 Explicit forwarding uses the opt-in Proxima upstream pipe and fails closed
 when no upstream is attached. Forwarded positive and negative answers are
-cached within configured bounds; retries are bounded to eight attempts per
-exchange, and an upstream circuit breaker limits repeated failures and permits
-stale answers only during its configured stale window.
+cached within configured bounds; timeout is bounded to 60 seconds and retries
+to eight attempts per exchange, while an upstream circuit breaker limits
+repeated failures and permits stale answers only during its configured stale
+window.
 Repeated per-client rate-limit violations open a bounded temporary abuse
 breaker; unidentified callers are not assigned a shared abuse identity.
 Encoded responses also consume a bounded per-client byte budget per second;

@@ -36,7 +36,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | Listener profile path | Full all-target suite includes a real loopback UDP test proving a configured service profile is enforced by the listener's actual policy path. |
 | Cache TTL bound | Full all-target suite includes tests proving positive and negative cache entries remain bounded, protocol TTLs above the configured ceiling are clamped, and a zero ceiling fails configuration validation. |
 | Cache invalidation | Rule-table reload tests prove successful policy publication clears cached forwarding answers while failed reloads retain the previous snapshot. |
-| Bounded upstream retries | Current `ccfff92`-derived tree validates `max_attempts` to the inclusive range 1–8 before listener construction; the focused validation and full all-target suite pass against GitHub Proxima `0652a0c0`. |
+| Bounded upstream exchange | Current tree validates `query_timeout_ms` to 1–60,000 ms, `max_attempts` to 1–8, and `max_outstanding` to 1–4096 before listener construction; focused validation and the full all-target suite pass against GitHub Proxima `0652a0c0`. |
 
 ## Evidence still required
 
