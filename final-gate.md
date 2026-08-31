@@ -8,16 +8,16 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | Gate | Evidence |
 | --- | --- |
 | Formatting | `cargo fmt --all -- --check` passed on the current Blackhole changes with Rust `1.98.0`. |
-| Compilation | `cargo check --offline --all-targets` passed at Blackhole `b1fb896` with GitHub Proxima revision `0652a0c0`, Rust `1.98.0`, and Cargo `1.98.0`. |
-| Unit and integration tests | `cargo nextest run --offline --workspace` passed at Blackhole `b1fb896`: 95 tests, 95 passed, 0 skipped, including the real HTTP admin fixture, 3 real loopback UDP/TCP resolver fixture tests, and 10 fake-upstream tests against GitHub Proxima revision `0652a0c0`. |
-| Cache failure behavior | `fake_upstream_servfail_is_not_cached` passes in the current 95-test nextest run; SERVFAIL causes a second upstream exchange rather than a reusable negative cache entry. |
-| Nextest | `cargo nextest run --offline --workspace` passed at Blackhole `b1fb896`: 95 tests, 95 passed, 0 skipped, against GitHub Proxima revision `0652a0c0`; the real admin fixture uses an OS-assigned loopback port and passes under the parallel runner. |
-| Doctests | `cargo test --doc --offline` passed at Blackhole `b1fb896`: 1 doctest. |
-| No-std and WASM | `cargo check --offline --no-default-features --target thumbv7m-none-eabi` and the equivalent `wasm32-unknown-unknown` command passed at Blackhole `b1fb896` with GitHub Proxima revision `0652a0c0`. |
+| Compilation | `cargo check --offline --all-targets` passed at Blackhole `72aa9d0` with GitHub Proxima revision `0652a0c0`, Rust `1.98.0`, and Cargo `1.98.0`. |
+| Unit and integration tests | `cargo nextest run --offline --workspace` passed at Blackhole `72aa9d0`: 100 tests, 100 passed, 0 skipped, including the real HTTP admin fixture, 3 real loopback UDP/TCP resolver fixture tests, and 10 fake-upstream tests against GitHub Proxima revision `0652a0c0`. |
+| Cache failure behavior | `fake_upstream_servfail_is_not_cached` passes in the current 100-test nextest run; SERVFAIL causes a second upstream exchange rather than a reusable negative cache entry. |
+| Nextest | `cargo nextest run --offline --workspace` passed at Blackhole `72aa9d0`: 100 tests, 100 passed, 0 skipped, against GitHub Proxima revision `0652a0c0`; the real admin and resolver fixtures use OS-assigned loopback ports and pass under the parallel runner. |
+| Doctests | `cargo test --doc --offline` passed at Blackhole `72aa9d0`: 1 doctest. |
+| No-std and WASM | `cargo check --offline --no-default-features --target thumbv7m-none-eabi` and the equivalent `wasm32-unknown-unknown` command passed at Blackhole `72aa9d0` with GitHub Proxima revision `0652a0c0`. |
 | Dependency audit | Root `cargo audit --no-fetch` and the fuzz lockfile audit both passed with one allowed warning: unmaintained `paste` (`RUSTSEC-2024-0436`). |
 | Fuzz smoke | The installed nightly `rustc 1.100.0-nightly` `query_view` target ran 1,000 iterations over 56 corpus inputs without a crash at Blackhole `b1fb896`; generated corpus files were discarded after the smoke run. |
 | Resolver fixture | The actual loopback UDP/TCP listener fixture passed. |
-| Configuration validation | At Blackhole `b1fb896`, `cargo run --offline -- --check blackhole.example.toml` and `cargo run --offline -- --check` both exited successfully before listener startup; enabled capture plans are validated through the platform planner without installation. |
+| Configuration validation | At Blackhole `72aa9d0`, `cargo run --offline -- --check blackhole.example.toml` exited successfully before listener startup; enabled capture plans are validated through the platform planner without installation. |
 | Authenticated admin control plane | Focused and real-listener tests prove Proxima HTTP health routing, bearer rejection/admission, bounded 404/405 routes, authenticated blocklist and JSON policy reload behavior, bounded policy bodies, and loopback-only binding while the control plane is plaintext HTTP. |
 | Live forwarding FSM path | The real loopback resolver fixture exercises the listener's `Matched(Forward)`, `Forward`, `Forwarded`, and response-send transitions while forwarding through Proxima's GitHub-pinned `DnsClientUpstream`. |
 | Capture lifecycle | Planner, rollback, ownership, recovery, and cleanup tests pass. Capture is explicitly opt-in, wired through the shared controller, and native Linux cleanup targets only the exact journal-owned chain rather than deleting the shared table. |
