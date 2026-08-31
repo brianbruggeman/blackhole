@@ -31,6 +31,7 @@ mod runtime {
         DnsAnswer, DnsAnswerRecord, DnsClientUpstream, DnsPipeReply, DnsPipeRequest,
     };
     use proxima_primitives::pipe::SendPipe;
+    use proxima_primitives::pipe::endpoint::PeerInfo;
     use proxima_primitives::stream::DatagramFactory;
     use proxima_primitives::sync::Semaphore;
     use serde::Deserialize;
@@ -616,13 +617,24 @@ mod runtime {
             }
         }
 
-        fn decision(&self, query: &proxima_dns::DnsQuery) -> Option<policy::Decision> {
+        fn decision(
+            &self,
+            query: &proxima_dns::DnsQuery,
+            client: Option<std::net::IpAddr>,
+        ) -> Option<policy::Decision> {
             self.reference.decide(QueryContext {
                 name: &query.name,
                 qtype: query.qtype,
                 qclass: query.qclass,
-                client: None,
+                client,
             })
+        }
+
+        fn client_ip(peer: Option<&PeerInfo>) -> Option<std::net::IpAddr> {
+            match peer {
+                Some(PeerInfo::Tcp(address)) => Some(address.ip()),
+                _ => None,
+            }
         }
 
         fn admission_allows(&self, query: &proxima_dns::DnsQuery) -> bool {
@@ -652,6 +664,18 @@ mod runtime {
         /// request, so configured rules remain authoritative at the raw boundary.
         #[must_use]
         pub fn action_for_view(&self, query: QueryView<'_>) -> Action {
+            self.action_for_view_with_client(query, None)
+        }
+
+        /// Return the authoritative action while retaining the listener-owned
+        /// client address as a policy input without putting adapter metadata
+        /// into the borrowed wire view.
+        #[must_use]
+        pub fn action_for_view_with_client(
+            &self,
+            query: QueryView<'_>,
+            client: Option<std::net::IpAddr>,
+        ) -> Action {
             let name = query.name.to_dotted();
             if self.config.policy.rules.is_empty() {
                 if !self.matches(&name) {
@@ -668,7 +692,7 @@ mod runtime {
                     name: &name,
                     qtype: query.qtype,
                     qclass: query.qclass,
-                    client: None,
+                    client,
                 })
                 .map_or(self.config.policy.default_action, |decision| {
                     decision.action
@@ -688,7 +712,7 @@ mod runtime {
             if !self.admission_allows(query) {
                 return Some(refused_answer());
             }
-            let decision = self.decision(query);
+            let decision = self.decision(query, None);
             if self.config.policy.rules.is_empty() {
                 return self
                     .evaluate_legacy(query)
@@ -761,6 +785,7 @@ mod runtime {
 
     impl Policy {
         async fn call_inner(&self, request: DnsPipeRequest) -> Result<DnsPipeReply, ProximaError> {
+            let client = Policy::client_ip(request.context.peer.as_ref());
             let query = request.payload;
             if !self.admission_allows(&query) {
                 self.observe_failure("admission_rejected");
@@ -769,7 +794,7 @@ mod runtime {
             }
             // Decide exactly once.  In particular, do not run the rule table to
             // discover forwarding and then run it again to render the outcome.
-            let decision = self.decision(&query);
+            let decision = self.decision(&query, client);
             let action = if self.config.policy.rules.is_empty() {
                 None
             } else {
@@ -1088,7 +1113,9 @@ mod runtime {
                 qclass: 1,
             };
             assert_eq!(
-                policy.decision(&query).map(|decision| decision.action),
+                policy
+                    .decision(&query, None)
+                    .map(|decision| decision.action),
                 Some(Action::Forward)
             );
             assert!(policy.evaluate(&query).is_none());
@@ -1170,6 +1197,34 @@ mod runtime {
             let view = QueryView::parse(&packet).expect("valid query");
             assert_eq!(policy.action_for_view(view), Action::Reject);
             assert_eq!(view.to_owned().name, "blocked.example.");
+        }
+
+        #[test]
+        fn client_scoped_rules_use_adapter_owned_peer_metadata() {
+            let mut config = Config::default();
+            config.policy.rules = vec![RuleConfig {
+                id: 1,
+                domain: "client.example".into(),
+                action: Action::Reject,
+                priority: 0,
+                qtype: None,
+                qclass: None,
+                client: Some("192.0.2.10".parse().unwrap()),
+            }];
+            let policy = Policy::new(config).expect("valid policy");
+            let packet = [
+                0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 6, b'c', b'l', b'i', b'e', b'n', b't', 7, b'e',
+                b'x', b'a', b'm', b'p', b'l', b'e', 0, 0, 1, 0, 1,
+            ];
+            let view = QueryView::parse(&packet).expect("valid query");
+            assert_eq!(
+                policy.action_for_view_with_client(view, Some("192.0.2.10".parse().unwrap())),
+                Action::Reject
+            );
+            assert_eq!(
+                policy.action_for_view_with_client(view, Some("192.0.2.11".parse().unwrap())),
+                Action::Pass
+            );
         }
 
         #[test]

@@ -13,7 +13,6 @@ use proxima_primitives::stream::{PeerInfo, StreamConnection};
 use proxima_protocols::dns::encode;
 use serde_json::Value;
 use std::future::Future;
-use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -54,14 +53,11 @@ fn is_query(prefix: &[u8]) -> bool {
         && u16::from_be_bytes([prefix[4], prefix[5]]) == 1
 }
 
-fn peer_addr(peer: Option<&PeerInfo>) -> SocketAddr {
-    match peer {
-        Some(PeerInfo::Tcp(addr)) => *addr,
-        _ => SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 0),
-    }
-}
-
-fn request(query: proxima_dns::DnsQuery, tcp: bool) -> proxima_dns::DnsPipeRequest {
+fn request(
+    query: proxima_dns::DnsQuery,
+    tcp: bool,
+    peer: Option<PeerInfo>,
+) -> proxima_dns::DnsPipeRequest {
     Request {
         method: Method::from_wire(if tcp {
             Bytes::from_static(b"DNS-TCP")
@@ -73,14 +69,17 @@ fn request(query: proxima_dns::DnsQuery, tcp: bool) -> proxima_dns::DnsPipeReque
         metadata: HeaderList::new(),
         payload: query,
         stream: None,
-        context: RequestContext::default(),
+        context: RequestContext {
+            peer,
+            ..RequestContext::default()
+        },
     }
 }
 
 async fn decide(
     policy: &Policy,
     packet: &[u8],
-    peer: SocketAddr,
+    peer: Option<PeerInfo>,
     tcp: bool,
 ) -> Result<Option<Vec<u8>>, ProximaError> {
     let mut state = DecisionState::received(packet)
@@ -96,7 +95,13 @@ async fn decide(
     state = state
         .transition(Event::Parsed(view))
         .map_err(|error| ProximaError::Config(error.to_string()))?;
-    let action = policy.action_for_view(view);
+    let action = policy.action_for_view_with_client(
+        view,
+        match peer.as_ref() {
+            Some(PeerInfo::Tcp(address)) => Some(address.ip()),
+            _ => None,
+        },
+    );
     state = state
         .transition(Event::Matched(action))
         .map_err(|error| ProximaError::Config(error.to_string()))?;
@@ -106,7 +111,7 @@ async fn decide(
     }
 
     let query = view.to_owned();
-    let request = request(query.clone(), tcp);
+    let request = request(query.clone(), tcp, peer.clone());
     let answer = SendPipe::call(policy, request)
         .await
         .map_err(|error| ProximaError::Io(std::io::Error::other(error.to_string())))?
@@ -141,7 +146,6 @@ async fn decide(
         &mut output,
     )
     .map_err(|error| ProximaError::Config(error.to_string()))?;
-    let _ = peer;
     state
         .transition(Event::Respond(&output))
         .map_err(|error| ProximaError::Config(error.to_string()))?;
@@ -201,9 +205,7 @@ impl AnyProtocol for UdpProtocol {
                 .read_to_end(&mut packet)
                 .await
                 .map_err(ProximaError::Io)?;
-            if let Some(reply) =
-                decide(&self.policy, &packet, peer_addr(peer.as_ref()), false).await?
-            {
+            if let Some(reply) = decide(&self.policy, &packet, peer, false).await? {
                 stream.write_all(&reply).await.map_err(ProximaError::Io)?;
             }
             stream.close().await.map_err(ProximaError::Io)
@@ -247,9 +249,7 @@ impl AnyProtocol for TcpProtocol {
                 }
                 let length = usize::from(u16::from_be_bytes([input[0], input[1]]));
                 let frame = input.split_to(2 + length).split_off(2);
-                if let Some(reply) =
-                    decide(&self.policy, &frame, peer_addr(peer.as_ref()), true).await?
-                {
+                if let Some(reply) = decide(&self.policy, &frame, peer.clone(), true).await? {
                     let length = u16::try_from(reply.len()).map_err(|_| {
                         ProximaError::Config("DNS response exceeds TCP framing".into())
                     })?;
