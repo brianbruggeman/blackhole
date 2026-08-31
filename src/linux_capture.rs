@@ -211,7 +211,18 @@ impl OwnershipStore for FileOwnershipStore {
         Self::validate_path(&self.path)?;
         let temporary = self.path.with_extension("tmp");
         std::fs::write(&temporary, Self::encode(ownership)).map_err(|error| error.to_string())?;
-        std::fs::rename(temporary, &self.path).map_err(|error| error.to_string())
+        std::fs::File::open(&temporary)
+            .map_err(|error| error.to_string())?
+            .sync_all()
+            .map_err(|error| error.to_string())?;
+        std::fs::rename(&temporary, &self.path).map_err(|error| error.to_string())?;
+        if let Some(parent) = self.path.parent() {
+            std::fs::File::open(parent)
+                .map_err(|error| error.to_string())?
+                .sync_all()
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
     }
 
     fn clear(&mut self) -> Result<(), String> {
