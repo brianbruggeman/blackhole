@@ -50,6 +50,19 @@ impl CaptureGuard {
 struct AnyHandler;
 
 #[cfg(target_os = "linux")]
+fn validate_capture(
+    config: &blackhole::CaptureConfig,
+    listen_port: u16,
+) -> Result<(), ProximaError> {
+    if !config.enabled {
+        return Ok(());
+    }
+    NftRulePlan::for_ports(&config.chain, config.inbound_port, listen_port, config.mark)
+        .map_err(|error| ProximaError::Config(format!("invalid capture plan: {error}")))?;
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
 fn install_capture(
     config: &blackhole::CaptureConfig,
     listen_port: u16,
@@ -68,6 +81,22 @@ fn install_capture(
         .install(&plan)
         .map_err(|error| ProximaError::Config(format!("capture install failed: {error}")))?;
     Ok(Some(CaptureGuard { controller, plan }))
+}
+
+#[cfg(target_os = "macos")]
+fn validate_capture(
+    config: &blackhole::CaptureConfig,
+    listen_port: u16,
+) -> Result<(), ProximaError> {
+    if !config.enabled {
+        return Ok(());
+    }
+    let original_destination = config.original_destination.parse().map_err(|error| {
+        ProximaError::Config(format!("invalid capture original_destination: {error}"))
+    })?;
+    PfRulePlan::new(&config.chain, original_destination, listen_port)
+        .map_err(|error| ProximaError::Config(format!("invalid capture plan: {error}")))?;
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
@@ -92,6 +121,20 @@ fn install_capture(
         .install(&plan)
         .map_err(|error| ProximaError::Config(format!("capture install failed: {error}")))?;
     Ok(Some(CaptureGuard { controller, plan }))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn validate_capture(
+    config: &blackhole::CaptureConfig,
+    _listen_port: u16,
+) -> Result<(), ProximaError> {
+    if config.enabled {
+        Err(ProximaError::Config(
+            "capture is unsupported on this platform".into(),
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -156,6 +199,7 @@ async fn main() -> Result<(), ProximaError> {
         .parse()
         .map_err(|error| ProximaError::Config(format!("invalid server.listen: {error}")))?;
     if check_only {
+        validate_capture(&config.capture, bind.port())?;
         Policy::new(config)
             .map_err(|error| ProximaError::Config(format!("invalid configuration: {error}")))?;
         println!("configuration valid (listener bind: {bind})");
