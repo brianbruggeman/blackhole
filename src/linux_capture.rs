@@ -441,7 +441,10 @@ pub mod native {
         }
 
         fn remove(&mut self, plan: &Self::Plan) -> Result<(), String> {
-            self.apply(&["delete", "table", "inet", &plan.table], None)
+            // Delete only the chain recorded in the ownership journal. The
+            // table name is shared namespace; removing the whole table could
+            // destroy unrelated operator-managed chains.
+            self.apply(&["delete", "chain", "inet", &plan.table, &plan.chain], None)
         }
     }
 }
