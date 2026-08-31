@@ -23,6 +23,7 @@ pub struct QueryView<'packet> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueryParseError {
     Wire(ParseError),
+    Response,
     NotSingleQuestion,
     Oversized,
 }
@@ -31,6 +32,9 @@ impl core::fmt::Display for QueryParseError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Wire(error) => write!(formatter, "invalid DNS message: {error}"),
+            Self::Response => {
+                formatter.write_str("DNS response received where a query was expected")
+            }
             Self::NotSingleQuestion => formatter.write_str("DNS message is not one question"),
             Self::Oversized => write!(formatter, "DNS message exceeds {MAX_QUERY_BYTES} bytes"),
         }
@@ -52,6 +56,9 @@ impl<'packet> QueryView<'packet> {
             return Err(QueryParseError::Oversized);
         }
         let message = parse_message(packet)?;
+        if message.header.flags.is_response() {
+            return Err(QueryParseError::Response);
+        }
         if message.header.qdcount != 1 {
             return Err(QueryParseError::NotSingleQuestion);
         }
@@ -109,6 +116,13 @@ mod tests {
             QueryView::parse(&packet),
             Err(QueryParseError::NotSingleQuestion)
         );
+    }
+
+    #[test]
+    fn rejects_response_messages_at_the_query_boundary() {
+        let mut packet = query(b"\x07example\x03com\0", 1);
+        packet[2] |= 0x80;
+        assert_eq!(QueryView::parse(&packet), Err(QueryParseError::Response));
     }
 
     #[test]
