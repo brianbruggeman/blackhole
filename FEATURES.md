@@ -51,6 +51,8 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   successful policy reloads invalidating cached forwarding answers.
 - Atomic operator-triggered blocklist reloads rebuild the explicit rules plus
   current bounded files and retain the last good snapshot on failure.
+- Optional Proxima HTTP admin control plane with bearer authentication, a
+  read-only health endpoint, and authenticated blocklist reload.
 - A tested policy/FSM/snapshot core that does not require privileged capture
   APIs.
 - Shared capture-controller orchestration with exact ownership journaling,

@@ -2,6 +2,12 @@
 # Use 53 only with the required OS capability; loopback keeps local testing scoped.
 listen = "127.0.0.1:5353"
 
+[admin]
+# Optional authenticated HTTP control plane; keep it on loopback and protect
+# this file because the bearer token is a credential.
+# listen = "127.0.0.1:8081"
+# token = "replace-with-a-long-random-token"
+
 [capture]
 # Capture is opt-in. Enabling it requires the platform's firewall capability.
 enabled = false

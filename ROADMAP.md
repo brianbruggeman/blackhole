@@ -25,7 +25,8 @@ below are future capabilities, grouped by the dependency layer they extend.
 
 ## Policy and operator controls
 
-- Add authenticated blocklist administration and incremental background reload.
+- Extend the authenticated blocklist administration with incremental background
+  reload and richer management operations.
 - Add richer per-client and network policy controls and authenticated
   administration.
 - Add adaptive amplification controls for repeated abusive patterns beyond the
@@ -50,7 +51,8 @@ below are future capabilities, grouped by the dependency layer they extend.
 - Add encrypted upstreams and optional DoH, DoT, and DoQ server endpoints.
 - Add bounded query logs and privacy controls for retention, redaction, access,
   and deletion.
-- Add an authenticated admin API, optional web UI, and optional DHCP adapter.
+- Extend the authenticated admin API with an optional web UI and optional DHCP
+  adapter.
 - Add named service-blocking profiles and the remaining Pi-hole/AdGuard Home
   policy features.
 - Add a separately isolated honeypot terminal with explicit retention and

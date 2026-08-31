@@ -15,6 +15,8 @@ pub mod query;
 pub use policy::{Action, RuleConfig};
 
 #[cfg(feature = "std")]
+pub mod admin;
+#[cfg(feature = "std")]
 pub mod linux_capture;
 #[cfg(feature = "std")]
 pub mod listener;
@@ -55,6 +57,8 @@ mod runtime {
     pub struct Config {
         #[serde(default)]
         pub server: ServerConfig,
+        #[serde(default)]
+        pub admin: AdminConfig,
         #[serde(default)]
         pub policy: PolicyConfig,
         #[serde(default)]
@@ -457,6 +461,14 @@ mod runtime {
                 listen: default_listen(),
             }
         }
+    }
+
+    #[derive(Debug, Clone, Deserialize, Default)]
+    pub struct AdminConfig {
+        /// Optional HTTP control-plane bind. Disabled when absent.
+        pub listen: Option<String>,
+        /// Required bearer token when `listen` is configured.
+        pub token: Option<String>,
     }
 
     #[derive(Debug, Clone, Deserialize)]

@@ -46,3 +46,15 @@ by default; when enabled, it installs and recovers only the platform-native,
 journal-owned DNS redirect rules.
 Named service profiles are also compiled into the authoritative rule table;
 each profile supplies a bounded domain set and action.
+
+An optional authenticated control plane can be enabled with `[admin]`:
+
+```toml
+[admin]
+listen = "127.0.0.1:8081"
+token = "a-long-random-secret"
+```
+
+It provides `GET /health` and `POST /reload/blocklists`. Send the token as a
+Bearer credential; keep the configuration file readable only by the service
+user.

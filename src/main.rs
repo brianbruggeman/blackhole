@@ -1,5 +1,6 @@
 #![cfg(feature = "std")]
 
+use blackhole::admin::authenticated_handle;
 #[cfg(target_os = "macos")]
 use blackhole::linux_capture::FileOwnershipStore;
 #[cfg(target_os = "linux")]
@@ -48,6 +49,26 @@ impl CaptureGuard {
 
 #[cfg(feature = "std")]
 struct AnyHandler;
+
+fn admin_endpoint(
+    config: &blackhole::AdminConfig,
+) -> Result<Option<(SocketAddr, String)>, ProximaError> {
+    match (&config.listen, &config.token) {
+        (None, None) => Ok(None),
+        (None, Some(_)) => Err(ProximaError::Config(
+            "admin.token requires admin.listen".into(),
+        )),
+        (Some(_), None) => Err(ProximaError::Config(
+            "admin.listen requires admin.token".into(),
+        )),
+        (Some(listen), Some(token)) => {
+            let bind = listen
+                .parse()
+                .map_err(|error| ProximaError::Config(format!("invalid admin.listen: {error}")))?;
+            Ok(Some((bind, token.clone())))
+        }
+    }
+}
 
 #[cfg(target_os = "linux")]
 fn validate_capture(
@@ -198,10 +219,16 @@ async fn main() -> Result<(), ProximaError> {
         .listen
         .parse()
         .map_err(|error| ProximaError::Config(format!("invalid server.listen: {error}")))?;
+    let admin_endpoint = admin_endpoint(&config.admin)?;
     if check_only {
         validate_capture(&config.capture, bind.port())?;
-        Policy::new(config)
-            .map_err(|error| ProximaError::Config(format!("invalid configuration: {error}")))?;
+        let policy =
+            Arc::new(Policy::new(config).map_err(|error| {
+                ProximaError::Config(format!("invalid configuration: {error}"))
+            })?);
+        if let Some((_, token)) = admin_endpoint {
+            authenticated_handle(policy, token)?;
+        }
         println!("configuration valid (listener bind: {bind})");
         return Ok(());
     }
@@ -219,6 +246,22 @@ async fn main() -> Result<(), ProximaError> {
         );
     }
     let policy = Arc::new(policy);
+    let admin_server = if let Some((admin_bind, token)) = admin_endpoint {
+        let handle = authenticated_handle(Arc::clone(&policy), token)?;
+        let server = match Listener::http(admin_bind).handle(handle).serve().await {
+            Ok(server) => server,
+            Err(error) => {
+                if let Some(capture) = capture.as_mut() {
+                    let _ = capture.cleanup();
+                }
+                return Err(error);
+            }
+        };
+        println!("blackhole admin listening on {admin_bind} (HTTP bearer auth)");
+        Some(server)
+    } else {
+        None
+    };
     let server = match Listener::builder()
         .bind(bind)
         .any()
@@ -230,6 +273,9 @@ async fn main() -> Result<(), ProximaError> {
     {
         Ok(server) => server,
         Err(error) => {
+            if let Some(admin_server) = admin_server {
+                admin_server.stop();
+            }
             if let Some(capture) = capture.as_mut() {
                 let _ = capture.cleanup();
             }
@@ -237,7 +283,11 @@ async fn main() -> Result<(), ProximaError> {
         }
     };
     println!("blackhole listening on {bind} (UDP+TCP DNS)");
-    server.run_until_signal().await;
+    if let Some(admin_server) = admin_server {
+        futures::future::join(server.run_until_signal(), admin_server.run_until_signal()).await;
+    } else {
+        server.run_until_signal().await;
+    }
     if let Some(capture) = capture.as_mut() {
         capture.cleanup()?;
     }
