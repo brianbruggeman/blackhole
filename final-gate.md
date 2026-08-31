@@ -19,9 +19,9 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | Resolver fixture | The actual loopback UDP/TCP listener fixture passed. |
 | Capture lifecycle | Planner, rollback, ownership, recovery, and cleanup tests pass. Capture is explicitly opt-in and wired through the shared controller. |
 | Per-client admission | The configured per-client concurrent-request cap rejects a second in-flight request at the limit, releases on completion, and passes the focused unit test. |
-| Response amplification cap | The configured response-ratio cap is validated and applied below the absolute response ceiling; the focused cap test and full 62-test library suite pass. |
+| Response amplification cap | The configured response-ratio cap is validated and applied below the absolute response ceiling; the focused cap test is included in the current 73-test library suite. |
 | Per-client rate limiting | The configured per-second client rate cap sheds the third request in a deterministic focused test, while unidentified callers remain unkeyed and the rate-state table is bounded. |
-| Atomic blocklist reload | A replacement blocklist publishes as one snapshot and an invalid replacement leaves the previous generation active; the focused reload test and 64-test library suite pass. |
+| Atomic blocklist reload | A replacement blocklist publishes as one snapshot and an invalid replacement leaves the previous generation active; the focused reload test is included in the current 73-test library suite. |
 | Cache outcome telemetry | Proxima-native counters record fresh hits, misses, stale serves, and capacity evictions; the deterministic bounded-eviction test passes. |
 | Local DNS rewrites | Bounded A/AAAA rewrites answer pass/observe queries, explicit policy actions override them, and malformed or oversized configuration fails closed. |
 | Per-client abuse breaker | Full all-target suite passed with a focused test covering repeated rate-limit violations opening a temporary bounded breaker while unidentified callers remain unaffected. |
@@ -42,7 +42,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | Performance gate | `cargo run --release --features perf-instrument --example performance_gate` ran three times on Linux x86_64. Allocator data and policy/owned boundaries are measured; listener TCP/encode/transport boundaries are instrumented but were not exercised by this example. No zero-copy or production-performance claim is supported. |
 | Privacy and honeypot terminal | The retention contract is documented in `PRIVACY.md`; retention, redaction, access control, and deletion verification controls are not implemented. |
 | Managed GeoIP/region/ASN policy | Open. The current implementation supports only an explicit operator-supplied country-to-CIDR map; managed database lifecycle and region/ASN sources are not implemented. |
-| Incumbent parity | Pi-hole/AdGuard parity is incomplete: encrypted upstreams, admin/API/UI, DHCP, service profiles, and richer policy controls remain open. |
+| Incumbent parity | Pi-hole/AdGuard parity is incomplete: encrypted upstreams, admin/API/UI, DHCP, and richer policy controls remain open; named service profiles are implemented and tested. |
 
 The open rows must be resolved and rerun with fresh evidence before this file
 can support a release or a completion claim.
