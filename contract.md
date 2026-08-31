@@ -22,6 +22,12 @@ Named service profiles are configuration shorthand for bounded sets of policy
 rules. Their generated rules participate in the same domain, client, qtype,
 qclass, priority, and action precedence contract as explicit rules.
 
+Regular-expression rules are evaluated only when no explicit domain rule
+matches. They use the normalized DNS name without its trailing root dot and
+are bounded at startup by expression count, pattern bytes, and compiled
+program size. Among matching expressions, priority, qclass/qtype/client filter
+specificity, and rule ID determine the winner.
+
 Malformed, response-shaped, flag-invalid, non-single-question, oversized, and
 non-ASCII IDNA names are rejected before policy evaluation. A forward cache is bounded
 by entry count, honors positive record TTLs, applies the configured negative

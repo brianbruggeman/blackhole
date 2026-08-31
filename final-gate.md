@@ -44,6 +44,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | DNS query flag validation | The shared borrowed query boundary and UDP/TCP probes reject AA, TC, RA, Z, and nonzero RCODE bits before policy evaluation; focused and full all-target suites pass. |
 | Blocklist exceptions and subdomains | Bounded blocklist ingestion generates apex and subdomain rules, honors basic AdGuard `@@||domain^` exceptions, and proves normalization/deduplication and fail-closed parsing in the full suite. |
 | Authenticated status endpoint | The existing Proxima bearer-authenticated admin handler exposes bounded non-sensitive status fields; unit and real HTTP listener proofs pass. |
+| Bounded regex policy rules | Regex expressions compile with count, pattern, and program-size bounds; invalid expressions fail closed, filter specificity is deterministic, explicit domain rules win, and focused policy proofs pass. |
 
 ## Evidence still required
 

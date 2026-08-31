@@ -67,6 +67,8 @@ pub enum PolicyError {
     InvalidCountryMap { path: String, reason: String },
     InvalidRewrite { name: String, reason: String },
     InvalidProfile { name: String, reason: String },
+    TooManyRegexRules { max: usize },
+    InvalidRegex { id: u32, reason: String },
 }
 
 impl core::fmt::Display for PolicyError {
@@ -96,6 +98,12 @@ impl core::fmt::Display for PolicyError {
             }
             Self::InvalidProfile { name, reason } => {
                 write!(formatter, "invalid service profile {name}: {reason}")
+            }
+            Self::TooManyRegexRules { max } => {
+                write!(formatter, "regex rule count exceeds {max}")
+            }
+            Self::InvalidRegex { id, reason } => {
+                write!(formatter, "invalid regex rule {id}: {reason}")
             }
         }
     }

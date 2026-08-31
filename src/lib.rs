@@ -54,6 +54,9 @@ mod runtime {
     const MAX_UPSTREAM_OUTSTANDING: usize = 4096;
     const MAX_UPSTREAM_ATTEMPTS: u32 = 8;
     const MAX_UPSTREAM_TIMEOUT_MS: u64 = 60_000;
+    const MAX_REGEX_RULES: usize = 4096;
+    const MAX_REGEX_PATTERN_BYTES: usize = 4096;
+    const MAX_REGEX_PROGRAM_BYTES: usize = 1 << 20;
 
     #[derive(Debug, Clone, Deserialize, Default)]
     pub struct Config {
@@ -491,6 +494,8 @@ mod runtime {
         #[serde(default)]
         pub rules: Vec<RuleConfig>,
         #[serde(default)]
+        pub regex_rules: Vec<RegexRuleConfig>,
+        #[serde(default)]
         pub blocklists: Vec<String>,
         #[serde(default)]
         pub rewrites: Vec<RewriteConfig>,
@@ -505,12 +510,28 @@ mod runtime {
                 mode: default_mode(),
                 domains: Vec::new(),
                 rules: Vec::new(),
+                regex_rules: Vec::new(),
                 blocklists: Vec::new(),
                 rewrites: Vec::new(),
                 profiles: Vec::new(),
                 default_action: default_action(),
             }
         }
+    }
+
+    #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+    pub struct RegexRuleConfig {
+        pub id: u32,
+        pub pattern: String,
+        pub action: Action,
+        #[serde(default)]
+        pub priority: i32,
+        #[serde(default)]
+        pub qtype: Option<u16>,
+        #[serde(default)]
+        pub qclass: Option<u16>,
+        #[serde(default)]
+        pub client: Option<IpAddr>,
     }
 
     #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -1045,6 +1066,7 @@ mod runtime {
         country_policy: Option<CountryPolicy>,
         rewrites: RewriteTable,
         reference: PolicyStore,
+        regex_rules: Vec<RegexRule>,
         rules_configured: AtomicBool,
         telemetry: Option<TelemetryHandle>,
         upstream: Option<DnsClientUpstream>,
@@ -1056,6 +1078,16 @@ mod runtime {
         client_rates: Arc<Mutex<HashMap<IpAddr, ClientRate>>>,
         client_response_budgets: Arc<Mutex<HashMap<IpAddr, ClientResponseBudget>>>,
         client_abuse: Arc<Mutex<HashMap<IpAddr, ClientAbuse>>>,
+    }
+
+    struct RegexRule {
+        id: u32,
+        pattern: regex::Regex,
+        action: Action,
+        priority: i32,
+        qtype: Option<u16>,
+        qclass: Option<u16>,
+        client: Option<IpAddr>,
     }
 
     impl Policy {
@@ -1120,6 +1152,44 @@ mod runtime {
             let country_policy = load_country_policy(&config.country_policy)?;
             let rewrites = compile_rewrites(&config.policy.rewrites)?;
             config.policy.rules.extend(blocklist_rules);
+            if config.policy.regex_rules.len() > MAX_REGEX_RULES {
+                return Err(policy::PolicyError::TooManyRegexRules {
+                    max: MAX_REGEX_RULES,
+                });
+            }
+            let mut rule_ids = BTreeSet::new();
+            for rule in &config.policy.rules {
+                rule_ids.insert(rule.id);
+            }
+            let mut regex_rules = Vec::with_capacity(config.policy.regex_rules.len());
+            for rule in &config.policy.regex_rules {
+                if rule.pattern.len() > MAX_REGEX_PATTERN_BYTES {
+                    return Err(policy::PolicyError::InvalidRegex {
+                        id: rule.id,
+                        reason: format!("pattern exceeds {MAX_REGEX_PATTERN_BYTES} bytes"),
+                    });
+                }
+                if !rule_ids.insert(rule.id) {
+                    return Err(policy::PolicyError::DuplicateRule { id: rule.id });
+                }
+                let pattern = regex::RegexBuilder::new(&rule.pattern)
+                    .size_limit(MAX_REGEX_PROGRAM_BYTES)
+                    .dfa_size_limit(MAX_REGEX_PROGRAM_BYTES)
+                    .build()
+                    .map_err(|error| policy::PolicyError::InvalidRegex {
+                        id: rule.id,
+                        reason: error.to_string(),
+                    })?;
+                regex_rules.push(RegexRule {
+                    id: rule.id,
+                    pattern,
+                    action: rule.action,
+                    priority: rule.priority,
+                    qtype: rule.qtype,
+                    qclass: rule.qclass,
+                    client: rule.client,
+                });
+            }
             config.policy.domains = config.policy.domains.into_iter().map(normalize).collect();
             let reference = PolicyStore::new(&config.policy.rules)?;
             let cache = Arc::new(Mutex::new(DnsCache::new(&config.cache)));
@@ -1138,13 +1208,15 @@ mod runtime {
                         upstream.breaker_cooldown_secs
                     }),
             )));
-            let rules_configured = !config.policy.rules.is_empty();
+            let rules_configured =
+                !config.policy.rules.is_empty() || !config.policy.regex_rules.is_empty();
             let policy = Self {
                 config,
                 base_rules: Mutex::new(base_rules),
                 country_policy,
                 rewrites,
                 reference,
+                regex_rules,
                 rules_configured: AtomicBool::new(rules_configured),
                 telemetry: None,
                 upstream: None,
@@ -1178,8 +1250,10 @@ mod runtime {
         ) -> Result<ReloadState, policy::PolicyError> {
             let published = self.reference.reload(rules)?;
             *self.base_rules.lock().expect("base rules lock") = rules.to_vec();
-            self.rules_configured
-                .store(!rules.is_empty(), Ordering::Release);
+            self.rules_configured.store(
+                !rules.is_empty() || !self.regex_rules.is_empty(),
+                Ordering::Release,
+            );
             self.cache.lock().expect("cache lock").clear();
             Ok(published)
         }
@@ -1192,8 +1266,10 @@ mod runtime {
             let mut rules = self.base_rules.lock().expect("base rules lock").clone();
             rules.extend(load_blocklists(&self.config.policy.blocklists)?);
             let published = self.reference.reload(&rules)?;
-            self.rules_configured
-                .store(!rules.is_empty(), Ordering::Release);
+            self.rules_configured.store(
+                !rules.is_empty() || !self.regex_rules.is_empty(),
+                Ordering::Release,
+            );
             self.cache.lock().expect("cache lock").clear();
             Ok(published)
         }
@@ -1294,13 +1370,16 @@ mod runtime {
             query: &proxima_dns::DnsQuery,
             client: Option<std::net::IpAddr>,
         ) -> Option<policy::Decision> {
-            self.reference.read(|reference| {
+            let reference = self.reference.read(|reference| {
                 reference.decide(QueryContext {
                     name: &query.name,
                     qtype: query.qtype,
                     qclass: query.qclass,
                     client,
                 })
+            });
+            reference.or_else(|| {
+                self.regex_decision(&normalize(&query.name), query.qtype, query.qclass, client)
             })
         }
 
@@ -1628,17 +1707,50 @@ mod runtime {
                     Mode::Honeypot => Action::Honeypot,
                 };
             }
-            self.reference
-                .read(|reference| {
-                    reference.decide(QueryContext {
-                        name: &name,
-                        qtype: query.qtype,
-                        qclass: query.qclass,
-                        client,
-                    })
+            let reference = self.reference.read(|reference| {
+                reference.decide(QueryContext {
+                    name: &name,
+                    qtype: query.qtype,
+                    qclass: query.qclass,
+                    client,
+                })
+            });
+            reference
+                .or_else(|| {
+                    self.regex_decision(&normalize(&name), query.qtype, query.qclass, client)
                 })
                 .map_or(self.config.policy.default_action, |decision| {
                     decision.action
+                })
+        }
+
+        fn regex_decision(
+            &self,
+            name: &str,
+            qtype: u16,
+            qclass: u16,
+            client: Option<IpAddr>,
+        ) -> Option<policy::Decision> {
+            self.regex_rules
+                .iter()
+                .filter(|rule| {
+                    rule.pattern.is_match(name)
+                        && rule.qtype.is_none_or(|value| value == qtype)
+                        && rule.qclass.is_none_or(|value| value == qclass)
+                        && rule.client.is_none_or(|value| Some(value) == client)
+                })
+                .max_by_key(|rule| {
+                    (
+                        rule.priority,
+                        u8::from(rule.qclass.is_some()),
+                        u8::from(rule.qtype.is_some()),
+                        u8::from(rule.client.is_some()),
+                        rule.id,
+                    )
+                })
+                .map(|rule| policy::Decision {
+                    rule_id: rule.id,
+                    action: rule.action,
                 })
         }
         fn matches(&self, name: &str) -> bool {
@@ -2675,6 +2787,120 @@ mod runtime {
             assert_eq!(cache.entries.len(), 1);
             assert!(cache.fresh(&first).is_none());
             assert_eq!(cache.fresh(&second), Some(DnsAnswer::name_error()));
+        }
+
+        #[test]
+        fn regex_rules_block_matching_names_and_honor_filters() {
+            let mut config = Config::default();
+            config.policy.default_action = Action::Pass;
+            config.policy.regex_rules = vec![RegexRuleConfig {
+                id: 77,
+                pattern: r"(^|\.)ads[0-9]*\.example$".into(),
+                action: Action::Nxdomain,
+                priority: 4,
+                qtype: Some(1),
+                qclass: Some(1),
+                client: None,
+            }];
+            let policy = Policy::new(config).expect("valid regex rule");
+            let query = |name: &str, qtype: u16| proxima_dns::DnsQuery {
+                id: 1,
+                recursion_desired: true,
+                name: name.into(),
+                qtype,
+                qclass: 1,
+            };
+            assert_eq!(policy.evaluate(&query("ads.example.", 1)).unwrap().rcode, 3);
+            assert_eq!(
+                policy.evaluate(&query("ads2.example.", 1)).unwrap().rcode,
+                3
+            );
+            assert_eq!(
+                policy.evaluate(&query("ads.example.", 28)).unwrap().rcode,
+                0
+            );
+            assert_eq!(policy.evaluate(&query("badexample.", 1)).unwrap().rcode, 0);
+            let mut wire = Vec::new();
+            proxima_protocols::dns::encode::encode_query(
+                7,
+                true,
+                proxima_protocols::dns::encode::EncodeQuestion {
+                    name: "ads.example.",
+                    qtype: 1,
+                    qclass: 1,
+                },
+                &mut wire,
+            )
+            .expect("encode regex query");
+            let view = QueryView::parse(&wire).expect("parse regex query");
+            assert_eq!(policy.action_for_view(view), Action::Nxdomain);
+        }
+
+        #[test]
+        fn explicit_domain_rules_win_over_matching_regex_rules() {
+            let mut config = Config::default();
+            config.policy.default_action = Action::Pass;
+            config.policy.rules = vec![RuleConfig {
+                id: 1,
+                domain: "ads.example".into(),
+                action: Action::Pass,
+                priority: 0,
+                qtype: None,
+                qclass: None,
+                client: None,
+                client_cidr: None,
+            }];
+            config.policy.regex_rules = vec![RegexRuleConfig {
+                id: 2,
+                pattern: r"(^|\.)ads\.example$".into(),
+                action: Action::Nxdomain,
+                priority: 100,
+                qtype: None,
+                qclass: None,
+                client: None,
+            }];
+            let policy = Policy::new(config).expect("valid mixed policy");
+            let query = proxima_dns::DnsQuery {
+                id: 1,
+                recursion_desired: true,
+                name: "ads.example.".into(),
+                qtype: 1,
+                qclass: 1,
+            };
+            assert_eq!(policy.evaluate(&query).unwrap().rcode, 0);
+        }
+
+        #[test]
+        fn regex_rules_reject_invalid_or_oversized_patterns() {
+            let mut invalid = Config::default();
+            invalid.policy.regex_rules = vec![RegexRuleConfig {
+                id: 1,
+                pattern: "[".into(),
+                action: Action::Drop,
+                priority: 0,
+                qtype: None,
+                qclass: None,
+                client: None,
+            }];
+            assert!(matches!(
+                Policy::new(invalid),
+                Err(policy::PolicyError::InvalidRegex { id: 1, .. })
+            ));
+
+            let mut oversized = Config::default();
+            oversized.policy.regex_rules = vec![RegexRuleConfig {
+                id: 2,
+                pattern: "x".repeat(MAX_REGEX_PATTERN_BYTES + 1),
+                action: Action::Drop,
+                priority: 0,
+                qtype: None,
+                qclass: None,
+                client: None,
+            }];
+            assert!(matches!(
+                Policy::new(oversized),
+                Err(policy::PolicyError::InvalidRegex { id: 2, .. })
+            ));
         }
 
         #[test]

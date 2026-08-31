@@ -52,8 +52,8 @@ below are future capabilities, grouped by the dependency layer they extend.
   and deletion.
 - Extend the authenticated admin API with an optional web UI and optional DHCP
   adapter.
-- Add the remaining Pi-hole/AdGuard Home policy features, including regex
-  blocking and richer client/group controls.
+- Add the remaining Pi-hole/AdGuard Home policy features, including richer
+  client/group controls.
 - Add a separately isolated honeypot terminal with explicit retention and
   access controls.
 - Add a measured policy/codec WASM edge experiment while retaining scalar

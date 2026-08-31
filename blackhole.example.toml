@@ -49,6 +49,14 @@ domains = ["ads.example", "telemetry.example"]
 action = "nxdomain"
 priority = 10
 
+# Optional bounded regular-expression rule. Expressions match the normalized
+# DNS name without its trailing root dot; explicit domain rules win first.
+[[policy.regex_rules]]
+id = 50000
+pattern = "(^|\\.)tracking[0-9]*\\.example$"
+action = "nxdomain"
+priority = 10
+
 [upstream]
 # IP literal only; no hostname lookup is performed.
 resolver_ip = "1.1.1.1"

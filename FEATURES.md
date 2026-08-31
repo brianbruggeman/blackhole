@@ -12,6 +12,9 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Rule-table matching with explicit actions, stable rule identity, priority,
   exact/deep-wildcard specificity, exact-client and CIDR network scopes, qtype,
   and qclass filters.
+- Bounded regular-expression policy rules with startup compilation limits,
+  qtype/qclass/client filters, deterministic priority, and explicit domain-rule
+  precedence.
 - Rule-table authority when rules are configured; legacy settings do not
   silently take over.
 - Bounded Pi-hole/AdGuard-compatible blocklist ingestion from hosts/domain files
