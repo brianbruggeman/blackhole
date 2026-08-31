@@ -1234,9 +1234,13 @@ mod runtime {
                     reason: "server.listen must be a socket address before configuring upstream"
                         .into(),
                 })?;
-            if resolver == listener {
+            let same_listener_endpoint = resolver == listener
+                || (resolver.port() == listener.port()
+                    && listener.ip().is_unspecified()
+                    && resolver_ip.is_ipv4() == listener.ip().is_ipv4());
+            if same_listener_endpoint {
                 return Err(policy::PolicyError::InvalidUpstream {
-                    reason: "upstream must not equal server.listen".into(),
+                    reason: "upstream must not resolve to the listener endpoint".into(),
                 });
             }
             Ok(())
@@ -2386,6 +2390,38 @@ mod runtime {
             let config = Config {
                 upstream: Some(UpstreamConfig {
                     query_timeout_ms: MAX_UPSTREAM_TIMEOUT_MS + 1,
+                    ..UpstreamConfig::default()
+                }),
+                ..Config::default()
+            };
+            assert!(matches!(
+                Policy::new(config),
+                Err(policy::PolicyError::InvalidUpstream { .. })
+            ));
+
+            let config = Config {
+                server: ServerConfig {
+                    listen: "0.0.0.0:5353".into(),
+                },
+                upstream: Some(UpstreamConfig {
+                    resolver_ip: "127.0.0.1".into(),
+                    port: 5353,
+                    ..UpstreamConfig::default()
+                }),
+                ..Config::default()
+            };
+            assert!(matches!(
+                Policy::new(config),
+                Err(policy::PolicyError::InvalidUpstream { .. })
+            ));
+
+            let config = Config {
+                server: ServerConfig {
+                    listen: "[::]:5353".into(),
+                },
+                upstream: Some(UpstreamConfig {
+                    resolver_ip: "::1".into(),
+                    port: 5353,
                     ..UpstreamConfig::default()
                 }),
                 ..Config::default()
