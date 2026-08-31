@@ -81,3 +81,10 @@ It provides `GET /health`, authenticated `GET /status`, `POST /reload/blocklists
 `POST /reload/regex` (a JSON array of regex rule objects). Send the token
 as a Bearer credential; keep the configuration file readable only by the
 service user.
+
+For a hardened Linux local-network deployment, install the example unit at
+`deploy/systemd/blackhole.service`, create the `blackhole` service account,
+place configuration at `/etc/blackhole/blackhole.toml`, and grant only
+`CAP_NET_BIND_SERVICE` when listening on port 53. Capture remains disabled in
+this unit and must be installed through the separately authorized platform
+capture step.

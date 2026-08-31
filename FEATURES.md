@@ -78,6 +78,9 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Explicit opt-in capture configuration wires the shared controller to the
   native platform backend, recovers ownership before install, and cleans up
   after orderly shutdown.
+- A hardened Linux systemd deployment unit runs the resolver as a dedicated
+  service user with bounded state access and only low-port bind capability;
+  firewall capture remains a separate opt-in operation.
 - Linux builds expose an explicit `nft` command capability; macOS builds
   expose the corresponding `pfctl` capability without including either
   privileged backend in the policy core.

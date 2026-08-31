@@ -1,0 +1,29 @@
+[Unit]
+Description=Blackhole policy-driven DNS sinkhole
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=blackhole
+Group=blackhole
+ExecStart=/usr/local/bin/blackhole /etc/blackhole/blackhole.toml
+Restart=on-failure
+RestartSec=2s
+
+# The default local-network service does not install capture rules. Keep
+# firewall setup in the separately authorized operator step.
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/blackhole
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
