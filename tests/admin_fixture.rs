@@ -1,7 +1,6 @@
 use std::io;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU16, Ordering};
 
 use blackhole::admin::authenticated_handle;
 use blackhole::{Config, Policy};
@@ -10,15 +9,11 @@ use proxima::StreamUpstreamExt;
 use proxima::{Listener, ListenerBuilderEntry};
 use proxima_net::prime::PrimeTcpUpstream;
 
-static NEXT_ADMIN_SLOT: AtomicU16 = AtomicU16::new(0);
-
 fn admin_addr() -> SocketAddr {
-    let process_slot = (std::process::id() % 19_000) as u16;
-    let slot = NEXT_ADMIN_SLOT.fetch_add(1, Ordering::Relaxed) % 20;
-    SocketAddr::new(
-        IpAddr::V4(Ipv4Addr::LOCALHOST),
-        45_000 + process_slot + slot,
-    )
+    std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .expect("reserve an ephemeral admin port")
+        .local_addr()
+        .expect("ephemeral admin address")
 }
 
 async fn request(
