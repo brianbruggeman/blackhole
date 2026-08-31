@@ -1,8 +1,9 @@
 //! Deterministic reference policy matcher.
 
+use alloc::collections::BTreeMap;
+use alloc::{borrow::ToOwned, string::String, vec::Vec};
+use core::net::IpAddr;
 use serde::Deserialize;
-use std::collections::BTreeMap;
-use std::net::IpAddr;
 
 pub const MAX_RULES: usize = 100_000;
 pub const MAX_DOMAIN_BYTES: usize = 253;

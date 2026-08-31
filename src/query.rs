@@ -84,6 +84,7 @@ impl<'packet> QueryView<'packet> {
 
     /// Materialize the business-layer query only after wire validation and
     /// policy matching have had the opportunity to use this borrowed view.
+    #[cfg(feature = "std")]
     #[must_use]
     pub fn to_owned(self) -> proxima_dns::DnsQuery {
         proxima_dns::DnsQuery {

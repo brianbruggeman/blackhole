@@ -1,14 +1,26 @@
+#![cfg(feature = "std")]
+
+#[cfg(feature = "std")]
 use blackhole::listener::{TcpProtocol, UdpProtocol};
+#[cfg(feature = "std")]
 use blackhole::{Config, Policy};
+#[cfg(feature = "std")]
 use bytes::Bytes;
+#[cfg(feature = "std")]
 use proxima::pipe::into_handle;
+#[cfg(feature = "std")]
 use proxima::{Listener, ListenerBuilderEntry, ProximaError};
+#[cfg(feature = "std")]
 use proxima::{Request, Response, SendPipe};
+#[cfg(feature = "std")]
 use proxima_net::prime::PrimeDatagramFactory;
+#[cfg(feature = "std")]
 use std::{env, net::SocketAddr, path::Path, sync::Arc};
 
+#[cfg(feature = "std")]
 struct AnyHandler;
 
+#[cfg(feature = "std")]
 impl SendPipe for AnyHandler {
     type In = Request<Bytes>;
     type Out = Response<Bytes>;
@@ -19,6 +31,7 @@ impl SendPipe for AnyHandler {
     }
 }
 
+#[cfg(feature = "std")]
 #[proxima::main]
 async fn main() -> Result<(), ProximaError> {
     let explicit_config_path = env::args().nth(1);
