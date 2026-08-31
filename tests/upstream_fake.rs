@@ -153,7 +153,7 @@ fn resolver_addr() -> SocketAddr {
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 53)), 53)
 }
 
-fn policy(mode: ReplyMode) -> Policy {
+fn policy(mode: ReplyMode) -> (Policy, FakeSocket) {
     let mut config = Config::default();
     config.policy.rules = vec![RuleConfig {
         id: 1,
@@ -172,9 +172,10 @@ fn policy(mode: ReplyMode) -> Policy {
         ..UpstreamConfig::default()
     });
     let upstream = config.upstream.clone().expect("upstream config");
-    Policy::new(config).expect("valid config").with_upstream(
+    let socket = FakeSocket::new(mode);
+    let policy = Policy::new(config).expect("valid config").with_upstream(
         Arc::new(FakeFactory {
-            socket: FakeSocket::new(mode),
+            socket: socket.clone(),
         }),
         DnsResolverConfig::builder()
             .resolver_ip(upstream.resolver_ip)
@@ -183,7 +184,8 @@ fn policy(mode: ReplyMode) -> Policy {
             .max_attempts(upstream.max_attempts)
             .build(),
         upstream.max_outstanding,
-    )
+    );
+    (policy, socket)
 }
 
 fn request() -> proxima_dns::DnsPipeRequest {
@@ -208,31 +210,48 @@ fn request() -> proxima_dns::DnsPipeRequest {
 
 #[proxima::test]
 async fn fake_upstream_success_flows_through_policy() {
-    let answer = policy(ReplyMode::Valid).call(request()).await.unwrap();
+    let (policy, _) = policy(ReplyMode::Valid);
+    let answer = policy.call(request()).await.unwrap();
     assert_eq!(answer.payload.rcode, 0);
     assert_eq!(answer.payload.records.len(), 1);
 }
 
 #[proxima::test]
 async fn fake_upstream_malformed_reply_fails_closed() {
-    let result = policy(ReplyMode::Malformed).call(request()).await;
+    let (policy, _) = policy(ReplyMode::Malformed);
+    let result = policy.call(request()).await;
     assert!(result.is_err());
 }
 
 #[proxima::test]
 async fn fake_upstream_wrong_id_fails_closed() {
-    let result = policy(ReplyMode::WrongId).call(request()).await;
+    let (policy, _) = policy(ReplyMode::WrongId);
+    let result = policy.call(request()).await;
     assert!(result.is_err());
 }
 
 #[proxima::test]
 async fn fake_upstream_spoofed_sender_fails_closed() {
-    let result = policy(ReplyMode::WrongSender).call(request()).await;
+    let (policy, _) = policy(ReplyMode::WrongSender);
+    let result = policy.call(request()).await;
     assert!(result.is_err());
 }
 
 #[proxima::test]
 async fn fake_upstream_timeout_fails_closed() {
-    let result = policy(ReplyMode::Timeout).call(request()).await;
+    let (policy, _) = policy(ReplyMode::Timeout);
+    let result = policy.call(request()).await;
     assert!(result.is_err());
+}
+
+#[proxima::test]
+async fn fake_upstream_cache_hit_avoids_a_second_exchange() {
+    let (policy, socket) = policy(ReplyMode::Valid);
+    policy.call(request()).await.expect("first exchange");
+    policy.call(request()).await.expect("cached exchange");
+    assert_eq!(
+        socket.state.lock().expect("fake state").sent.len(),
+        1,
+        "fresh cache entry must avoid a second upstream query"
+    );
 }
