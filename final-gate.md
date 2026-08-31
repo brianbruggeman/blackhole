@@ -11,7 +11,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | Compilation | `cargo check --offline --all-targets` passed with Proxima from GitHub revision `0652a0c0`. |
 | Unit and integration tests | `cargo test --offline --all-targets` passed: 73 library tests, 3 real loopback UDP/TCP resolver fixture tests, and 8 fake-upstream tests against GitHub Proxima revision `0652a0c0`. |
 | Cache failure behavior | `fake_upstream_servfail_is_not_cached` passed at `3e463c8`; SERVFAIL caused two upstream exchanges. |
-| Nextest | `cargo nextest run --offline --workspace` passed: 68 tests at `794caa5`. |
+| Nextest | `cargo nextest run --offline --workspace` passed: 84 tests, 84 passed, 0 skipped, against GitHub Proxima revision `0652a0c0`. |
 | Doctests | `cargo test --doc --offline` passed: 1 doctest. |
 | No-std and WASM | `cargo check --offline --no-default-features` passed for `thumbv7m-none-eabi` and `wasm32-unknown-unknown` after the response-size work. |
 | Dependency audit | `cargo audit --no-fetch` passed with one allowed warning: unmaintained `paste` (`RUSTSEC-2024-0436`). The fuzz lockfile audit also passed. |
