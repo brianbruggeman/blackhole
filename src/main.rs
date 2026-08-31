@@ -1,15 +1,15 @@
+use blackhole::listener::{TcpProtocol, UdpProtocol};
 use blackhole::{Config, Policy};
 use bytes::Bytes;
 use proxima::pipe::into_handle;
-use proxima::{Listener, ListenerBuilderEntry, ListenerProtocolExt, ProximaError};
+use proxima::{Listener, ListenerBuilderEntry, ProximaError};
 use proxima::{Request, Response, SendPipe};
-use proxima_dns::into_dns_handle;
 use proxima_net::prime::PrimeDatagramFactory;
 use std::{env, net::SocketAddr, path::Path, sync::Arc};
 
-struct Passthrough;
+struct AnyHandler;
 
-impl SendPipe for Passthrough {
+impl SendPipe for AnyHandler {
     type In = Request<Bytes>;
     type Out = Response<Bytes>;
     type Err = ProximaError;
@@ -33,7 +33,6 @@ async fn main() -> Result<(), ProximaError> {
         .listen
         .parse()
         .map_err(|error| ProximaError::Config(format!("invalid server.listen: {error}")))?;
-    let mode = config.policy.mode;
     let upstream = config.upstream.clone();
     let mut policy = Policy::new(config)
         .map_err(|error| ProximaError::Config(format!("invalid policy rule: {error}")))?;
@@ -45,13 +44,16 @@ async fn main() -> Result<(), ProximaError> {
             upstream.max_outstanding,
         );
     }
+    let policy = Arc::new(policy);
     let server = Listener::builder()
         .bind(bind)
-        .dns(into_dns_handle(policy))
-        .handle(into_handle(Passthrough))
+        .any()
+        .protocol(UdpProtocol::new(Arc::clone(&policy)))
+        .protocol(TcpProtocol::new(Arc::clone(&policy)))
+        .handle(into_handle(AnyHandler))
         .serve()
         .await?;
-    println!("blackhole listening on {bind} (mode={mode:?}, UDP+TCP DNS)");
+    println!("blackhole listening on {bind} (UDP+TCP DNS)");
     server.run_until_signal().await;
     Ok(())
 }

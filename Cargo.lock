@@ -239,10 +239,12 @@ dependencies = [
  "proxima",
  "proxima-core",
  "proxima-dns",
+ "proxima-listen",
  "proxima-net",
  "proxima-primitives",
  "proxima-protocols",
  "serde",
+ "serde_json",
  "toml",
 ]
 

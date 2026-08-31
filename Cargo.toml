@@ -13,7 +13,9 @@ proxima = { git = "https://github.com/brianbruggeman/proxima.git", default-featu
 proxima-core = { git = "https://github.com/brianbruggeman/proxima.git", default-features = false, features = ["live", "std"], version = "0.1.0" }
 proxima-dns = { git = "https://github.com/brianbruggeman/proxima.git", default-features = false, features = ["client", "listen"], version = "0.1.0" }
 proxima-net = { git = "https://github.com/brianbruggeman/proxima.git", default-features = false, features = ["prime"], version = "0.1.0" }
+proxima-listen = { git = "https://github.com/brianbruggeman/proxima.git", default-features = false, features = ["framed-any"], version = "0.1.0" }
 proxima-primitives = { git = "https://github.com/brianbruggeman/proxima.git", default-features = false, features = ["alloc", "std"] }
 proxima-protocols = { git = "https://github.com/brianbruggeman/proxima.git", default-features = false, features = ["dns", "alloc", "std"] }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 toml = "0.8"
