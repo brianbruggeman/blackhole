@@ -53,6 +53,7 @@ priority = 10
 resolver_ip = "1.1.1.1"
 port = 53
 query_timeout_ms = 2000
+# Retries are bounded to eight attempts per exchange.
 max_attempts = 2
 max_outstanding = 64
 # Open the upstream circuit after this many consecutive failures.

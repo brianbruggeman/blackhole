@@ -52,6 +52,7 @@ mod runtime {
     use crate::{Action, RuleConfig};
 
     const MAX_UPSTREAM_OUTSTANDING: usize = 4096;
+    const MAX_UPSTREAM_ATTEMPTS: u32 = 8;
 
     #[derive(Debug, Clone, Deserialize, Default)]
     pub struct Config {
@@ -1198,12 +1199,13 @@ mod runtime {
                 });
             }
             if upstream.max_attempts == 0
+                || upstream.max_attempts > MAX_UPSTREAM_ATTEMPTS
                 || upstream.max_outstanding == 0
                 || upstream.max_outstanding > MAX_UPSTREAM_OUTSTANDING
             {
                 return Err(policy::PolicyError::InvalidUpstream {
                     reason: format!(
-                        "max_attempts and max_outstanding must be non-zero; max_outstanding must be at most {MAX_UPSTREAM_OUTSTANDING}"
+                        "max_attempts must be between 1 and {MAX_UPSTREAM_ATTEMPTS}; max_outstanding must be between 1 and {MAX_UPSTREAM_OUTSTANDING}"
                     ),
                 });
             }
@@ -2342,6 +2344,18 @@ mod runtime {
             let config = Config {
                 upstream: Some(UpstreamConfig {
                     max_outstanding: MAX_UPSTREAM_OUTSTANDING + 1,
+                    ..UpstreamConfig::default()
+                }),
+                ..Config::default()
+            };
+            assert!(matches!(
+                Policy::new(config),
+                Err(policy::PolicyError::InvalidUpstream { .. })
+            ));
+
+            let config = Config {
+                upstream: Some(UpstreamConfig {
+                    max_attempts: MAX_UPSTREAM_ATTEMPTS + 1,
                     ..UpstreamConfig::default()
                 }),
                 ..Config::default()
