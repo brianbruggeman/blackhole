@@ -41,7 +41,8 @@ impl CaptureContext {
 pub struct NftRulePlan {
     pub table: String,
     pub chain: String,
-    pub listen_port: u16,
+    pub inbound_port: u16,
+    pub redirect_port: u16,
     pub mark: u32,
 }
 
@@ -51,16 +52,26 @@ impl NftRulePlan {
         listen_port: u16,
         mark: u32,
     ) -> Result<Self, CaptureError> {
+        Self::for_ports(chain, listen_port, listen_port, mark)
+    }
+
+    pub fn for_ports(
+        chain: impl Into<String>,
+        inbound_port: u16,
+        redirect_port: u16,
+        mark: u32,
+    ) -> Result<Self, CaptureError> {
         let plan = Self {
             table: "blackhole".into(),
             chain: chain.into(),
-            listen_port,
+            inbound_port,
+            redirect_port,
             mark,
         };
         if plan.chain.is_empty() || plan.chain.len() > MAX_CHAIN_BYTES || !plan.chain.is_ascii() {
             return Err(CaptureError::Bound("chain"));
         }
-        if plan.listen_port == 0 || plan.mark == 0 {
+        if plan.inbound_port == 0 || plan.redirect_port == 0 || plan.mark == 0 {
             return Err(CaptureError::InvalidPlan);
         }
         Ok(plan)
@@ -71,15 +82,15 @@ impl NftRulePlan {
     #[must_use]
     pub fn render(&self) -> String {
         format!(
-            "table inet {} {{\n  chain {} {{\n    type filter hook prerouting priority -150; policy accept;\n    tcp dport {} meta mark set {} redirect to :{}\n    udp dport {} meta mark set {} redirect to :{}\n  }}\n}}\n",
+            "table inet {} {{\n  chain {} {{\n    type nat hook prerouting priority dstnat; policy accept;\n    tcp dport {} meta mark set {} redirect to :{}\n    udp dport {} meta mark set {} redirect to :{}\n  }}\n}}\n",
             self.table,
             self.chain,
-            self.listen_port,
+            self.inbound_port,
             self.mark,
-            self.listen_port,
-            self.listen_port,
+            self.redirect_port,
+            self.inbound_port,
             self.mark,
-            self.listen_port,
+            self.redirect_port,
         )
     }
 }
@@ -227,8 +238,18 @@ mod tests {
         let plan = NftRulePlan::new("capture", 5353, 42).unwrap();
         assert_eq!(
             plan.render(),
-            "table inet blackhole {\n  chain capture {\n    type filter hook prerouting priority -150; policy accept;\n    tcp dport 5353 meta mark set 42 redirect to :5353\n    udp dport 5353 meta mark set 42 redirect to :5353\n  }\n}\n"
+            "table inet blackhole {\n  chain capture {\n    type nat hook prerouting priority dstnat; policy accept;\n    tcp dport 5353 meta mark set 42 redirect to :5353\n    udp dport 5353 meta mark set 42 redirect to :5353\n  }\n}\n"
         );
+    }
+
+    #[test]
+    fn dns_capture_can_match_port_53_and_redirect_to_the_listener() {
+        let plan = NftRulePlan::for_ports("capture", 53, 5353, 42).unwrap();
+        let rendered = plan.render();
+        assert!(rendered.contains("type nat hook prerouting priority dstnat"));
+        assert!(rendered.contains("tcp dport 53"));
+        assert!(rendered.contains("udp dport 53"));
+        assert!(rendered.contains("redirect to :5353"));
     }
 
     #[test]
