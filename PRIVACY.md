@@ -13,8 +13,8 @@ DNS edge and is a prerequisite for any future honeypot terminal.
   packet bytes.
 - The optional Proxima recording sink receives only action, qtype, and qclass
   metadata. The executable may append the same events to the configured
-  `privacy.query_recording_path`; operators must enforce rotation, retention,
-  and deletion policy before enabling it. Blackhole enforces the configured
+  `privacy.query_recording_path`; operators must choose an appropriate
+  retention bound before enabling it. Blackhole enforces the configured
   `privacy.query_recording_max_bytes` ceiling and never supplies
   query names, client identity, credentials, or packet bytes to that sink.
 - The bounded fuzz corpus contains only synthetic/minimized wire samples and
@@ -33,7 +33,9 @@ DNS edge and is a prerequisite for any future honeypot terminal.
   store and is cleared on process exit.
 - The optional JSONL recording destination is a durable decision audit, not a
   honeypot terminal. It contains no query names, client identity, credentials,
-  or wire payloads, and Blackhole does not rotate or delete it.
+  or wire payloads. When explicitly enabled, bounded startup rotation retains
+  at most the configured number of old files, deletes only the oldest exact
+  path, and verifies that deletion before opening the active destination.
 - Country-policy classification uses adapter-owned client addresses against an
   operator-supplied CIDR map. It is an operational classification signal, not
   identity, attribution, authentication, or a substitute for network-level

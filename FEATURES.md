@@ -174,6 +174,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   event shape, retain only timestamp/action/qtype/qclass metadata, enforce
   entry and age limits, cap the authenticated inspection projection, and
   support authenticated deletion; logging is disabled by default.
+- Optional durable Proxima JSONL decision recording can rotate the active file
+  at startup with a bounded number of retained generations and verifies oldest
+  generation deletion before continuing.
 - A tested policy/FSM/snapshot core that does not require privileged capture
   APIs.
 - A pure `blackhole::edge` parse-and-policy entry point that preserves the

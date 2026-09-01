@@ -151,7 +151,10 @@ length, each file, and aggregate file bytes before touching the live snapshot.
 `POST /reload/blocklists/replace` atomically replaces the blocklist source path
 set and preserves the previous sources and rules if a replacement fails.
 `GET /privacy/status` exposes only privacy-recording enablement and configured
-limits; it does not expose recording paths, names, clients, or payloads.
+limits; it does not expose recording paths, names, clients, or payloads. When
+`privacy.query_recording_rotation_enabled = true`, startup rotates an oversized
+Proxima JSONL decision log into a bounded number of numbered generations and
+verifies deletion of the exact oldest generation before opening the active file.
 `GET /policy/status` includes a monotonic `policy_generation` that advances
 once for each successful publication and does not advance on rejected input.
 Send the token
