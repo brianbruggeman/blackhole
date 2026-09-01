@@ -166,6 +166,8 @@ and `POST /logs/clear`, `POST /cache/clear`, `POST /reload/blocklists`, bounded
 `POST /reload/admission` (a bounded JSON admission configuration; the global
 in-flight capacity remains startup-only), bounded
 `POST /reload/country`, bounded `POST /reload/policy` (a JSON array of complete rule objects), bounded
+`POST /reload/country/replace` (an atomic country/CIDR selector and map
+configuration replacement), bounded
 `POST /reload/policy/add` (a non-empty JSON array appended atomically to the current domain rules), bounded
 `POST /reload/policy/upsert` (a non-empty JSON array that replaces or adds rules by stable ID while preserving unspecified rules), and bounded
 `POST /reload/policy/remove` (a JSON array of stable rule IDs removed atomically), and bounded

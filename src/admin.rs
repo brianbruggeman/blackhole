@@ -178,6 +178,28 @@ impl SendPipe for AdminHandler {
                 }
             }
             ("GET", "/country/status") => Ok(Response::ok(self.policy.admin_country_status())),
+            ("POST", "/reload/country/replace") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let config = match serde_json::from_slice::<CountryPolicyConfig>(&request.payload) {
+                    Ok(config) => config,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                match self.policy.replace_country_policy(&config) {
+                    Ok(_) => Ok(Response::ok("{\"status\":\"replaced\"}")),
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
             ("GET", "/policy/status") => Ok(Response::ok(self.policy.admin_policy_status())),
             ("GET", "/policy-bundle") => Ok(Response::ok(self.policy.admin_policy_bundle())),
             ("GET", "/privacy/status") => Ok(Response::ok(self.policy.admin_privacy_status())),
@@ -725,6 +747,7 @@ impl SendPipe for AdminHandler {
                 | "/abuse/clear"
                 | "/reload/admission"
                 | "/country/status"
+                | "/reload/country/replace"
                 | "/policy/status"
                 | "/policy-bundle"
                 | "/privacy/status"
@@ -1229,6 +1252,69 @@ mod tests {
         assert_eq!(unknown.status, 422);
         std::fs::remove_file(path).expect("remove blocklist");
         std::fs::remove_file(second_path).expect("remove second blocklist");
+    }
+
+    #[test]
+    fn country_policy_replacement_is_atomic_and_updates_bundle() {
+        let path = std::env::temp_dir().join(format!(
+            "blackhole-admin-country-{}-{}.txt",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        ));
+        std::fs::write(&path, "US 192.0.2.0/24 us-ca 64501\n").expect("write country map");
+        let policy = Arc::new(Policy::new(crate::Config::default()).expect("default policy"));
+        let handler = AdminHandler::new(Arc::clone(&policy));
+        let config = CountryPolicyConfig {
+            map_path: Some(path.to_string_lossy().into_owned()),
+            deny: vec!["US".into()],
+            deny_regions: vec!["us-ca".into()],
+            ..CountryPolicyConfig::default()
+        };
+        let payload = serde_json::to_string(&config).expect("country config JSON");
+        let replaced = block_on(
+            handler.call(
+                Request::builder()
+                    .method("POST")
+                    .path("/reload/country/replace")
+                    .payload(payload)
+                    .build()
+                    .expect("country replacement request"),
+            ),
+        )
+        .expect("country replacement response");
+        assert_eq!(replaced.status, 200);
+        let status = block_on(handler.call(request("GET", "/country/status")))
+            .expect("country status response");
+        let status: serde_json::Value = serde_json::from_slice(&status.payload).expect("status");
+        assert_eq!(status["map_configured"], true);
+        assert_eq!(status["entries"], 1);
+        assert_eq!(status["deny"], serde_json::json!(["US"]));
+        assert_eq!(status["deny_regions"], serde_json::json!(["us-ca"]));
+
+        let failed = block_on(
+            handler.call(
+                Request::builder()
+                    .method("POST")
+                    .path("/reload/country/replace")
+                    .payload(r#"{"map_path":"/definitely/missing/country.map","deny":["CA"]}"#)
+                    .build()
+                    .expect("invalid country replacement request"),
+            ),
+        )
+        .expect("invalid country replacement response");
+        assert_eq!(failed.status, 422);
+        let status = block_on(handler.call(request("GET", "/country/status")))
+            .expect("country status response");
+        let status: serde_json::Value = serde_json::from_slice(&status.payload).expect("status");
+        assert_eq!(status["deny"], serde_json::json!(["US"]));
+        let bundle = block_on(handler.call(request("GET", "/policy-bundle")))
+            .expect("policy bundle response");
+        let bundle: serde_json::Value = serde_json::from_slice(&bundle.payload).expect("bundle");
+        assert_eq!(bundle["country_policy"]["deny"], serde_json::json!(["US"]));
+        std::fs::remove_file(path).expect("remove country map");
     }
 
     #[test]

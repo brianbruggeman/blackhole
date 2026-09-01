@@ -2243,6 +2243,7 @@ mod runtime {
         client_identity_control: LiveControl<Vec<ClientIdentityConfig>>,
         country_policy: Live<Option<CountryPolicy>>,
         country_policy_control: LiveControl<Option<CountryPolicy>>,
+        country_policy_config: RwLock<CountryPolicyConfig>,
         reload_lock: RwLock<()>,
         legacy_domains: Live<Vec<String>>,
         legacy_domains_control: LiveControl<Vec<String>>,
@@ -2556,6 +2557,7 @@ mod runtime {
             let default_action = config.policy.default_action;
             let rewrite_configs = config.policy.rewrites.clone();
             let admission = config.admission.clone();
+            let country_policy_config = config.country_policy.clone();
             let (client_identities, client_identity_control) = live(client_identities);
             let (country_policy, country_policy_control) = live(country_policy);
             let (admission, admission_control) = live(admission);
@@ -2576,6 +2578,7 @@ mod runtime {
                 client_identity_control,
                 country_policy,
                 country_policy_control,
+                country_policy_config: RwLock::new(country_policy_config),
                 reload_lock: RwLock::new(()),
                 legacy_domains,
                 legacy_domains_control,
@@ -3076,7 +3079,12 @@ mod runtime {
         pub fn reload_country_policy(&self) -> Result<ReloadState, policy::PolicyError> {
             let _reload = self.reload_lock.write().expect("reload lock");
             let started = Instant::now();
-            let next = load_country_policy(&self.config.country_policy)?;
+            let config = self
+                .country_policy_config
+                .read()
+                .expect("country policy config lock")
+                .clone();
+            let next = load_country_policy(&config)?;
             self.country_policy_control.replace(next);
             self.policy_generation.fetch_add(1, Ordering::Relaxed);
             self.observe_reload_latency("country", started);
@@ -3087,7 +3095,12 @@ mod runtime {
         pub fn reload_country_policy_if_changed(&self) -> Result<ReloadState, policy::PolicyError> {
             let _reload = self.reload_lock.write().expect("reload lock");
             let started = Instant::now();
-            let next = load_country_policy(&self.config.country_policy)?;
+            let config = self
+                .country_policy_config
+                .read()
+                .expect("country policy config lock")
+                .clone();
+            let next = load_country_policy(&config)?;
             let unchanged = self.country_policy.snapshot().as_ref() == &next;
             if unchanged {
                 self.observe_reload_latency("country_unchanged", started);
@@ -3095,6 +3108,26 @@ mod runtime {
             }
             self.country_policy_control.replace(next);
             self.observe_reload_latency("country", started);
+            Ok(ReloadState::Published)
+        }
+
+        /// Atomically replace country selectors and the referenced map. The
+        /// validated map is published before the configuration becomes the
+        /// source for subsequent background refreshes.
+        pub fn replace_country_policy(
+            &self,
+            config: &CountryPolicyConfig,
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
+            let started = Instant::now();
+            let next = load_country_policy(config)?;
+            self.country_policy_control.replace(next);
+            *self
+                .country_policy_config
+                .write()
+                .expect("country policy config lock") = config.clone();
+            self.policy_generation.fetch_add(1, Ordering::Relaxed);
+            self.observe_reload_latency("country_replace", started);
             Ok(ReloadState::Published)
         }
 
@@ -3549,6 +3582,10 @@ mod runtime {
             self.rewrite_control.replace(rewrites);
             *self.rewrite_configs.write().expect("rewrite configs lock") = rewrite_configs.to_vec();
             self.country_policy_control.replace(country_policy);
+            *self
+                .country_policy_config
+                .write()
+                .expect("country policy config lock") = country_config.clone();
             if let Some(admission) = admission {
                 self.admission_control.replace(admission.clone());
             }
@@ -4744,17 +4781,21 @@ mod runtime {
         pub(crate) fn admin_country_status(&self) -> String {
             let country_policy = self.country_policy.snapshot();
             let policy = country_policy.as_ref();
+            let config = self
+                .country_policy_config
+                .read()
+                .expect("country policy config lock");
             serde_json::json!({
                 "map_configured": policy.is_some(),
                 "entries": policy.as_ref().map_or(0, |value| value.entries.len()),
-                "deny": self.config.country_policy.deny,
-                "observe": self.config.country_policy.observe,
-                "deny_regions": self.config.country_policy.deny_regions,
-                "observe_regions": self.config.country_policy.observe_regions,
-                "deny_asns": self.config.country_policy.deny_asns,
-                "observe_asns": self.config.country_policy.observe_asns,
-                "max_age_secs": self.config.country_policy.max_age_secs,
-                "reload_interval_secs": self.config.country_policy.reload_interval_secs,
+                "deny": config.deny,
+                "observe": config.observe,
+                "deny_regions": config.deny_regions,
+                "observe_regions": config.observe_regions,
+                "deny_asns": config.deny_asns,
+                "observe_asns": config.observe_asns,
+                "max_age_secs": config.max_age_secs,
+                "reload_interval_secs": config.reload_interval_secs,
             })
             .to_string()
         }
@@ -4819,6 +4860,10 @@ mod runtime {
                 .count();
             let rewrites = self.rewrites.snapshot();
             let country_policy = self.country_policy.snapshot();
+            let country_config = self
+                .country_policy_config
+                .read()
+                .expect("country policy config lock");
             serde_json::json!({
                 "rules_configured": self.rules_configured.load(Ordering::Acquire),
                 "domain_rules": base_rules.len(),
@@ -4832,7 +4877,7 @@ mod runtime {
                 "country_entries": country_policy.as_ref().as_ref().map_or(0, |policy| policy.entries.len()),
                 "country_deny_rules": country_policy.as_ref().as_ref().map_or(0, |policy| policy.deny.len()),
                 "country_observe_rules": country_policy.as_ref().as_ref().map_or(0, |policy| policy.observe.len()),
-                "country_reload_interval_secs": self.config.country_policy.reload_interval_secs,
+                "country_reload_interval_secs": country_config.reload_interval_secs,
                 "legacy_domain_count": self.legacy_domains.read(Vec::len),
                 "legacy_mode": mode_label(*self.legacy_mode.snapshot()),
                 "default_action": action_label(*self.default_action.snapshot()),
@@ -4906,7 +4951,11 @@ mod runtime {
                     "ipv6": rewrite.ipv6,
                     "ttl": rewrite.ttl,
                 })).collect::<Vec<_>>(),
-                "country_policy": self.config.country_policy,
+                "country_policy": self
+                    .country_policy_config
+                    .read()
+                    .expect("country policy config lock")
+                    .clone(),
                 "blocklists": serde_json::Value::Null,
                 "admission": self.admission_config(),
             });
