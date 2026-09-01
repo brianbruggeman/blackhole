@@ -1591,6 +1591,31 @@ mod runtime {
             self.publish_rules_locked(&combined, &mut base_rules, "rules_append", started)
         }
 
+        /// Remove rules by stable ID and publish the resulting authoritative
+        /// table atomically. Unknown IDs are rejected so an operator cannot
+        /// mistake a no-op for a successful destructive update.
+        pub fn remove_rules(&self, ids: &[u32]) -> Result<ReloadState, policy::PolicyError> {
+            let started = Instant::now();
+            let requested = ids.iter().copied().collect::<BTreeSet<_>>();
+            if requested.is_empty() {
+                return Err(policy::PolicyError::InvalidProfile {
+                    name: "<rule-removal>".into(),
+                    reason: "at least one rule ID is required".into(),
+                });
+            }
+            let mut base_rules = self.base_rules.lock().expect("base rules lock");
+            let original_len = base_rules.len();
+            let mut next = base_rules.clone();
+            next.retain(|rule| !requested.contains(&rule.id));
+            if next.len() == original_len {
+                return Err(policy::PolicyError::InvalidProfile {
+                    name: "<rule-removal>".into(),
+                    reason: "no requested rule ID exists".into(),
+                });
+            }
+            self.publish_rules_locked(&next, &mut base_rules, "rules_remove", started)
+        }
+
         fn publish_rules_locked(
             &self,
             rules: &[RuleConfig],

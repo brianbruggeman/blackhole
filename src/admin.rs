@@ -118,6 +118,28 @@ impl SendPipe for AdminHandler {
                     ))),
                 }
             }
+            ("POST", "/reload/policy/remove") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let ids = match serde_json::from_slice::<Vec<u32>>(&request.payload) {
+                    Ok(ids) => ids,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                match self.policy.remove_rules(&ids) {
+                    Ok(_) => Ok(Response::ok("{\"status\":\"removed\"}")),
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
             ("POST", "/reload/regex") => {
                 if request.payload.len() > MAX_POLICY_BODY_BYTES {
                     return Ok(Response::new(413));
@@ -142,8 +164,16 @@ impl SendPipe for AdminHandler {
             }
             (
                 _,
-                "/" | "/health" | "/status" | "/rules" | "/reload/blocklists" | "/reload/country"
-                | "/reload/policy" | "/reload/policy/add" | "/reload/regex",
+                "/"
+                | "/health"
+                | "/status"
+                | "/rules"
+                | "/reload/blocklists"
+                | "/reload/country"
+                | "/reload/policy"
+                | "/reload/policy/add"
+                | "/reload/policy/remove"
+                | "/reload/regex",
             ) => Ok(Response::new(405)),
             _ => Ok(Response::not_found()),
         }
@@ -300,6 +330,27 @@ mod tests {
         added_wire.extend_from_slice(b"\x05added\x07example\0\0\x01\0\x01");
         let added_query = crate::query::QueryView::parse(&added_wire).expect("added query");
         assert_eq!(policy.action_for_view(added_query), crate::Action::Drop);
+        assert_eq!(policy.action_for_view(query), crate::Action::Nxdomain);
+
+        let removal = Request::builder()
+            .method("POST")
+            .path("/reload/policy/remove")
+            .payload("[8]")
+            .build()
+            .expect("valid policy removal request");
+        let response = block_on(handler.call(removal)).expect("removal response");
+        assert_eq!(response.status, 200);
+        assert_eq!(policy.action_for_view(added_query), crate::Action::Pass);
+        assert_eq!(policy.action_for_view(query), crate::Action::Nxdomain);
+
+        let unknown_removal = Request::builder()
+            .method("POST")
+            .path("/reload/policy/remove")
+            .payload("[999]")
+            .build()
+            .expect("unknown removal request");
+        let response = block_on(handler.call(unknown_removal)).expect("unknown removal response");
+        assert_eq!(response.status, 422);
         assert_eq!(policy.action_for_view(query), crate::Action::Nxdomain);
 
         let invalid = Request::builder()
