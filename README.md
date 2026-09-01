@@ -72,6 +72,10 @@ failures through Proxima's `CircuitBreaker` state machine and permits stale
 answers only during its configured stale window.
 Repeated per-client rate-limit violations open a bounded temporary abuse
 breaker; unidentified callers are not assigned a shared abuse identity.
+Operators can also set `[admission].deny_client_cidrs` to a bounded list of
+IPv4/IPv6 CIDRs (use `/32` or `/128` for one address); those clients receive
+REFUSED before policy matching, rate accounting, or forwarding. The denylist
+is live-reloadable and invalid replacements are rejected without publication.
 Set `[admission.ddos].persist_incidents = true` to persist temporary-blacklist
 events through the bounded Proxima recording sink; active markers are restored
 after restart until their configured expiry and expired markers are ignored.

@@ -24,8 +24,9 @@ below are future capabilities, grouped by the dependency layer they extend.
   additional policy controls beyond atomic enabled/disabled profile,
   identity, and network scope replacement/upsert/removal operations, including
   retained enable/disable state for profiles, groups, and identity mappings.
-- Extend adaptive amplification controls for repeated abusive patterns beyond
-  the current per-query response-ratio cap, aggregate/per-client admission
+- Extend adaptive DDoS response beyond the current configured CIDR denylist,
+  per-query response-ratio cap, and amplification controls for repeated
+  abusive patterns, including aggregate/per-client admission
   limits, bounded client/network/global rate and response-budget breakers,
   and durable client/network incident markers.
 - Add managed GeoIP/region/ASN data lifecycle and richer country policy beyond

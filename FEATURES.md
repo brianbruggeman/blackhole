@@ -83,6 +83,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   unrelated networks or unidentified callers.
 - A bounded global queries-per-second ceiling that sheds excess traffic,
   including unidentified callers, as a DDoS stopgap.
+- An operator-configured bounded IPv4/IPv6 CIDR denylist, including exact
+  addresses via `/32` or `/128`, that rejects clients before policy matching
+  and is atomically reloadable without publishing invalid entries.
 - An opt-in lock-free global abuse breaker opens after repeated aggregate
   rate or response-budget violations and temporarily sheds all callers; zero
   disables it, and its window/cooldown are bounded and operator-configurable.
