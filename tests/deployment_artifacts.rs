@@ -14,6 +14,7 @@ const PACKAGE_BUILDER: &str = "deploy/package/build.sh";
 const DEB_BUILDER: &str = "deploy/package/build-deb.sh";
 const DEB_SMOKE: &str = "deploy/package/smoke-deb.sh";
 const ARCHIVE_SMOKE: &str = "deploy/package/smoke-archive.sh";
+const VERIFY_WORKFLOW: &str = ".github/workflows/verify.yml";
 
 #[test]
 fn launchd_service_is_unprivileged_and_direct() {
@@ -232,6 +233,25 @@ fn query_fuzz_corpus_is_bounded_and_content_addressed() {
         samples += 1;
     }
     assert!(samples > 0, "query fuzz corpus must contain samples");
+}
+
+#[test]
+fn macos_workflow_builds_and_bounds_launchd_smoke() {
+    let workflow = fs::read_to_string(VERIFY_WORKFLOW).expect("read verification workflow");
+    let release_build = workflow
+        .find("name: build launchd release binary")
+        .expect("macOS release build step");
+    let smoke = workflow
+        .find("name: run launchd host install and upgrade smoke")
+        .expect("macOS launchd smoke step");
+    assert!(
+        release_build < smoke,
+        "launchd smoke must use the release binary"
+    );
+    let smoke_contract = &workflow[smoke..];
+    assert!(smoke_contract.contains("timeout-minutes: 2"));
+    assert!(smoke_contract.contains("BLACKHOLE_SMOKE_TRACE=1"));
+    assert!(smoke_contract.contains("tee launchd-smoke.log"));
 }
 
 #[test]
