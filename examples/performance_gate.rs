@@ -205,10 +205,7 @@ fn main() {
     });
 
     #[cfg(feature = "perf-instrument")]
-    let boundary_bytes = {
-        let stats = perf::snapshot();
-        stats
-    };
+    let boundary_bytes = { perf::snapshot() };
 
     println!("gate=b14 implementation=scalar-reference rules=10000 samples={sample_count}");
     report("build", &build, configs.len());
@@ -384,11 +381,11 @@ fn rss_kib() -> Option<u64> {
     #[cfg(target_os = "linux")]
     {
         let status = std::fs::read_to_string("/proc/self/status").ok()?;
-        return status.lines().find_map(|line| {
+        status.lines().find_map(|line| {
             line.strip_prefix("VmRSS:")
                 .and_then(|value| value.split_whitespace().next())
                 .and_then(|value| value.parse().ok())
-        });
+        })
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -399,9 +396,9 @@ fn rss_kib() -> Option<u64> {
 fn load_average() -> Option<String> {
     #[cfg(target_os = "linux")]
     {
-        return std::fs::read_to_string("/proc/loadavg")
+        std::fs::read_to_string("/proc/loadavg")
             .ok()
-            .and_then(|value| value.split_whitespace().next().map(str::to_owned));
+            .and_then(|value| value.split_whitespace().next().map(str::to_owned))
     }
     #[cfg(not(target_os = "linux"))]
     {

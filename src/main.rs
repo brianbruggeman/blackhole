@@ -843,12 +843,12 @@ impl SendPipe for AnyHandler {
 #[proxima::main]
 async fn main() -> Result<(), ProximaError> {
     let arguments: Vec<String> = env::args().skip(1).collect();
-    if let [flag, path] = arguments.as_slice() {
-        if flag == "--delete-recording" {
-            let removed = delete_query_recording(Path::new(path))?;
-            println!("{{\"status\":\"deleted\",\"files\":{removed}}}");
-            return Ok(());
-        }
+    if let [flag, path] = arguments.as_slice()
+        && flag == "--delete-recording"
+    {
+        let removed = delete_query_recording(Path::new(path))?;
+        println!("{{\"status\":\"deleted\",\"files\":{removed}}}");
+        return Ok(());
     }
     let (check_only, explicit_config_path, replay_path) = match arguments.as_slice() {
         [] => (false, None, None),
@@ -921,14 +921,11 @@ async fn main() -> Result<(), ProximaError> {
     let upstream = config.upstream.clone();
     let mut policy = Policy::new(config)
         .map_err(|error| ProximaError::Config(format!("invalid policy rule: {error}")))?;
-    if persist_ddos_incidents {
-        if let Some(path) = query_recording_path.as_deref() {
-            let restored =
-                restore_persisted_abuse(&policy, Path::new(path), query_recording_max_bytes)
-                    .await?;
-            if restored != 0 {
-                println!("blackhole restored {restored} active DDoS incident(s)");
-            }
+    if persist_ddos_incidents && let Some(path) = query_recording_path.as_deref() {
+        let restored =
+            restore_persisted_abuse(&policy, Path::new(path), query_recording_max_bytes).await?;
+        if restored != 0 {
+            println!("blackhole restored {restored} active DDoS incident(s)");
         }
     }
     if let Some(upstream) = upstream {

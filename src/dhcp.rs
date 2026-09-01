@@ -529,8 +529,10 @@ mod tests {
 
     #[test]
     fn loopback_server_turns_discover_into_offer() {
-        let mut config = DhcpConfig::default();
-        config.listen = "127.0.0.1:0".into();
+        let config = DhcpConfig {
+            listen: "127.0.0.1:0".into(),
+            ..Default::default()
+        };
         let server = Server::start(config).expect("server");
         let client = std::net::UdpSocket::bind("127.0.0.1:0").expect("client");
         client

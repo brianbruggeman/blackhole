@@ -251,16 +251,16 @@ mod runtime {
                 return false;
             }
             let mut evicted = false;
-            if self.entries.len() >= self.config.max_entries && !self.entries.contains_key(&key) {
-                if let Some(oldest) = self
+            if self.entries.len() >= self.config.max_entries
+                && !self.entries.contains_key(&key)
+                && let Some(oldest) = self
                     .entries
                     .iter()
                     .min_by_key(|(_, entry)| entry.expires_at)
                     .map(|(key, _)| key.clone())
-                {
-                    self.entries.remove(&oldest);
-                    evicted = true;
-                }
+            {
+                self.entries.remove(&oldest);
+                evicted = true;
             }
             let ttl_secs = answer
                 .records
@@ -1032,21 +1032,16 @@ mod runtime {
         }
     }
 
-    #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+    #[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq, Eq)]
     #[serde(rename_all = "lowercase")]
     pub enum UpstreamTransport {
+        #[default]
         Udp,
         Tcp,
         Tls,
         Doh,
         /// DNS-over-QUIC; available when the `doq` feature is enabled.
         Doq,
-    }
-
-    impl Default for UpstreamTransport {
-        fn default() -> Self {
-            Self::Udp
-        }
     }
 
     #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -2070,7 +2065,7 @@ mod runtime {
         max_age_secs != 0
             && now
                 .duration_since(modified)
-                .map_or(false, |age| age <= Duration::from_secs(max_age_secs))
+                .is_ok_and(|age| age <= Duration::from_secs(max_age_secs))
     }
 
     fn country_map_changed(
@@ -2207,16 +2202,15 @@ mod runtime {
                     reason: "groups and client_cidrs are mutually exclusive".into(),
                 });
             }
-            if let Some(identity) = profile.client_identity.as_deref() {
-                if identity.trim().is_empty()
+            if let Some(identity) = profile.client_identity.as_deref()
+                && (identity.trim().is_empty()
                     || !identity.is_ascii()
-                    || identity.len() > policy::MAX_CLIENT_IDENTITY_BYTES
-                {
-                    return Err(policy::PolicyError::InvalidProfile {
-                        name: profile.name.clone(),
-                        reason: "client_identity must be bounded non-empty ASCII".into(),
-                    });
-                }
+                    || identity.len() > policy::MAX_CLIENT_IDENTITY_BYTES)
+            {
+                return Err(policy::PolicyError::InvalidProfile {
+                    name: profile.name.clone(),
+                    reason: "client_identity must be bounded non-empty ASCII".into(),
+                });
             }
             let mut group_scopes = if profile.groups.is_empty() {
                 vec![ClientScope {
@@ -3432,8 +3426,7 @@ mod runtime {
             started: Instant,
             reload_kind: &'static str,
         ) -> Result<ReloadState, policy::PolicyError> {
-            let result =
-                self.replace_active_blocklist_rules_locked(&paths, started, reload_kind)?;
+            let result = self.replace_active_blocklist_rules_locked(paths, started, reload_kind)?;
             *self
                 .disabled_blocklist_paths
                 .lock()
@@ -3981,6 +3974,7 @@ mod runtime {
         /// Atomically replace all operator-managed policy tables while
         /// retaining the current blocklist snapshot. Every generated rule,
         /// regex, and cross-table ID is validated before publication.
+        #[allow(clippy::too_many_arguments)]
         pub fn reload_policy_bundle(
             &self,
             rules: &[RuleConfig],
@@ -4010,6 +4004,7 @@ mod runtime {
 
         /// Atomically replace the complete policy bundle, including the
         /// legacy fallback fields and the default action when supplied.
+        #[allow(clippy::too_many_arguments)]
         pub fn reload_policy_bundle_with_legacy(
             &self,
             rules: &[RuleConfig],
@@ -4046,6 +4041,7 @@ mod runtime {
 
         /// Atomically replace policy tables and live admission limits as one
         /// operator publication. Startup-only capacity remains immutable.
+        #[allow(clippy::too_many_arguments)]
         pub fn reload_policy_bundle_with_legacy_and_admission(
             &self,
             rules: &[RuleConfig],
@@ -4217,10 +4213,7 @@ mod runtime {
                     reason: "at least one rewrite name is required".into(),
                 });
             }
-            let requested = names
-                .iter()
-                .map(|name| normalize(name))
-                .collect::<BTreeSet<_>>();
+            let requested = names.iter().map(normalize).collect::<BTreeSet<_>>();
             if requested.iter().any(String::is_empty) {
                 return Err(policy::PolicyError::InvalidRewrite {
                     name: "<rewrite-removal>".into(),
@@ -4841,7 +4834,7 @@ mod runtime {
             if remaining_ms == 0 {
                 return false;
             }
-            let remaining = Duration::from_millis(remaining_ms.min(u64::MAX));
+            let remaining = Duration::from_millis(remaining_ms);
             let admission = self.admission_config();
             let (client_key, client_key_len) = ip_key(client);
             self.client_abuse.restore_blocked(
@@ -4936,8 +4929,7 @@ mod runtime {
                     else {
                         return Err("upstream_malformed");
                     };
-                    if used != record.rdata.len()
-                        || !valid_dns_name(&normalize(&target.to_dotted()))
+                    if used != record.rdata.len() || !valid_dns_name(&normalize(target.to_dotted()))
                     {
                         return Err("upstream_malformed");
                     }
@@ -6081,10 +6073,10 @@ mod runtime {
                     self.observe(Action::Reject);
                     return Ok(DnsPipeReply::typed(200, refused_answer()));
                 }
-                if let Some(country) = country_policy.country_for(client) {
-                    if country_policy.observed(client) {
-                        self.observe_country(country);
-                    }
+                if let Some(country) = country_policy.country_for(client)
+                    && country_policy.observed(client)
+                {
+                    self.observe_country(country);
                 }
             }
             let query = request.payload;
@@ -6127,11 +6119,11 @@ mod runtime {
             {
                 self.record_decision(action, &query).await;
             }
-            if matches!(action, Some(Action::Pass | Action::Observe) | None) {
-                if let Some(answer) = self.rewrites.read(|rewrites| rewrites.answer(&query)) {
-                    self.observe(action.unwrap_or(Action::Pass));
-                    return Ok(DnsPipeReply::typed(200, self.cap_answer(&query, answer)));
-                }
+            if matches!(action, Some(Action::Pass | Action::Observe) | None)
+                && let Some(answer) = self.rewrites.read(|rewrites| rewrites.answer(&query))
+            {
+                self.observe(action.unwrap_or(Action::Pass));
+                return Ok(DnsPipeReply::typed(200, self.cap_answer(&query, answer)));
             }
             let forwarding_action = match action {
                 Some(Action::Pass | Action::Observe | Action::Forward) => action,
@@ -6724,20 +6716,32 @@ mod runtime {
 
         #[test]
         fn background_blocklist_reload_interval_is_bounded() {
-            let mut config = Config::default();
-            config.policy.blocklist_reload_interval_secs = MAX_BLOCKLIST_RELOAD_INTERVAL_SECS + 1;
+            let config = Config {
+                policy: PolicyConfig {
+                    blocklist_reload_interval_secs: MAX_BLOCKLIST_RELOAD_INTERVAL_SECS + 1,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
             assert!(matches!(
                 Policy::new(config),
                 Err(policy::PolicyError::InvalidBlocklist { path, .. }) if path == "<config>"
             ));
-            let mut config = Config::default();
-            config.country_policy.reload_interval_secs = MAX_BLOCKLIST_RELOAD_INTERVAL_SECS + 1;
+            let config = Config {
+                country_policy: CountryPolicyConfig {
+                    reload_interval_secs: MAX_BLOCKLIST_RELOAD_INTERVAL_SECS + 1,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
             assert!(matches!(
                 Policy::new(config),
                 Err(policy::PolicyError::InvalidCountryMap { path, .. }) if path == "<config>"
             ));
-            let mut config = Config::default();
-            config.reload_interval_secs = MAX_BLOCKLIST_RELOAD_INTERVAL_SECS + 1;
+            let config = Config {
+                reload_interval_secs: MAX_BLOCKLIST_RELOAD_INTERVAL_SECS + 1,
+                ..Default::default()
+            };
             assert!(matches!(
                 Policy::new(config),
                 Err(policy::PolicyError::InvalidConfigReload { .. })
@@ -7648,17 +7652,19 @@ mod runtime {
                 "US 192.0.2.0/24 US-CA AS64500\nCA 198.51.100.0/24 CA-ON 64501\n",
             )
             .expect("write country map");
-            let mut config = Config::default();
-            config.country_policy = CountryPolicyConfig {
-                map_path: Some(path.to_string_lossy().into_owned()),
-                max_age_secs: None,
-                reload_interval_secs: 0,
-                deny: vec!["us".into()],
-                observe: Vec::new(),
-                deny_regions: vec!["us-ca".into()],
-                observe_regions: Vec::new(),
-                deny_asns: Vec::new(),
-                observe_asns: vec![64501],
+            let config = Config {
+                country_policy: CountryPolicyConfig {
+                    map_path: Some(path.to_string_lossy().into_owned()),
+                    max_age_secs: None,
+                    reload_interval_secs: 0,
+                    deny: vec!["us".into()],
+                    observe: Vec::new(),
+                    deny_regions: vec!["us-ca".into()],
+                    observe_regions: Vec::new(),
+                    deny_asns: Vec::new(),
+                    observe_asns: vec![64501],
+                },
+                ..Default::default()
             };
             let policy = Policy::new(config).expect("valid country policy");
             let denied = "192.0.2.10".parse().expect("client address");
@@ -7785,17 +7791,19 @@ mod runtime {
                 1
             ));
             std::fs::write(&path, "US 192.0.2.0/24 US-CA AS64500\n").expect("write country map");
-            let mut config = Config::default();
-            config.country_policy = CountryPolicyConfig {
-                map_path: Some(path.to_string_lossy().into_owned()),
-                max_age_secs: None,
-                reload_interval_secs: 0,
-                deny: vec!["US".into()],
-                observe: Vec::new(),
-                deny_regions: Vec::new(),
-                observe_regions: vec!["US-CA".into()],
-                deny_asns: Vec::new(),
-                observe_asns: Vec::new(),
+            let config = Config {
+                country_policy: CountryPolicyConfig {
+                    map_path: Some(path.to_string_lossy().into_owned()),
+                    max_age_secs: None,
+                    reload_interval_secs: 0,
+                    deny: vec!["US".into()],
+                    observe: Vec::new(),
+                    deny_regions: Vec::new(),
+                    observe_regions: vec!["US-CA".into()],
+                    deny_asns: Vec::new(),
+                    observe_asns: Vec::new(),
+                },
+                ..Default::default()
             };
             assert!(Policy::new(config).is_err());
             std::fs::remove_file(path).expect("remove country map");
@@ -8768,9 +8776,11 @@ mod runtime {
         #[test]
         fn admission_reload_publishes_limits_and_rejects_capacity_changes() {
             let policy = Policy::new(Config::default()).expect("valid policy");
-            let mut replacement = AdmissionConfig::default();
-            replacement.reject_any = true;
-            replacement.max_queries_per_second = 7;
+            let replacement = AdmissionConfig {
+                reject_any: true,
+                max_queries_per_second: 7,
+                ..Default::default()
+            };
             assert_eq!(
                 policy.reload_admission(&replacement),
                 Ok(ReloadState::Published)
@@ -8858,8 +8868,10 @@ mod runtime {
         #[test]
         fn denylist_reload_rejects_invalid_cidrs_without_publication() {
             let policy = Policy::new(Config::default()).expect("valid policy");
-            let mut replacement = AdmissionConfig::default();
-            replacement.deny_client_cidrs = vec!["not-a-cidr".into()];
+            let replacement = AdmissionConfig {
+                deny_client_cidrs: vec!["not-a-cidr".into()],
+                ..Default::default()
+            };
             assert!(matches!(
                 policy.reload_admission(&replacement),
                 Err(policy::PolicyError::InvalidAdmission { .. })

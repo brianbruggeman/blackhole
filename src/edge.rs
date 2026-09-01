@@ -72,8 +72,8 @@ impl From<PolicyError> for EdgeError {
 /// canonical string at the explicit policy boundary. The returned decision
 /// retains the selected rule ID and complete action identity for the caller's
 /// edge adapter.
-pub fn decide<'packet>(
-    packet: &'packet [u8],
+pub fn decide(
+    packet: &[u8],
     rules: &[RuleConfig],
     client: Option<core::net::IpAddr>,
 ) -> Result<Option<Decision>, EdgeError> {
