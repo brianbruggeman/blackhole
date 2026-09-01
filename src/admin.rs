@@ -220,6 +220,7 @@ mod tests {
                 qtype: None,
                 qclass: None,
                 client: None,
+                client_cidrs: Vec::new(),
             })
             .collect();
         let handler = AdminHandler::new(Arc::new(Policy::new(config).expect("valid rules")));

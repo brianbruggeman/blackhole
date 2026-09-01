@@ -13,8 +13,8 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   exact/deep-wildcard specificity, exact-client and CIDR network scopes, qtype,
   and qclass filters.
 - Bounded regular-expression policy rules with startup compilation limits,
-  qtype/qclass/client filters, deterministic priority, and explicit domain-rule
-  precedence.
+  qtype/qclass/exact-client/CIDR-client filters, deterministic priority, and
+  explicit domain-rule precedence.
 - Rule-table authority when rules are configured; legacy settings do not
   silently take over.
 - Client-scoped rules can match one exact address or a bounded list of IPv4

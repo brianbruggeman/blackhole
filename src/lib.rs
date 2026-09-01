@@ -582,6 +582,8 @@ mod runtime {
         pub qclass: Option<u16>,
         #[serde(default)]
         pub client: Option<IpAddr>,
+        #[serde(default)]
+        pub client_cidrs: Vec<String>,
     }
 
     #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -1164,6 +1166,8 @@ mod runtime {
         qtype: Option<u16>,
         qclass: Option<u16>,
         client: Option<IpAddr>,
+        client_networks: Vec<policy::IpNetwork>,
+        client_cidrs: Vec<String>,
     }
 
     fn compile_regex_rules(
@@ -1194,6 +1198,30 @@ mod runtime {
                     id: rule.id,
                     reason: error.to_string(),
                 })?;
+            if rule.client.is_some() && !rule.client_cidrs.is_empty() {
+                return Err(policy::PolicyError::InvalidClientCidr {
+                    id: rule.id,
+                    value: "exact client and client_cidrs are mutually exclusive".into(),
+                });
+            }
+            if rule.client_cidrs.len() > policy::MAX_CLIENT_CIDRS {
+                return Err(policy::PolicyError::InvalidClientCidr {
+                    id: rule.id,
+                    value: format!("more than {} networks", policy::MAX_CLIENT_CIDRS),
+                });
+            }
+            let client_networks = rule
+                .client_cidrs
+                .iter()
+                .map(|value| {
+                    policy::IpNetwork::parse(value).ok_or_else(|| {
+                        policy::PolicyError::InvalidClientCidr {
+                            id: rule.id,
+                            value: value.clone(),
+                        }
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
             regex_rules.push(RegexRule {
                 id: rule.id,
                 pattern,
@@ -1202,6 +1230,8 @@ mod runtime {
                 qtype: rule.qtype,
                 qclass: rule.qclass,
                 client: rule.client,
+                client_networks,
+                client_cidrs: rule.client_cidrs.clone(),
             });
         }
         Ok(regex_rules)
@@ -1964,6 +1994,12 @@ mod runtime {
                         && rule.qtype.is_none_or(|value| value == qtype)
                         && rule.qclass.is_none_or(|value| value == qclass)
                         && rule.client.is_none_or(|value| Some(value) == client)
+                        && (rule.client_networks.is_empty()
+                            || client.is_some_and(|value| {
+                                rule.client_networks
+                                    .iter()
+                                    .any(|network| network.contains(value))
+                            }))
                 })
                 .max_by_key(|rule| {
                     (
@@ -1971,6 +2007,11 @@ mod runtime {
                         u8::from(rule.qclass.is_some()),
                         u8::from(rule.qtype.is_some()),
                         u8::from(rule.client.is_some()),
+                        rule.client_networks
+                            .iter()
+                            .map(|network| network.prefix())
+                            .max()
+                            .unwrap_or(0),
                         rule.id,
                     )
                 })
@@ -2149,6 +2190,7 @@ mod runtime {
                     "qtype": rule.qtype,
                     "qclass": rule.qclass,
                     "client": rule.client,
+                    "client_cidrs": rule.client_cidrs,
                 }));
             }
             let mut truncated = false;
@@ -3115,6 +3157,7 @@ mod runtime {
                 qtype: Some(1),
                 qclass: Some(1),
                 client: None,
+                client_cidrs: Vec::new(),
             }];
             let policy = Policy::new(config).expect("valid regex rule");
             let query = |name: &str, qtype: u16| proxima_dns::DnsQuery {
@@ -3151,6 +3194,50 @@ mod runtime {
         }
 
         #[test]
+        fn regex_rules_honor_client_network_scopes() {
+            let mut config = Config::default();
+            config.policy.default_action = Action::Pass;
+            config.policy.regex_rules = vec![RegexRuleConfig {
+                id: 78,
+                pattern: r"(^|\.)ads\.example$".into(),
+                action: Action::Nxdomain,
+                priority: 4,
+                qtype: None,
+                qclass: None,
+                client: None,
+                client_cidrs: vec!["192.0.2.0/24".into()],
+            }];
+            let policy = Policy::new(config).expect("valid scoped regex rule");
+            let mut wire = Vec::new();
+            proxima_protocols::dns::encode::encode_query(
+                8,
+                true,
+                proxima_protocols::dns::encode::EncodeQuestion {
+                    name: "ads.example.",
+                    qtype: 1,
+                    qclass: 1,
+                },
+                &mut wire,
+            )
+            .expect("encode regex query");
+            let view = QueryView::parse(&wire).expect("parse regex query");
+            assert_eq!(
+                policy.action_for_view_with_client(
+                    view,
+                    Some("192.0.2.44".parse().expect("client address"))
+                ),
+                Action::Nxdomain
+            );
+            assert_eq!(
+                policy.action_for_view_with_client(
+                    view,
+                    Some("198.51.100.44".parse().expect("client address"))
+                ),
+                Action::Pass
+            );
+        }
+
+        #[test]
         fn explicit_domain_rules_win_over_matching_regex_rules() {
             let mut config = Config::default();
             config.policy.default_action = Action::Pass;
@@ -3173,6 +3260,7 @@ mod runtime {
                 qtype: None,
                 qclass: None,
                 client: None,
+                client_cidrs: Vec::new(),
             }];
             let policy = Policy::new(config).expect("valid mixed policy");
             let query = proxima_dns::DnsQuery {
@@ -3196,10 +3284,27 @@ mod runtime {
                 qtype: None,
                 qclass: None,
                 client: None,
+                client_cidrs: Vec::new(),
             }];
             assert!(matches!(
                 Policy::new(invalid),
                 Err(policy::PolicyError::InvalidRegex { id: 1, .. })
+            ));
+
+            let mut invalid_scope = Config::default();
+            invalid_scope.policy.regex_rules = vec![RegexRuleConfig {
+                id: 3,
+                pattern: "ads".into(),
+                action: Action::Drop,
+                priority: 0,
+                qtype: None,
+                qclass: None,
+                client: None,
+                client_cidrs: vec!["not-a-cidr".into()],
+            }];
+            assert!(matches!(
+                Policy::new(invalid_scope),
+                Err(policy::PolicyError::InvalidClientCidr { id: 3, .. })
             ));
 
             let mut oversized = Config::default();
@@ -3211,6 +3316,7 @@ mod runtime {
                 qtype: None,
                 qclass: None,
                 client: None,
+                client_cidrs: Vec::new(),
             }];
             assert!(matches!(
                 Policy::new(oversized),
@@ -4122,6 +4228,7 @@ mod runtime {
                     qtype: None,
                     qclass: None,
                     client: None,
+                    client_cidrs: Vec::new(),
                 }])
                 .expect("regex reload");
 
