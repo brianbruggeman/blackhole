@@ -278,6 +278,45 @@ mod runtime {
         requests: usize,
     }
 
+    /// Lock-free global fixed-window counter. The upper half stores elapsed
+    /// seconds since the policy was created and the lower half stores the
+    /// requests admitted in that window. A single CAS makes rollover and the
+    /// first request of the new window one decision.
+    struct GlobalRate(AtomicU64);
+
+    impl GlobalRate {
+        fn new() -> Self {
+            Self(AtomicU64::new(0))
+        }
+
+        fn allow(&self, epoch: Instant, limit: usize) -> bool {
+            if limit == 0 {
+                return false;
+            }
+            let window = epoch.elapsed().as_secs() & u32::MAX as u64;
+            let limit = limit.min(u32::MAX as usize) as u64;
+            loop {
+                let current = self.0.load(Ordering::Acquire);
+                let current_window = current >> 32;
+                let current_count = current & u32::MAX as u64;
+                let next = if current_window != window {
+                    (window << 32) | 1
+                } else if current_count >= limit {
+                    return false;
+                } else {
+                    current + 1
+                };
+                if self
+                    .0
+                    .compare_exchange(current, next, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+                {
+                    return true;
+                }
+            }
+        }
+    }
+
     struct ClientResponseBudget {
         window_started: Instant,
         bytes: usize,
@@ -1919,7 +1958,7 @@ mod runtime {
         request_slots: Arc<Semaphore>,
         client_admission: Arc<Mutex<HashMap<IpAddr, usize>>>,
         client_rates: Arc<Mutex<HashMap<IpAddr, ClientRate>>>,
-        global_rate: Arc<Mutex<ClientRate>>,
+        global_rate: GlobalRate,
         client_response_budgets: Arc<Mutex<HashMap<IpAddr, ClientResponseBudget>>>,
         network_response_budgets: Arc<Mutex<HashMap<AbuseNetworkKey, ClientResponseBudget>>>,
         global_response_budget: Arc<Mutex<ClientResponseBudget>>,
@@ -2287,10 +2326,7 @@ mod runtime {
                 request_slots: Arc::new(Semaphore::new(max_inflight_requests)),
                 client_admission: Arc::new(Mutex::new(HashMap::new())),
                 client_rates: Arc::new(Mutex::new(HashMap::new())),
-                global_rate: Arc::new(Mutex::new(ClientRate {
-                    window_started: Instant::now(),
-                    requests: 0,
-                })),
+                global_rate: GlobalRate::new(),
                 client_response_budgets: Arc::new(Mutex::new(HashMap::new())),
                 network_response_budgets: Arc::new(Mutex::new(HashMap::new())),
                 global_response_budget: Arc::new(Mutex::new(ClientResponseBudget {
@@ -3620,18 +3656,8 @@ mod runtime {
 
         fn allow_global_rate(&self) -> bool {
             let admission = self.admission_config();
-            let now = Instant::now();
-            let mut rate = self.global_rate.lock().expect("global rate lock");
-            if now.duration_since(rate.window_started) >= Duration::from_secs(1) {
-                rate.window_started = now;
-                rate.requests = 1;
-                return true;
-            }
-            if rate.requests >= admission.max_queries_per_second {
-                return false;
-            }
-            rate.requests += 1;
-            true
+            self.global_rate
+                .allow(self.breaker_epoch, admission.max_queries_per_second)
         }
 
         /// Bound encoded DNS egress per identified client over a one-second
