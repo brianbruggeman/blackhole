@@ -2197,7 +2197,8 @@ mod runtime {
         rewrites: Live<RewriteTable>,
         rewrite_control: LiveControl<RewriteTable>,
         reference: PolicyStore,
-        regex_rules: Mutex<Vec<RegexRule>>,
+        regex_rules: Live<Vec<RegexRule>>,
+        regex_rules_control: LiveControl<Vec<RegexRule>>,
         domain_rules_configured: AtomicBool,
         rules_configured: AtomicBool,
         policy_generation: AtomicU64,
@@ -2497,6 +2498,7 @@ mod runtime {
             let (legacy_domains, legacy_domains_control) = live(legacy_domains);
             let (legacy_mode, legacy_mode_control) = live(legacy_mode);
             let (default_action, default_action_control) = live(default_action);
+            let (regex_rules, regex_rules_control) = live(regex_rules);
             let policy = Self {
                 config,
                 base_rules: Mutex::new(base_rules),
@@ -2520,7 +2522,8 @@ mod runtime {
                 rewrites,
                 rewrite_control,
                 reference,
-                regex_rules: Mutex::new(regex_rules),
+                regex_rules,
+                regex_rules_control,
                 domain_rules_configured: AtomicBool::new(domain_rules_configured),
                 rules_configured: AtomicBool::new(rules_configured),
                 policy_generation: AtomicU64::new(1),
@@ -2807,11 +2810,7 @@ mod runtime {
             );
             let regex_ids = self
                 .regex_rules
-                .lock()
-                .expect("regex rules lock")
-                .iter()
-                .map(|rule| rule.id)
-                .collect::<BTreeSet<_>>();
+                .read(|rules| rules.iter().map(|rule| rule.id).collect::<BTreeSet<_>>());
             if let Some(rule) = published_rules
                 .iter()
                 .find(|rule| regex_ids.contains(&rule.id))
@@ -2824,12 +2823,7 @@ mod runtime {
             self.domain_rules_configured
                 .store(!published_rules.is_empty(), Ordering::Release);
             self.rules_configured.store(
-                !published_rules.is_empty()
-                    || !self
-                        .regex_rules
-                        .lock()
-                        .expect("regex rules lock")
-                        .is_empty(),
+                !published_rules.is_empty() || !self.regex_rules.read(|rules| rules.is_empty()),
                 Ordering::Release,
             );
             self.cache_control.update(|cache| {
@@ -2870,11 +2864,7 @@ mod runtime {
             rules.extend(replacement.iter().cloned());
             let regex_ids = self
                 .regex_rules
-                .lock()
-                .expect("regex rules lock")
-                .iter()
-                .map(|rule| rule.id)
-                .collect::<BTreeSet<_>>();
+                .read(|rules| rules.iter().map(|rule| rule.id).collect::<BTreeSet<_>>());
             if let Some(rule) = rules.iter().find(|rule| regex_ids.contains(&rule.id)) {
                 return Err(policy::PolicyError::DuplicateRule { id: rule.id });
             }
@@ -2884,12 +2874,7 @@ mod runtime {
             self.domain_rules_configured
                 .store(!rules.is_empty(), Ordering::Release);
             self.rules_configured.store(
-                !rules.is_empty()
-                    || !self
-                        .regex_rules
-                        .lock()
-                        .expect("regex rules lock")
-                        .is_empty(),
+                !rules.is_empty() || !self.regex_rules.read(|rules| rules.is_empty()),
                 Ordering::Release,
             );
             self.cache_control.update(|cache| {
@@ -2924,11 +2909,7 @@ mod runtime {
             rules.extend(replacement.iter().cloned());
             let regex_ids = self
                 .regex_rules
-                .lock()
-                .expect("regex rules lock")
-                .iter()
-                .map(|rule| rule.id)
-                .collect::<BTreeSet<_>>();
+                .read(|rules| rules.iter().map(|rule| rule.id).collect::<BTreeSet<_>>());
             if let Some(rule) = rules.iter().find(|rule| regex_ids.contains(&rule.id)) {
                 return Err(policy::PolicyError::DuplicateRule { id: rule.id });
             }
@@ -2937,12 +2918,7 @@ mod runtime {
             self.domain_rules_configured
                 .store(!rules.is_empty(), Ordering::Release);
             self.rules_configured.store(
-                !rules.is_empty()
-                    || !self
-                        .regex_rules
-                        .lock()
-                        .expect("regex rules lock")
-                        .is_empty(),
+                !rules.is_empty() || !self.regex_rules.read(|rules| rules.is_empty()),
                 Ordering::Release,
             );
             self.cache_control.update(|cache| {
@@ -3390,7 +3366,7 @@ mod runtime {
             self.reference.reload(&published)?;
             *self.base_rules.lock().expect("base rules lock") = base;
             *self.explicit_rules.lock().expect("explicit rules lock") = rules.to_vec();
-            *self.regex_rules.lock().expect("regex rules lock") = compiled_regex;
+            self.regex_rules_control.replace(compiled_regex);
             *self.profiles.write().expect("profiles lock") = profiles.to_vec();
             *self.client_groups.write().expect("client groups lock") = client_groups.to_vec();
             self.client_identity_control.replace(client_identities);
@@ -3548,7 +3524,7 @@ mod runtime {
             let started = Instant::now();
             let rule_ids = self.reference.rule_ids();
             let compiled = compile_regex_rules(configs, rule_ids)?;
-            *self.regex_rules.lock().expect("regex rules lock") = compiled;
+            self.regex_rules_control.replace(compiled);
             self.rules_configured.store(
                 self.domain_rules_configured.load(Ordering::Acquire) || !configs.is_empty(),
                 Ordering::Release,
@@ -3621,21 +3597,21 @@ mod runtime {
         }
 
         fn regex_rule_configs(&self) -> Vec<RegexRuleConfig> {
-            self.regex_rules
-                .lock()
-                .expect("regex rules lock")
-                .iter()
-                .map(|rule| RegexRuleConfig {
-                    id: rule.id,
-                    pattern: rule.pattern.as_str().to_owned(),
-                    action: rule.action,
-                    priority: rule.priority,
-                    qtype: rule.qtype,
-                    qclass: rule.qclass,
-                    client: rule.client,
-                    client_cidrs: rule.client_cidrs.clone(),
-                })
-                .collect()
+            self.regex_rules.read(|rules| {
+                rules
+                    .iter()
+                    .map(|rule| RegexRuleConfig {
+                        id: rule.id,
+                        pattern: rule.pattern.as_str().to_owned(),
+                        action: rule.action,
+                        priority: rule.priority,
+                        qtype: rule.qtype,
+                        qclass: rule.qclass,
+                        client: rule.client,
+                        client_cidrs: rule.client_cidrs.clone(),
+                    })
+                    .collect()
+            })
         }
 
         fn publish_regex_rules_locked(
@@ -3646,7 +3622,7 @@ mod runtime {
         ) -> Result<ReloadState, policy::PolicyError> {
             let rule_ids = self.reference.rule_ids();
             let compiled = compile_regex_rules(configs, rule_ids)?;
-            *self.regex_rules.lock().expect("regex rules lock") = compiled;
+            self.regex_rules_control.replace(compiled);
             self.rules_configured.store(
                 self.domain_rules_configured.load(Ordering::Acquire) || !configs.is_empty(),
                 Ordering::Release,
@@ -4207,40 +4183,40 @@ mod runtime {
             qclass: u16,
             client: Option<IpAddr>,
         ) -> Option<policy::Decision> {
-            self.regex_rules
-                .lock()
-                .expect("regex rules lock")
-                .iter()
-                .filter(|rule| {
-                    rule.pattern.is_match(name)
-                        && rule.qtype.is_none_or(|value| value == qtype)
-                        && rule.qclass.is_none_or(|value| value == qclass)
-                        && rule.client.is_none_or(|value| Some(value) == client)
-                        && (rule.client_networks.is_empty()
-                            || client.is_some_and(|value| {
-                                rule.client_networks
-                                    .iter()
-                                    .any(|network| network.contains(value))
-                            }))
-                })
-                .max_by_key(|rule| {
-                    (
-                        rule.priority,
-                        u8::from(rule.qclass.is_some()),
-                        u8::from(rule.qtype.is_some()),
-                        u8::from(rule.client.is_some()),
-                        rule.client_networks
-                            .iter()
-                            .map(|network| network.prefix())
-                            .max()
-                            .unwrap_or(0),
-                        rule.id,
-                    )
-                })
-                .map(|rule| policy::Decision {
-                    rule_id: rule.id,
-                    action: rule.action,
-                })
+            self.regex_rules.read(|rules| {
+                rules
+                    .iter()
+                    .filter(|rule| {
+                        rule.pattern.is_match(name)
+                            && rule.qtype.is_none_or(|value| value == qtype)
+                            && rule.qclass.is_none_or(|value| value == qclass)
+                            && rule.client.is_none_or(|value| Some(value) == client)
+                            && (rule.client_networks.is_empty()
+                                || client.is_some_and(|value| {
+                                    rule.client_networks
+                                        .iter()
+                                        .any(|network| network.contains(value))
+                                }))
+                    })
+                    .max_by_key(|rule| {
+                        (
+                            rule.priority,
+                            u8::from(rule.qclass.is_some()),
+                            u8::from(rule.qtype.is_some()),
+                            u8::from(rule.client.is_some()),
+                            rule.client_networks
+                                .iter()
+                                .map(|network| network.prefix())
+                                .max()
+                                .unwrap_or(0),
+                            rule.id,
+                        )
+                    })
+                    .map(|rule| policy::Decision {
+                        rule_id: rule.id,
+                        action: rule.action,
+                    })
+            })
         }
         fn matches(&self, name: &str) -> bool {
             let name = normalize(name);
@@ -4525,7 +4501,7 @@ mod runtime {
         pub(crate) fn admin_policy_status(&self) -> String {
             let _reload = self.reload_lock.read().expect("reload lock");
             let base_rules = self.base_rules.lock().expect("base rules lock");
-            let regex_rules = self.regex_rules.lock().expect("regex rules lock");
+            let regex_rules = self.regex_rules.snapshot();
             let blocklist_rules = self.blocklist_rules.lock().expect("blocklist rules lock");
             let blocklist_paths = self.blocklist_paths.lock().expect("blocklist paths lock");
             let profiles = self.profiles.read().expect("profiles lock");
@@ -4565,7 +4541,7 @@ mod runtime {
         pub(crate) fn admin_policy_bundle(&self) -> String {
             let _reload = self.reload_lock.read().expect("reload lock");
             let rules = self.explicit_rules.lock().expect("explicit rules lock");
-            let regex_rules = self.regex_rules.lock().expect("regex rules lock");
+            let regex_rules = self.regex_rules.snapshot();
             let profiles = self.profiles.read().expect("profiles lock");
             let client_groups = self.client_groups.read().expect("client groups lock");
             let client_identities = self.client_identities.snapshot();
@@ -4640,7 +4616,7 @@ mod runtime {
         pub(crate) fn admin_rules(&self) -> String {
             let _reload = self.reload_lock.read().expect("reload lock");
             let base_rules = self.base_rules.lock().expect("base rules lock").clone();
-            let regex_rules = self.regex_rules.lock().expect("regex rules lock");
+            let regex_rules = self.regex_rules.snapshot();
             let total = base_rules.len().saturating_add(regex_rules.len());
             let mut rules = Vec::with_capacity(total.min(256));
             for rule in &base_rules {
