@@ -129,7 +129,9 @@ publication.
 references them; dependent removals fail without changing the live snapshot.
 `POST /reload/policy-bundle` replaces the domain, regex, profile, client-group,
 local-rewrite, and country-policy tables as one validated snapshot while
-retaining loaded blocklists. Its optional `blocklists` array can replace the
+retaining loaded blocklists. Its optional `mode`, `domains`, and
+`default_action` fields also replace the legacy fallback settings atomically;
+its optional `blocklists` array can replace the
 blocklist source paths in the same validated publication; omitted or `null`
 retains the current blocklist snapshot. Reloads bound source count, path
 length, each file, and aggregate file bytes before touching the live snapshot.
