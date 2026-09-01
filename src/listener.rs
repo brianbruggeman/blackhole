@@ -196,6 +196,7 @@ async fn decide<'a>(
     }
     if !policy.allow_global_response_bytes(output.len()) {
         policy.observe_failure("global_response_budget");
+        policy.record_global_abuse("global_response_budget");
         let _ = state.transition(Event::Drop(DropReason::PolicyFailure));
         return Ok(None);
     }
