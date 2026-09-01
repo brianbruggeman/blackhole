@@ -25,7 +25,8 @@ below are future capabilities, grouped by the dependency layer they extend.
   scope replacement/upsert/removal operations.
 - Extend adaptive amplification controls for repeated abusive patterns beyond
   the current per-query response-ratio cap, aggregate/per-client admission
-  limits, and bounded rate/response-budget abuse breaker.
+  limits, bounded client/network/global rate and response-budget breakers,
+  and durable client/network incident markers.
 - Add managed GeoIP/region/ASN data lifecycle and richer country policy beyond
   the current explicit country/CIDR/region/ASN map labels and bounded background
   refresh; uncertainty must remain explicit.

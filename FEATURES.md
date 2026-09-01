@@ -75,6 +75,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   unrelated networks or unidentified callers.
 - A bounded global queries-per-second ceiling that sheds excess traffic,
   including unidentified callers, as a DDoS stopgap.
+- An opt-in lock-free global abuse breaker opens after repeated aggregate
+  rate or response-budget violations and temporarily sheds all callers; zero
+  disables it, and its window/cooldown are bounded and operator-configurable.
 - Automatic temporary IP and network blacklisting after repeated per-client
   rate or encoded-response-budget violations; entries use bounded lock-free
   keyed state, expire after a configured cooldown, and fail closed while
