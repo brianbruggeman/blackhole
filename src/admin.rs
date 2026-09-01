@@ -1270,6 +1270,16 @@ mod tests {
                 .windows(b"/reload/config".len())
                 .any(|window| window == b"/reload/config")
         );
+        assert!(
+            ui.payload
+                .windows(b"/reload/filtering".len())
+                .any(|window| window == b"/reload/filtering")
+        );
+        assert!(
+            ui.payload
+                .windows(b"toggle-filtering".len())
+                .any(|window| window == b"toggle-filtering")
+        );
         for route in [
             b"/reload/profiles/upsert".as_slice(),
             b"/reload/profiles/remove".as_slice(),
