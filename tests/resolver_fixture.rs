@@ -1,4 +1,5 @@
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
+use std::io::{Read, Write};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, UdpSocket};
 use std::sync::Arc;
 
 use blackhole::listener::{TcpProtocol, UdpProtocol};
@@ -187,6 +188,141 @@ async fn listener_forwards_allowed_query_to_loopback_upstream() {
         assert!(boundaries.encode_output > 0);
         assert!(boundaries.transport_write > 0);
     }
+}
+
+#[proxima::test]
+async fn listener_retries_a_truncated_upstream_reply_over_tcp() {
+    let upstream_udp = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind upstream udp");
+    let upstream_addr = upstream_udp.local_addr().expect("upstream address");
+    let upstream_tcp = TcpListener::bind(upstream_addr).expect("bind upstream tcp");
+    let upstream_thread = std::thread::spawn(move || {
+        let mut query = [0u8; 4096];
+        let (len, peer) = upstream_udp
+            .recv_from(&mut query)
+            .expect("receive truncated udp query");
+        let udp_message = parse_message(&query[..len]).expect("parse udp query");
+        let question = udp_message
+            .questions()
+            .next()
+            .expect("udp question")
+            .expect("valid udp question");
+        let name = question.name.to_dotted();
+        let mut truncated = Vec::new();
+        encode::encode_response(
+            udp_message.header.id,
+            Flags(Flags::for_response(true, false, true, 0).0 | 0x0200),
+            encode::EncodeQuestion {
+                name: &name,
+                qtype: question.qtype,
+                qclass: question.qclass,
+            },
+            &[],
+            &mut truncated,
+        )
+        .expect("encode truncated response");
+        upstream_udp
+            .send_to(&truncated, peer)
+            .expect("send truncated response");
+
+        let (mut stream, _) = upstream_tcp.accept().expect("accept tcp fallback");
+        let mut frame_len = [0u8; 2];
+        stream.read_exact(&mut frame_len).expect("read tcp length");
+        let mut tcp_query = vec![0u8; usize::from(u16::from_be_bytes(frame_len))];
+        stream.read_exact(&mut tcp_query).expect("read tcp query");
+        let tcp_message = parse_message(&tcp_query).expect("parse tcp query");
+        let tcp_question = tcp_message
+            .questions()
+            .next()
+            .expect("tcp question")
+            .expect("valid tcp question");
+        let tcp_name = tcp_question.name.to_dotted();
+        let rdata = encode::ipv4_rdata(Ipv4Addr::new(192, 0, 2, 99));
+        let answer = encode::AnswerRecord {
+            name: &tcp_name,
+            rtype: 1,
+            rclass: tcp_question.qclass,
+            ttl: 30,
+            rdata: &rdata,
+        };
+        let mut complete = Vec::new();
+        encode::encode_response(
+            tcp_message.header.id,
+            Flags::for_response(true, false, true, 0),
+            encode::EncodeQuestion {
+                name: &tcp_name,
+                qtype: tcp_question.qtype,
+                qclass: tcp_question.qclass,
+            },
+            &[answer],
+            &mut complete,
+        )
+        .expect("encode tcp response");
+        stream
+            .write_all(&(u16::try_from(complete.len()).expect("tcp response fits")).to_be_bytes())
+            .expect("write tcp length");
+        stream.write_all(&complete).expect("write tcp response");
+    });
+
+    let mut config = Config::default();
+    config.server.listen = "127.0.0.1:0".into();
+    config.policy.default_action = Action::Forward;
+    config.upstream = Some(UpstreamConfig {
+        resolver_ip: upstream_addr.ip().to_string(),
+        port: upstream_addr.port(),
+        query_timeout_ms: 500,
+        max_attempts: 1,
+        ..UpstreamConfig::default()
+    });
+    let upstream = config.upstream.clone().expect("upstream config");
+    let policy = Arc::new(
+        Policy::new(config)
+            .expect("valid policy")
+            .with_upstream(
+                Arc::new(PrimeDatagramFactory),
+                Policy::resolver_config(&upstream),
+                upstream.max_outstanding,
+            )
+            .with_tcp_upstream(PrimeTcpUpstream::boxed(upstream_addr)),
+    );
+    let listener_addr = test_listener_addr();
+    let server = Listener::builder()
+        .bind(listener_addr)
+        .any()
+        .protocol(UdpProtocol::new(Arc::clone(&policy)))
+        .handle(into_handle(Passthrough))
+        .serve()
+        .await
+        .expect("serve listener");
+
+    let mut client = PrimeDatagramFactory
+        .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+        .expect("bind client");
+    let mut query = Vec::new();
+    encode::encode_query(
+        0x4321,
+        true,
+        encode::EncodeQuestion {
+            name: "fallback.example.",
+            qtype: 1,
+            qclass: 1,
+        },
+        &mut query,
+    )
+    .expect("encode client query");
+    std::future::poll_fn(|cx| client.poll_send_to(cx, &query, listener_addr))
+        .await
+        .expect("send client query");
+    let mut response = [0u8; 4096];
+    let (len, _) = std::future::poll_fn(|cx| client.poll_recv_from(cx, &mut response))
+        .await
+        .expect("receive client response");
+    let message = parse_message(&response[..len]).expect("parse client response");
+    assert_eq!(message.header.id, 0x4321);
+    assert_eq!(message.header.flags.rcode(), 0);
+    assert_eq!(message.answers().count(), 1);
+
+    server.stop();
+    upstream_thread.join().expect("upstream thread");
 }
 
 #[proxima::test]
