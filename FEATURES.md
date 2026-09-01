@@ -194,6 +194,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   atomically through a bounded JSON route.
 - The bounded authenticated status UI also displays configured rewrite metadata
   through the existing Proxima HTTP pipe.
+- The bounded authenticated status UI can enable or disable retained service
+  profiles, client groups, and client identities through their validated
+  atomic upsert routes.
 - The authenticated admin control plane includes a bounded status UI for
   status, admission limits, adaptive-abuse status and clearing, privacy
   status, rule metadata, and privacy-log inspection/clearing; it loads the

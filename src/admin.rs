@@ -95,9 +95,9 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <h2>Country policy</h2><pre id="country-status">loading…</pre>
 <h2>Privacy status</h2><pre id="privacy-status">loading…</pre>
 <h2>Rules</h2><pre id="rules">loading…</pre>
-<h2>Service profiles</h2><pre id="profiles">loading…</pre>
-<h2>Client groups</h2><pre id="groups">loading…</pre>
-<h2>Client identities</h2><pre id="identities">loading…</pre>
+<h2>Service profiles</h2><div id="profile-controls"></div><pre id="profiles">loading…</pre>
+<h2>Client groups</h2><div id="group-controls"></div><pre id="groups">loading…</pre>
+<h2>Client identities</h2><div id="identity-controls"></div><pre id="identities">loading…</pre>
 <h2>Local rewrites</h2><pre id="rewrites">loading…</pre>
 <h2>Privacy log</h2><pre id="logs">loading…</pre>
 <script>
@@ -113,6 +113,26 @@ const load = (path, target) => fetch(path).then(response => response.json()).the
       }).then(refresh);
       controls.append(button);
     }
+  }
+  if (path === '/policy-bundle') {
+    const toggle = (id, items, route, field, label) => {
+      const controls = document.querySelector(id);
+      controls.replaceChildren();
+      for (const item of items || []) {
+        const button = document.createElement('button');
+        button.textContent = `${item.enabled ? 'Disable' : 'Enable'} ${item.name || item.id}`;
+        button.onclick = () => {
+          const next = Object.assign({}, item, {enabled: !item.enabled});
+          return operate(route, {
+            method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({[field]:[next]})
+          }).then(refresh);
+        };
+        controls.append(button, document.createTextNode(` ${label} `));
+      }
+    };
+    toggle('#profile-controls', value.profiles, '/reload/profiles/upsert', 'profiles', '');
+    toggle('#group-controls', value.client_groups, '/reload/client-groups/upsert', 'client_groups', '');
+    toggle('#identity-controls', value.client_identities, '/reload/client-identities/upsert', 'client_identities', '');
   }
   if (path === '/policy-bundle') document.querySelector(target).value = JSON.stringify(value, null, 2);
   else document.querySelector(target).textContent = JSON.stringify(value, null, 2);
@@ -979,7 +999,29 @@ mod tests {
                 .windows(b"/reload/config".len())
                 .any(|window| window == b"/reload/config")
         );
-        assert!(ui.payload.len() < 5 * 1024);
+        for route in [
+            b"/reload/profiles/upsert".as_slice(),
+            b"/reload/client-groups/upsert".as_slice(),
+            b"/reload/client-identities/upsert".as_slice(),
+        ] {
+            assert!(
+                ui.payload
+                    .windows(route.len())
+                    .any(|window| window == route)
+            );
+        }
+        for control in [
+            b"profile-controls".as_slice(),
+            b"group-controls".as_slice(),
+            b"identity-controls".as_slice(),
+        ] {
+            assert!(
+                ui.payload
+                    .windows(control.len())
+                    .any(|window| window == control)
+            );
+        }
+        assert!(ui.payload.len() < 6 * 1024);
         let clear =
             block_on(handler.call(request("POST", "/cache/clear"))).expect("cache clear response");
         assert_eq!(clear.status, 200);
