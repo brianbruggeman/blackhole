@@ -243,6 +243,8 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - The authenticated UI also provides bounded JSON editors for creating or
   updating profiles, client groups, and client identities through those same
   validated atomic routes.
+- The authenticated UI provides a bounded country-policy editor that uses the
+  atomic country-map replacement route and retains the last valid map on error.
 - The incident section exposes bounded revoke and explicit approval controls
   for selected exact client addresses.
 - The authenticated admin control plane includes a bounded status UI for

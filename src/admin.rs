@@ -99,7 +99,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <h2>Incidents</h2><p><button id="export-abuse">Export durable</button></p><pre id="abuse-incidents"></pre>
 <h2>Policy bundle</h2><textarea id="policy-bundle" rows="12" cols="80">loading…</textarea>
 <h2>Blocklists</h2><textarea id="blocklist-sources"></textarea><button id="replace-blocklists">Replace</button><button id="add-blocklists">Add</button><button id="remove-blocklists">Remove</button><button id="reload-blocklists">Reload</button><div id="blocklist-controls"></div><pre id="blocklists"></pre>
-<h2>Country</h2><pre id="country-status"></pre>
+<h2>Country</h2><textarea id="country-editor" rows="8" cols="80"></textarea><button id="replace-country">Replace country policy</button><pre id="country-status"></pre>
 <h2>Privacy</h2><pre id="privacy-status"></pre>
 <h2>Rules</h2><pre id="rules"></pre>
 <h2>Profiles</h2><textarea id="profile-editor" rows="8" cols="80"></textarea><button id="upsert-profiles">Upsert profiles</button><div id="profile-controls"></div><pre id="profiles"></pre>
@@ -143,6 +143,7 @@ const load = (path, target) => fetch(path).then(response => response.json()).the
     document.querySelector('#profile-editor').value = JSON.stringify(value.profiles || [], null, 2);
     document.querySelector('#group-editor').value = JSON.stringify(value.client_groups || [], null, 2);
     document.querySelector('#identity-editor').value = JSON.stringify(value.client_identities || [], null, 2);
+    document.querySelector('#country-editor').value = JSON.stringify(value.country_policy || {}, null, 2);
   }
   if (path === '/policy-bundle') document.querySelector(target).value = JSON.stringify(value, null, 2);
   else if (path === '/abuse/denylist') document.querySelector(target).value = JSON.stringify(value, null, 2);
@@ -160,6 +161,10 @@ const edit = (id, path, field) => {
   try { return send(path, {[field]: JSON.parse(document.querySelector(id).value)}); }
   catch (error) { document.querySelector('#operation-status').textContent = `${path}: ${error.message}`; return Promise.reject(error); }
 };
+const replaceCountry = () => {
+  try { return operate('/reload/country/replace', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#country-editor').value}).then(refresh); }
+  catch (error) { document.querySelector('#operation-status').textContent = `/reload/country/replace: ${error.message}`; return Promise.reject(error); }
+};
 const refresh = () => Promise.all([load('/status','#status'), load('/stats','#stats'), load('/admission/status','#admission-status'), load('/abuse/status','#abuse-status'), load('/abuse/incidents','#abuse-incidents'), load('/abuse/denylist','#denylist-config'), load('/policy-bundle','#policy-bundle'), load('/blocklists','#blocklists'), load('/country/status','#country-status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/client-identities','#identities'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
 document.querySelector('#clear-logs').onclick = () => operate('/logs/clear', {method:'POST'}).then(refresh);
 document.querySelector('#clear-stats').onclick = () => operate('/stats/clear', {method:'POST'}).then(refresh);
@@ -176,6 +181,7 @@ for (const [id,op] of [['replace-blocklists','replace'],['add-blocklists','add']
 document.querySelector('#upsert-profiles').onclick = () => edit('#profile-editor', '/reload/profiles/upsert', 'profiles');
 document.querySelector('#upsert-groups').onclick = () => edit('#group-editor', '/reload/client-groups/upsert', 'client_groups');
 document.querySelector('#upsert-identities').onclick = () => edit('#identity-editor', '/reload/client-identities/upsert', 'client_identities');
+document.querySelector('#replace-country').onclick = replaceCountry;
 document.querySelector('#reload-blocklists').onclick = () => operate('/reload/blocklists', {method:'POST'}).then(refresh);
 document.querySelector('#reload-country').onclick = () => operate('/reload/country', {method:'POST'}).then(refresh);
 document.querySelector('#reload-admission').onclick = () => operate('/reload/admission', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#admission-config').value}).then(refresh);
@@ -1314,6 +1320,8 @@ mod tests {
             b"upsert-profiles".as_slice(),
             b"upsert-groups".as_slice(),
             b"upsert-identities".as_slice(),
+            b"country-editor".as_slice(),
+            b"replace-country".as_slice(),
         ] {
             assert!(
                 ui.payload
