@@ -2690,7 +2690,8 @@ mod runtime {
         client_identity_control: LiveControl<Vec<ClientIdentityConfig>>,
         country_policy: Live<Option<CountryPolicy>>,
         country_policy_control: LiveControl<Option<CountryPolicy>>,
-        country_policy_config: RwLock<CountryPolicyConfig>,
+        country_policy_config: Live<CountryPolicyConfig>,
+        country_policy_config_control: LiveControl<CountryPolicyConfig>,
         reload_lock: RwLock<()>,
         legacy_domains: Live<Vec<String>>,
         legacy_domains_control: LiveControl<Vec<String>>,
@@ -3041,6 +3042,8 @@ mod runtime {
             let country_policy_config = config.country_policy.clone();
             let (client_identities, client_identity_control) = live(client_identities);
             let (country_policy, country_policy_control) = live(country_policy);
+            let (country_policy_config, country_policy_config_control) =
+                live(country_policy_config);
             let (admission, admission_control) = live(admission);
             let (rewrites, rewrite_control) = live(rewrites);
             let (rewrite_configs, rewrite_configs_control) = live(rewrite_configs);
@@ -3062,7 +3065,8 @@ mod runtime {
                 client_identity_control,
                 country_policy,
                 country_policy_control,
-                country_policy_config: RwLock::new(country_policy_config),
+                country_policy_config,
+                country_policy_config_control,
                 reload_lock: RwLock::new(()),
                 legacy_domains,
                 legacy_domains_control,
@@ -3860,11 +3864,7 @@ mod runtime {
         pub fn reload_country_policy(&self) -> Result<ReloadState, policy::PolicyError> {
             let _reload = self.reload_lock.write().expect("reload lock");
             let started = Instant::now();
-            let config = self
-                .country_policy_config
-                .read()
-                .expect("country policy config lock")
-                .clone();
+            let config = self.country_policy_config.snapshot().as_ref().clone();
             let next = load_country_policy(&config)?;
             self.country_policy_control.replace(next);
             self.policy_generation.fetch_add(1, Ordering::Relaxed);
@@ -3876,11 +3876,7 @@ mod runtime {
         pub fn reload_country_policy_if_changed(&self) -> Result<ReloadState, policy::PolicyError> {
             let _reload = self.reload_lock.write().expect("reload lock");
             let started = Instant::now();
-            let config = self
-                .country_policy_config
-                .read()
-                .expect("country policy config lock")
-                .clone();
+            let config = self.country_policy_config.snapshot().as_ref().clone();
             let next = load_country_policy(&config)?;
             let unchanged = self.country_policy.snapshot().as_ref() == &next;
             if unchanged {
@@ -3904,10 +3900,7 @@ mod runtime {
             let started = Instant::now();
             let next = load_country_policy(config)?;
             self.country_policy_control.replace(next);
-            *self
-                .country_policy_config
-                .write()
-                .expect("country policy config lock") = config.clone();
+            self.country_policy_config_control.replace(config.clone());
             self.policy_generation.fetch_add(1, Ordering::Relaxed);
             self.observe_reload_latency("country_replace", started);
             Ok(ReloadState::Published)
@@ -4448,10 +4441,8 @@ mod runtime {
             self.rewrite_configs_control
                 .replace(rewrite_configs.to_vec());
             self.country_policy_control.replace(country_policy);
-            *self
-                .country_policy_config
-                .write()
-                .expect("country policy config lock") = country_config.clone();
+            self.country_policy_config_control
+                .replace(country_config.clone());
             if let Some(admission) = admission {
                 self.admission_control.replace(admission.clone());
             }
@@ -6045,10 +6036,7 @@ mod runtime {
         pub(crate) fn admin_country_status(&self) -> String {
             let country_policy = self.country_policy.snapshot();
             let policy = country_policy.as_ref();
-            let config = self
-                .country_policy_config
-                .read()
-                .expect("country policy config lock");
+            let config = self.country_policy_config.snapshot();
             let source_kind = config.map_path.as_deref().map_or("none", |source| {
                 if http_source_parts(source).is_some() {
                     "hosted_http"
@@ -6148,10 +6136,7 @@ mod runtime {
                 .count();
             let rewrites = self.rewrites.snapshot();
             let country_policy = self.country_policy.snapshot();
-            let country_config = self
-                .country_policy_config
-                .read()
-                .expect("country policy config lock");
+            let country_config = self.country_policy_config.snapshot();
             serde_json::json!({
                 "rules_configured": self.rules_configured.load(Ordering::Acquire),
                 "domain_rules": base_rules.len(),
@@ -6322,11 +6307,7 @@ mod runtime {
                     "cname": rewrite.cname,
                     "ttl": rewrite.ttl,
                 })).collect::<Vec<_>>(),
-                "country_policy": self
-                    .country_policy_config
-                    .read()
-                    .expect("country policy config lock")
-                    .clone(),
+                "country_policy": self.country_policy_config.snapshot().as_ref().clone(),
                 "blocklists": serde_json::Value::Null,
                 "disabled_blocklists": self
                     .disabled_blocklist_paths
