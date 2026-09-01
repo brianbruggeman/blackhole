@@ -63,7 +63,14 @@ jobs:
             macos-cargo-check.log
       - name: fail if macOS check failed
         if: steps.macos-check.outcome == 'failure'
-        run: exit 1
+        run: |
+          while IFS= read -r line; do
+            escaped=${line//'%'/'%25'}
+            escaped=${escaped//$'\r'/'%0D'}
+            escaped=${escaped//$'\n'/'%0A'}
+            echo "::error title=macOS cargo check::$escaped"
+          done < <(tail -n 80 macos-cargo-check.log)
+          exit 1
 
   wasm:
     runs-on: ubuntu-latest
