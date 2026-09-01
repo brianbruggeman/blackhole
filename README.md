@@ -111,11 +111,14 @@ token = "a-long-random-secret"
 ```
 
 It provides an authenticated bounded status UI at `GET /` that links the
-status, admission-limit, country-policy, privacy status, rule metadata, and privacy-log views, with a button for
-reloading configured blocklists. The same routes are available as
+status, admission-limit, country-policy, privacy status, rule metadata, and
+privacy-log views, loads the current policy bundle into an editable bounded
+JSON form, and provides buttons for reloading configured blocklists or
+publishing the complete bundle. The same routes are available as
 authenticated `GET /health`, `GET /status`, bounded `GET /admission/status`,
 `GET /country/status`,
 `GET /policy/status`,
+`GET /policy-bundle`,
 `GET /rules`, `GET /logs`,
 and `POST /logs/clear`, `POST /cache/clear`, `POST /reload/blocklists`, bounded
 `POST /reload/admission` (a bounded JSON admission configuration; the global
