@@ -172,13 +172,16 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Authenticated bounded `POST /reload/profiles/remove` removes service profiles
   by stable ID and rejects unknown IDs without changing the live snapshot.
 - Authenticated bounded `POST /reload/policy-bundle` validates and replaces
-  domain, regex, profile, client-group, local-rewrite, and country-policy
+  domain, regex, profile, client-group, client-identity, local-rewrite, and country-policy
   tables as one snapshot while retaining the loaded blocklist snapshot; an
   optional blocklist-path array replaces sources only after all files validate,
   with bounded source count, path length, per-file size, and aggregate bytes.
 - The policy-bundle reload can also atomically replace the legacy fallback mode,
   legacy domain set, and default action; invalid legacy domains fail before any
   table or fallback setting is published.
+- The policy-bundle editor round-trips bounded client-identity address mappings;
+  identity publication uses Proxima's lock-free `Live` snapshot and rejects
+  invalid replacements before changing the current mapping.
 - Authenticated cache deletion clears all bounded positive and negative DNS
   answers and reports only the number of entries removed.
 - Optional bounded privacy-safe query-decision logs use Proxima's recording

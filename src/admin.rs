@@ -56,6 +56,8 @@ struct PolicyBundle {
     #[serde(default)]
     client_groups: Vec<ClientGroupConfig>,
     #[serde(default)]
+    client_identities: Vec<ClientIdentityConfig>,
+    #[serde(default)]
     rewrites: Vec<RewriteConfig>,
     #[serde(default)]
     country_policy: CountryPolicyConfig,
@@ -212,6 +214,7 @@ impl SendPipe for AdminHandler {
                     &bundle.regex_rules,
                     &bundle.profiles,
                     &bundle.client_groups,
+                    &bundle.client_identities,
                     &bundle.rewrites,
                     &bundle.country_policy,
                     bundle.blocklists.as_deref(),
@@ -1226,7 +1229,7 @@ mod tests {
             .method("POST")
             .path("/reload/policy-bundle")
             .payload(
-                r#"{"rules":[{"id":7,"domain":"blocked.example","action":"nxdomain"}],"regex_rules":[{"id":8,"pattern":"^ads\\.","action":"drop"}],"profiles":[{"id":9,"name":"family","domains":["family.example"],"action":"reject"}],"client_groups":[],"rewrites":[{"name":"router.example","ipv4":"192.0.2.1","ipv6":null,"ttl":30}]}"#,
+                r#"{"rules":[{"id":7,"domain":"blocked.example","action":"nxdomain"}],"regex_rules":[{"id":8,"pattern":"^ads\\.","action":"drop"}],"profiles":[{"id":9,"name":"family","domains":["family.example"],"action":"reject"}],"client_groups":[],"client_identities":[{"name":"family-router","clients":["192.0.2.10"]}],"rewrites":[{"name":"router.example","ipv4":"192.0.2.1","ipv6":null,"ttl":30}]}"#,
             )
             .build()
             .expect("policy bundle request");
@@ -1243,6 +1246,8 @@ mod tests {
         assert_eq!(bundle["regex_rules"][0]["action"], "drop");
         assert_eq!(bundle["profiles"][0]["name"], "family");
         assert_eq!(bundle["profiles"][0]["action"], "reject");
+        assert_eq!(bundle["client_identities"][0]["name"], "family-router");
+        assert_eq!(bundle["client_identities"][0]["clients"][0], "192.0.2.10");
         assert_eq!(bundle["rewrites"][0]["name"], "router.example");
         assert_eq!(bundle["rewrites"][0]["ipv4"], "192.0.2.1");
         assert_eq!(bundle["blocklists"], serde_json::Value::Null);

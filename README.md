@@ -176,6 +176,7 @@ normalized DNS name, while `POST /reload/rewrites/remove` removes named
 rewrites atomically; `POST /reload/rewrites` replaces the complete rewrite
 table. Invalid and unknown updates fail without publication.
 `POST /reload/policy-bundle` replaces the domain, regex, profile, client-group,
+client-identity,
 local-rewrite, and country-policy tables as one validated snapshot while
 retaining loaded blocklists. Its optional `mode`, `domains`, and
 `default_action` fields also replace the legacy fallback settings atomically;

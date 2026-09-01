@@ -3022,6 +3022,7 @@ mod runtime {
                 regex_configs,
                 profiles,
                 client_groups,
+                &[],
                 rewrite_configs,
                 country_config,
                 blocklist_paths,
@@ -3039,6 +3040,7 @@ mod runtime {
             regex_configs: &[RegexRuleConfig],
             profiles: &[ServiceProfileConfig],
             client_groups: &[ClientGroupConfig],
+            client_identities: &[ClientIdentityConfig],
             rewrite_configs: &[RewriteConfig],
             country_config: &CountryPolicyConfig,
             blocklist_paths: Option<&[String]>,
@@ -3051,6 +3053,7 @@ mod runtime {
             let normalized_legacy_domains =
                 legacy_domains.map(validate_legacy_domains).transpose()?;
             let generated = compile_profiles(profiles, client_groups)?;
+            let client_identities = validate_client_identities(client_identities)?;
             let rewrites = compile_rewrites(rewrite_configs)?;
             let country_policy = load_country_policy(country_config)?;
             let (replacement, selected_paths) = if let Some(paths) = blocklist_paths {
@@ -3079,6 +3082,7 @@ mod runtime {
             *self.regex_rules.lock().expect("regex rules lock") = compiled_regex;
             *self.profiles.write().expect("profiles lock") = profiles.to_vec();
             *self.client_groups.write().expect("client groups lock") = client_groups.to_vec();
+            self.client_identity_control.replace(client_identities);
             *self.rewrites.write().expect("rewrites lock") = rewrites;
             *self.rewrite_configs.write().expect("rewrite configs lock") = rewrite_configs.to_vec();
             *self.country_policy.write().expect("country policy lock") = country_policy;
@@ -4371,6 +4375,7 @@ mod runtime {
             let regex_rules = self.regex_rules.lock().expect("regex rules lock");
             let profiles = self.profiles.read().expect("profiles lock");
             let client_groups = self.client_groups.read().expect("client groups lock");
+            let client_identities = self.client_identities.snapshot();
             let rewrites = self.rewrite_configs.read().expect("rewrite configs lock");
             let value = serde_json::json!({
                 "mode": mode_label(*self.legacy_mode.read().expect("legacy mode lock")),
@@ -4413,6 +4418,10 @@ mod runtime {
                     "name": group.name,
                     "client_addresses": group.client_addresses,
                     "client_cidrs": group.client_cidrs,
+                })).collect::<Vec<_>>(),
+                "client_identities": client_identities.iter().map(|identity| serde_json::json!({
+                    "name": identity.name,
+                    "clients": identity.clients,
                 })).collect::<Vec<_>>(),
                 "rewrites": rewrites.iter().map(|rewrite| serde_json::json!({
                     "name": rewrite.name,
