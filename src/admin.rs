@@ -1433,6 +1433,7 @@ mod tests {
         assert_eq!(profiles["total"], 1);
         assert_eq!(profiles["profiles"][0]["name"], "family");
         assert_eq!(profiles["profiles"][0]["client_identity"], "family-router");
+        assert_eq!(profiles["profiles"][0]["expanded_rule_count"], 1);
         let groups =
             block_on(handler.call(request("GET", "/client-groups"))).expect("client groups");
         let groups: serde_json::Value =

@@ -5251,10 +5251,30 @@ mod runtime {
         pub(crate) fn admin_profiles(&self) -> String {
             let _reload = self.reload_lock.read().expect("reload lock");
             let profiles = self.profiles.read().expect("profiles lock");
+            let groups = self.client_groups.read().expect("client groups lock");
             let visible = profiles
                 .iter()
                 .take(MAX_ADMIN_LOG_ENTRIES)
                 .map(|profile| {
+                    let scope_count = if profile.groups.is_empty() {
+                        1
+                    } else {
+                        profile
+                            .groups
+                            .iter()
+                            .filter_map(|name| {
+                                groups
+                                    .iter()
+                                    .find(|group| group.name.eq_ignore_ascii_case(name))
+                            })
+                            .map(|group| {
+                                group
+                                    .client_addresses
+                                    .len()
+                                    .saturating_add(usize::from(!group.client_cidrs.is_empty()))
+                            })
+                            .sum()
+                    };
                     serde_json::json!({
                         "id": profile.id,
                         "name": profile.name,
@@ -5266,6 +5286,7 @@ mod runtime {
                         "priority": profile.priority,
                         "qtype": profile.qtype,
                         "qclass": profile.qclass,
+                        "expanded_rule_count": profile.domains.len().saturating_mul(scope_count),
                     })
                 })
                 .collect::<Vec<_>>();
