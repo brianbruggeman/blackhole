@@ -283,6 +283,7 @@ mod runtime {
 
     struct AtomicWindowBucket {
         state: AtomicU64,
+        blocked_until: AtomicU64,
         last_access_micros: AtomicU64,
     }
 
@@ -290,6 +291,7 @@ mod runtime {
         fn new() -> Self {
             Self {
                 state: AtomicU64::new(0),
+                blocked_until: AtomicU64::new(0),
                 last_access_micros: AtomicU64::new(0),
             }
         }
@@ -324,6 +326,63 @@ mod runtime {
                 }
             }
         }
+
+        fn abuse_allows(&self, epoch: Instant, window: Duration) -> bool {
+            let now = epoch.elapsed().as_secs();
+            if self.blocked_until.load(Ordering::Acquire) > now {
+                return false;
+            }
+            let current = self.state.load(Ordering::Acquire);
+            if current >> 32 != now {
+                let _ = self.state.compare_exchange(
+                    current,
+                    now << 32,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                );
+            } else if window.is_zero() {
+                return false;
+            }
+            true
+        }
+
+        fn record_abuse(
+            &self,
+            epoch: Instant,
+            window: Duration,
+            cooldown: Duration,
+            threshold: usize,
+        ) -> bool {
+            if threshold == 0 {
+                return false;
+            }
+            let now = epoch.elapsed().as_secs();
+            let window_secs = window.as_secs().max(1);
+            let cooldown_secs = cooldown.as_secs().max(1);
+            loop {
+                let current = self.state.load(Ordering::Acquire);
+                let current_window = current >> 32;
+                let current_count = current & u32::MAX as u64;
+                let (window_start, count) = if now.saturating_sub(current_window) >= window_secs {
+                    (now, 1)
+                } else {
+                    (current_window, current_count.saturating_add(1))
+                };
+                let next = (window_start << 32) | count.min(u32::MAX as u64);
+                if self
+                    .state
+                    .compare_exchange(current, next, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+                {
+                    let opened = count >= threshold.min(u32::MAX as usize) as u64;
+                    if opened {
+                        self.blocked_until
+                            .store(now.saturating_add(cooldown_secs), Ordering::Release);
+                    }
+                    return opened;
+                }
+            }
+        }
     }
 
     struct KeyedWindowBudgetTable {
@@ -348,6 +407,39 @@ mod runtime {
                 Ordering::Relaxed,
             );
             bucket.allow(epoch, limit, amount)
+        }
+
+        fn abuse_allows(&self, key: &[u8], epoch: Instant, window: Duration) -> bool {
+            if self.buckets.len() >= MAX_CLIENT_RATE_ENTRIES {
+                self.buckets
+                    .evict_one_lru(|bucket| bucket.last_access_micros.load(Ordering::Relaxed));
+            }
+            let bucket = self.buckets.get_or_insert(key, AtomicWindowBucket::new);
+            bucket.last_access_micros.store(
+                epoch.elapsed().as_micros().min(u64::MAX as u128) as u64,
+                Ordering::Relaxed,
+            );
+            bucket.abuse_allows(epoch, window)
+        }
+
+        fn record_abuse(
+            &self,
+            key: &[u8],
+            epoch: Instant,
+            window: Duration,
+            cooldown: Duration,
+            threshold: usize,
+        ) -> bool {
+            if self.buckets.len() >= MAX_CLIENT_RATE_ENTRIES {
+                self.buckets
+                    .evict_one_lru(|bucket| bucket.last_access_micros.load(Ordering::Relaxed));
+            }
+            let bucket = self.buckets.get_or_insert(key, AtomicWindowBucket::new);
+            bucket.last_access_micros.store(
+                epoch.elapsed().as_micros().min(u64::MAX as u128) as u64,
+                Ordering::Relaxed,
+            );
+            bucket.record_abuse(epoch, window, cooldown, threshold)
         }
     }
 
@@ -392,13 +484,6 @@ mod runtime {
                 }
             }
         }
-    }
-
-    #[derive(Debug, Clone, Copy)]
-    struct ClientAbuse {
-        window_started: Instant,
-        violations: usize,
-        blocked_until: Option<Instant>,
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -2071,8 +2156,8 @@ mod runtime {
         client_response_budgets: KeyedWindowBudgetTable,
         network_response_budgets: KeyedWindowBudgetTable,
         global_response_budget: AtomicWindowBudget,
-        client_abuse: Arc<Mutex<HashMap<IpAddr, ClientAbuse>>>,
-        network_abuse: Arc<Mutex<HashMap<AbuseNetworkKey, ClientAbuse>>>,
+        client_abuse: KeyedWindowBudgetTable,
+        network_abuse: KeyedWindowBudgetTable,
     }
 
     struct RegexRule {
@@ -2152,62 +2237,6 @@ mod runtime {
             });
         }
         Ok(regex_rules)
-    }
-
-    fn abuse_state_allows(state: &mut ClientAbuse, now: Instant, window: Duration) -> bool {
-        if state.blocked_until.is_some_and(|until| until > now) {
-            return false;
-        }
-        if state.blocked_until.is_some_and(|until| until <= now) {
-            state.blocked_until = None;
-            state.violations = 0;
-            state.window_started = now;
-        } else if now.duration_since(state.window_started) >= window {
-            state.violations = 0;
-            state.window_started = now;
-        }
-        true
-    }
-
-    fn record_abuse<K: Copy + Eq + Hash>(
-        abuse: &mut HashMap<K, ClientAbuse>,
-        key: K,
-        now: Instant,
-        window: Duration,
-        cooldown: Duration,
-        threshold: usize,
-    ) -> bool {
-        if let Some(state) = abuse.get_mut(&key) {
-            if now.duration_since(state.window_started) >= window {
-                state.window_started = now;
-                state.violations = 0;
-                state.blocked_until = None;
-            }
-            state.violations = state.violations.saturating_add(1);
-            if state.violations >= threshold {
-                state.blocked_until = Some(now + cooldown);
-                return true;
-            }
-            return false;
-        }
-        if abuse.len() >= MAX_CLIENT_RATE_ENTRIES {
-            if let Some(oldest) = abuse
-                .iter()
-                .min_by_key(|(_, state)| state.window_started)
-                .map(|(key, _)| *key)
-            {
-                abuse.remove(&oldest);
-            }
-        }
-        abuse.insert(
-            key,
-            ClientAbuse {
-                window_started: now,
-                violations: 1,
-                blocked_until: None,
-            },
-        );
-        false
     }
 
     impl Policy {
@@ -2440,8 +2469,8 @@ mod runtime {
                 client_response_budgets: KeyedWindowBudgetTable::new(),
                 network_response_budgets: KeyedWindowBudgetTable::new(),
                 global_response_budget: AtomicWindowBudget::new(),
-                client_abuse: Arc::new(Mutex::new(HashMap::new())),
-                network_abuse: Arc::new(Mutex::new(HashMap::new())),
+                client_abuse: KeyedWindowBudgetTable::new(),
+                network_abuse: KeyedWindowBudgetTable::new(),
             };
             if let Some(upstream) = policy.config.upstream.as_ref() {
                 policy.validate_upstream(upstream)?;
@@ -3854,36 +3883,23 @@ mod runtime {
                 return true;
             };
             let admission = self.admission_config();
-            let now = Instant::now();
-            let exact_allowed = self
-                .client_abuse
-                .lock()
-                .expect("client abuse lock")
-                .get_mut(&client)
-                .is_none_or(|state| {
-                    abuse_state_allows(
-                        state,
-                        now,
-                        Duration::from_secs(admission.client_abuse_window_secs),
-                    )
-                });
+            let (client_key, client_key_len) = ip_key(client);
+            let exact_allowed = self.client_abuse.abuse_allows(
+                &client_key[..client_key_len],
+                self.breaker_epoch,
+                Duration::from_secs(admission.client_abuse_window_secs),
+            );
             let network = abuse_network_key(
                 client,
                 admission.network_abuse_ipv4_prefix,
                 admission.network_abuse_ipv6_prefix,
             );
-            let network_allowed = self
-                .network_abuse
-                .lock()
-                .expect("network abuse lock")
-                .get_mut(&network)
-                .is_none_or(|state| {
-                    abuse_state_allows(
-                        state,
-                        now,
-                        Duration::from_secs(admission.network_abuse_window_secs),
-                    )
-                });
+            let (network_key, network_key_len) = abuse_network_bytes(network);
+            let network_allowed = self.network_abuse.abuse_allows(
+                &network_key[..network_key_len],
+                self.breaker_epoch,
+                Duration::from_secs(admission.network_abuse_window_secs),
+            );
             exact_allowed && network_allowed
         }
 
@@ -3892,11 +3908,10 @@ mod runtime {
                 return false;
             };
             let admission = self.admission_config();
-            let now = Instant::now();
-            let exact_opened = record_abuse(
-                &mut self.client_abuse.lock().expect("client abuse lock"),
-                client,
-                now,
+            let (client_key, client_key_len) = ip_key(client);
+            let exact_opened = self.client_abuse.record_abuse(
+                &client_key[..client_key_len],
+                self.breaker_epoch,
                 Duration::from_secs(admission.client_abuse_window_secs),
                 Duration::from_secs(admission.client_abuse_cooldown_secs),
                 admission.max_client_abuse_violations,
@@ -3906,10 +3921,10 @@ mod runtime {
                 admission.network_abuse_ipv4_prefix,
                 admission.network_abuse_ipv6_prefix,
             );
-            let network_opened = record_abuse(
-                &mut self.network_abuse.lock().expect("network abuse lock"),
-                network,
-                now,
+            let (network_key, network_key_len) = abuse_network_bytes(network);
+            let network_opened = self.network_abuse.record_abuse(
+                &network_key[..network_key_len],
+                self.breaker_epoch,
                 Duration::from_secs(admission.network_abuse_window_secs),
                 Duration::from_secs(admission.network_abuse_cooldown_secs),
                 admission.max_network_abuse_violations,
