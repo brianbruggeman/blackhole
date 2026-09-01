@@ -53,6 +53,7 @@ pub struct NftRulePlan {
     pub inbound_port: u16,
     pub redirect_port: u16,
     pub mark: u32,
+    pub original_destination: Option<SocketAddr>,
 }
 
 impl NftRulePlan {
@@ -77,6 +78,7 @@ impl NftRulePlan {
             inbound_port,
             redirect_port,
             mark,
+            original_destination: None,
         };
         if !valid_identifier(&plan.table) {
             return Err(CaptureError::Bound("table"));
@@ -99,17 +101,36 @@ impl NftRulePlan {
         Self::for_table("blackhole", chain, inbound_port, redirect_port, mark)
     }
 
+    pub fn for_destination(
+        chain: impl Into<String>,
+        destination: SocketAddr,
+        redirect_port: u16,
+        mark: u32,
+    ) -> Result<Self, CaptureError> {
+        let mut plan =
+            Self::for_table("blackhole", chain, destination.port(), redirect_port, mark)?;
+        plan.original_destination = Some(destination);
+        Ok(plan)
+    }
+
     /// Stable dry-run representation. The ownership comment is part of the
     /// plan so operators can audit exactly what a privileged backend may add.
     #[must_use]
     pub fn render(&self) -> String {
+        let destination = match self.original_destination {
+            Some(SocketAddr::V4(address)) => format!("ip daddr {} ", address.ip()),
+            Some(SocketAddr::V6(address)) => format!("ip6 daddr {} ", address.ip()),
+            None => String::new(),
+        };
         format!(
-            "table inet {} {{\n  chain {} {{\n    type nat hook prerouting priority dstnat; policy accept;\n    tcp dport {} meta mark set {} redirect to :{}\n    udp dport {} meta mark set {} redirect to :{}\n  }}\n}}\n",
+            "table inet {} {{\n  chain {} {{\n    type nat hook prerouting priority dstnat; policy accept;\n    {}tcp dport {} meta mark set {} redirect to :{}\n    {}udp dport {} meta mark set {} redirect to :{}\n  }}\n}}\n",
             self.table,
             self.chain,
+            destination,
             self.inbound_port,
             self.mark,
             self.redirect_port,
+            destination,
             self.inbound_port,
             self.mark,
             self.redirect_port,
@@ -536,6 +557,26 @@ mod tests {
         assert!(rendered.contains("tcp dport 53"));
         assert!(rendered.contains("udp dport 53"));
         assert!(rendered.contains("redirect to :5353"));
+    }
+
+    #[test]
+    fn dns_capture_matches_the_configured_ipv4_destination() {
+        let plan =
+            NftRulePlan::for_destination("capture", "192.0.2.53:53".parse().unwrap(), 5353, 42)
+                .unwrap();
+        let rendered = plan.render();
+        assert!(rendered.contains("ip daddr 192.0.2.53 tcp dport 53"));
+        assert!(rendered.contains("ip daddr 192.0.2.53 udp dport 53"));
+    }
+
+    #[test]
+    fn dns_capture_matches_the_configured_ipv6_destination() {
+        let plan =
+            NftRulePlan::for_destination("capture", "[2001:db8::53]:53".parse().unwrap(), 5353, 42)
+                .unwrap();
+        let rendered = plan.render();
+        assert!(rendered.contains("ip6 daddr 2001:db8::53 tcp dport 53"));
+        assert!(rendered.contains("ip6 daddr 2001:db8::53 udp dport 53"));
     }
 
     #[test]

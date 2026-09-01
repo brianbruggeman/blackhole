@@ -706,8 +706,16 @@ fn validate_capture(
     if !config.enabled {
         return Ok(());
     }
-    NftRulePlan::for_ports(&config.chain, config.inbound_port, listen_port, config.mark)
-        .map_err(|error| ProximaError::Config(format!("invalid capture plan: {error}")))?;
+    let original_destination = config.original_destination.parse().map_err(|error| {
+        ProximaError::Config(format!("invalid capture original_destination: {error}"))
+    })?;
+    NftRulePlan::for_destination(
+        &config.chain,
+        original_destination,
+        listen_port,
+        config.mark,
+    )
+    .map_err(|error| ProximaError::Config(format!("invalid capture plan: {error}")))?;
     Ok(())
 }
 
@@ -719,8 +727,16 @@ fn install_capture(
     if !config.enabled {
         return Ok(None);
     }
-    let plan = NftRulePlan::for_ports(&config.chain, config.inbound_port, listen_port, config.mark)
-        .map_err(|error| ProximaError::Config(format!("invalid capture plan: {error}")))?;
+    let original_destination = config.original_destination.parse().map_err(|error| {
+        ProximaError::Config(format!("invalid capture original_destination: {error}"))
+    })?;
+    let plan = NftRulePlan::for_destination(
+        &config.chain,
+        original_destination,
+        listen_port,
+        config.mark,
+    )
+    .map_err(|error| ProximaError::Config(format!("invalid capture plan: {error}")))?;
     let store = FileOwnershipStore::new(&config.ownership_path);
     let mut controller = CaptureController::with_store(NftCommandBackend::default(), store);
     controller
