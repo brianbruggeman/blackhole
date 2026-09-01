@@ -9,6 +9,7 @@
 
 extern crate alloc;
 
+pub mod edge;
 pub mod fsm;
 pub mod policy;
 pub mod query;
