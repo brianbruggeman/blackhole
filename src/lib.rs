@@ -3972,6 +3972,21 @@ mod runtime {
             );
         }
 
+        pub(crate) fn observe_listener_latency(&self, elapsed: Duration) {
+            let Some(telemetry) = self.telemetry.as_ref() else {
+                return;
+            };
+            if !telemetry.is_active() {
+                return;
+            }
+            let labels = Labels::from_pairs(&[("operation", "wire_decide")]);
+            telemetry.histogram_record(
+                "blackhole.listener_latency_ns",
+                &labels,
+                elapsed.as_nanos() as f64,
+            );
+        }
+
         fn observe_reload_latency(&self, kind: &'static str, started: Instant) {
             let Some(telemetry) = self.telemetry.as_ref() else {
                 return;

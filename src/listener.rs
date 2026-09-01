@@ -14,6 +14,7 @@ use serde_json::Value;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::Policy;
 use crate::fsm::{DecisionState, DropReason, Event};
@@ -74,6 +75,17 @@ fn request(
     }
 }
 
+struct ListenerLatency<'policy> {
+    policy: &'policy Policy,
+    started: Instant,
+}
+
+impl Drop for ListenerLatency<'_> {
+    fn drop(&mut self) {
+        self.policy.observe_listener_latency(self.started.elapsed());
+    }
+}
+
 async fn decide<'a>(
     policy: &Policy,
     mut state: DecisionState<'a>,
@@ -81,6 +93,10 @@ async fn decide<'a>(
     peer: Option<PeerInfo>,
     tcp: bool,
 ) -> Result<Option<(Vec<u8>, DecisionState<'a>)>, ProximaError> {
+    let _latency = ListenerLatency {
+        policy,
+        started: Instant::now(),
+    };
     state = state.transition(Event::BeginParse).map_err(|error| {
         policy.observe_failure("fsm_transition");
         ProximaError::Config(error.to_string())
@@ -406,6 +422,23 @@ mod tests {
         fn histogram_record(&self, _: &str, _: &Labels, _: f64) {}
     }
 
+    struct LatencyCollector(Arc<Mutex<Vec<f64>>>);
+
+    impl Telemetry for LatencyCollector {
+        fn counter_inc(&self, _: &str, _: &Labels, _: u64) {}
+
+        fn gauge_set(&self, _: &str, _: &Labels, _: i64) {}
+
+        fn histogram_record(&self, metric: &str, labels: &Labels, value: f64) {
+            assert_eq!(metric, "blackhole.listener_latency_ns");
+            assert_eq!(
+                labels.entries(),
+                [("operation".into(), "wire_decide".into())]
+            );
+            self.0.lock().expect("latency samples lock").push(value);
+        }
+    }
+
     #[test]
     fn listener_records_the_parser_failure_cause() {
         let causes = Arc::new(Mutex::new(Vec::new()));
@@ -426,5 +459,27 @@ mod tests {
             causes.lock().expect("failure labels lock").as_slice(),
             ["query_wire_short"]
         );
+    }
+
+    #[test]
+    fn listener_records_latency_for_a_parser_drop() {
+        let samples = Arc::new(Mutex::new(Vec::new()));
+        let policy = Policy::new(Config::default())
+            .expect("default policy")
+            .with_telemetry(Arc::new(LatencyCollector(Arc::clone(&samples))));
+
+        let result = futures::executor::block_on(decide(
+            &policy,
+            DecisionState::received(&[0; 11]),
+            &[0; 11],
+            None,
+            false,
+        ))
+        .expect("malformed input is a dropped request");
+        assert!(result.is_none());
+        let samples = samples.lock().expect("latency samples lock");
+        assert_eq!(samples.len(), 1);
+        assert!(samples[0].is_finite());
+        assert!(samples[0] >= 0.0);
     }
 }
