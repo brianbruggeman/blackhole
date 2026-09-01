@@ -352,3 +352,29 @@ clock and rounded to zero for this short run; it is therefore not evidence of
 idle CPU. This supplies the real-client latency, throughput, RSS, and error
 axes for the local UDP boundary. TCP, sustained offered-load CPU utilization,
 and cross-process client/server measurements remain outside this row.
+
+## Row 14 — real UDP and TCP listener/client boundary
+
+`MEASURED` on 2026-09-01, Linux `x86_64`, rustc `1.98.0`, release build,
+source commit `7ca7cc8`, GitHub Proxima revision
+`03596bc908be7ae76179464f85ad867b311e2a65`, and load average `2.47`. The
+`listener_performance` example sent `N=100` sequential requests from real
+Prime clients through the Proxima listener and Blackhole adapters after 10
+UDP warmups:
+
+```text
+listener_udp samples=100 errors=0 single_request_ns=35351
+listener_latency_ns p50=26124 p95=28120 p99=34825 min=25203 max=34825 cov=0.052817 n=100
+listener_throughput_ops_s=DERIVED 37299.63
+listener_tcp samples=100 errors=0 single_request_ns=86515
+listener_tcp_latency_ns p50=32017 p95=78289 p99=86515 min=31073 max=86515 cov=0.329542 n=100
+listener_tcp_throughput_ops_s=DERIVED 28195.34 errors=MEASURED 0
+rss_kib=MEASURED 9164 cpu_percent=MEASURED 372.99626406941906 cpu_clock_ticks_s=MEASURED 100
+```
+
+Both listener transports completed with zero measured errors. CPU time is
+sampled from process accounting at a 100 Hz clock over the short UDP window;
+the reported value is process-wide and is not a cross-process server CPU
+measurement. TCP has higher tail variance in this run; no production
+performance claim follows without sustained offered-load and separated
+client/server CPU measurements.
