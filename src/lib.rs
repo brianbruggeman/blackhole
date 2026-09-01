@@ -5404,7 +5404,7 @@ mod runtime {
 
         /// Return the authenticated operator's bounded blocklist source
         /// configuration and loaded rule count. This is configuration
-        /// inspection, not query telemetry; it never reads source contents.
+        /// inspection, not query telemetry; it never returns source contents.
         pub(crate) fn admin_blocklists(&self) -> String {
             let _reload = self.reload_lock.read().expect("reload lock");
             let paths = self.blocklist_paths.lock().expect("blocklist paths lock");
@@ -5433,10 +5433,20 @@ mod runtime {
                         }
                         Err(_) => ("unreadable", 0, None),
                     };
+                    let (load_status, source_rule_count) = if disabled.contains(path) {
+                        ("disabled", 0)
+                    } else {
+                        match load_blocklists(std::slice::from_ref(path)) {
+                            Ok(source_rules) => ("ok", source_rules.len()),
+                            Err(_) => ("invalid", 0),
+                        }
+                    };
                     serde_json::json!({
                         "path": path,
                         "enabled": !disabled.contains(path),
                         "status": status,
+                        "load_status": load_status,
+                        "rule_count": source_rule_count,
                         "bytes": bytes,
                         "modified_age_secs": modified_age_secs,
                     })

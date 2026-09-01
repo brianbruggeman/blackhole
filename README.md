@@ -109,7 +109,9 @@ policy generation, and failed reloads retain the last good snapshot.
 Individual sources can be retained but disabled with
 `policy.disabled_blocklists`; the authenticated admin API also exposes
 `POST /reload/blocklists/disable` and `/reload/blocklists/enable` for atomic
-runtime changes.
+runtime changes. `GET /blocklists` includes each source's bounded filesystem
+status, parser load status, and contributed rule count without returning its
+contents.
 Set the top-level `reload_interval_secs` to enable bounded polling of the
 policy-bearing portions of the same configuration file; listener, transport,
 capture, storage, and process-capacity changes fail closed until restart.
