@@ -16,6 +16,8 @@ use bytes::Bytes;
 #[cfg(feature = "std")]
 use conflaguration::builder as config_builder;
 #[cfg(feature = "std")]
+use futures::StreamExt;
+#[cfg(feature = "std")]
 use proxima::pipe::into_handle;
 #[cfg(feature = "std")]
 use proxima::recording::{AccumulatingSink, FormatKind, LazyFanOut, SinkSpec, deferred_runtime};
@@ -24,7 +26,7 @@ use proxima::runtime::PrimeRuntime;
 #[cfg(feature = "std")]
 use proxima::{H1ClientUpstream, Request, Response, SendPipe};
 #[cfg(feature = "std")]
-use proxima::{Listener, ListenerBuilderEntry, ProximaError};
+use proxima::{Listener, ListenerBuilderEntry, ProximaError, RecordingSource};
 #[cfg(feature = "std")]
 use proxima_net::prime::{PrimeDatagramFactory, PrimeTcpUpstream};
 use proxima_primitives::pipe::{
@@ -39,6 +41,7 @@ use proxima_quic::QuicUpstream;
 use proxima_tls::{TlsClientConfig, TlsStreamUpstream};
 #[cfg(feature = "std")]
 use std::{
+    collections::BTreeMap,
     env, io,
     net::SocketAddr,
     path::{Path, PathBuf},
@@ -171,9 +174,108 @@ fn rotate_query_recording(
     Ok(())
 }
 
+const MAX_REPLAY_BYTES: u64 = 64 * 1024 * 1024;
+
+fn count_replay_event(
+    event: &proxima::RecordingEvent,
+    actions: &mut BTreeMap<String, u64>,
+    incidents: &mut u64,
+    events: &mut u64,
+) -> Result<(), ProximaError> {
+    let proxima::ProtocolEvent::Custom { kind, payload } = &event.event else {
+        return Err(ProximaError::Record(
+            "blackhole replay accepts only metadata custom events".into(),
+        ));
+    };
+    *events = events
+        .checked_add(1)
+        .ok_or_else(|| ProximaError::Record("blackhole replay event count overflow".into()))?;
+    match kind.as_str() {
+        "blackhole.dns_decision" => {
+            let action = payload
+                .get("action")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| {
+                    ProximaError::Record(
+                        "blackhole replay decision is missing its action label".into(),
+                    )
+                })?;
+            if !matches!(
+                action,
+                "pass"
+                    | "reject"
+                    | "honeypot"
+                    | "sink"
+                    | "observe"
+                    | "forward"
+                    | "drop"
+                    | "nxdomain"
+            ) {
+                return Err(ProximaError::Record(format!(
+                    "blackhole replay has an unsupported action label: {action}"
+                )));
+            }
+            let counter = actions.entry(action.to_owned()).or_default();
+            *counter = counter.checked_add(1).ok_or_else(|| {
+                ProximaError::Record("blackhole replay action count overflow".into())
+            })?;
+        }
+        "blackhole.ddos_incident" => {
+            *incidents = incidents.checked_add(1).ok_or_else(|| {
+                ProximaError::Record("blackhole replay incident count overflow".into())
+            })?;
+        }
+        other => {
+            return Err(ProximaError::Record(format!(
+                "blackhole replay does not support event kind: {other}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+async fn replay_metadata(path: &Path) -> Result<(), ProximaError> {
+    let metadata = std::fs::metadata(path).map_err(|error| {
+        ProximaError::Record(format!("inspect replay source {}: {error}", path.display()))
+    })?;
+    if !metadata.is_file() {
+        return Err(ProximaError::Record(format!(
+            "replay source {} is not a regular file",
+            path.display()
+        )));
+    }
+    if metadata.len() > MAX_REPLAY_BYTES {
+        return Err(ProximaError::Record(format!(
+            "replay source exceeds the {} byte bound",
+            MAX_REPLAY_BYTES
+        )));
+    }
+    let runtime = Arc::new(PrimeRuntime::new(1)?);
+    let source = proxima::JsonlSource::new(path, runtime);
+    let mut stream = source.events();
+    let mut actions = BTreeMap::new();
+    let mut incidents = 0;
+    let mut events = 0;
+    while let Some(event) = stream.next().await {
+        let event = event?;
+        count_replay_event(&event, &mut actions, &mut incidents, &mut events)?;
+    }
+    println!(
+        "{}",
+        serde_json::json!({
+            "events": events,
+            "decisions": actions.values().sum::<u64>(),
+            "actions": actions,
+            "ddos_incidents": incidents,
+        })
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{rotate_query_recording, validate_query_recording_path};
+    use super::{count_replay_event, rotate_query_recording, validate_query_recording_path};
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
     fn temporary_path(suffix: &str) -> PathBuf {
@@ -224,6 +326,38 @@ mod tests {
         );
         assert!(!path.with_extension("jsonl.3").exists());
         std::fs::remove_dir_all(directory).expect("remove temporary directory");
+    }
+
+    #[test]
+    fn replay_counts_actions_and_incidents_without_accepting_payload_events() {
+        let decision = proxima::RecordingEvent {
+            id: proxima::InteractionId::new(),
+            ts_ms: 1,
+            parent: None,
+            event: proxima::ProtocolEvent::Custom {
+                kind: "blackhole.dns_decision".into(),
+                payload: serde_json::json!({"action":"reject","qtype":1,"qclass":1}),
+            },
+        };
+        let incident = proxima::RecordingEvent {
+            id: proxima::InteractionId::new(),
+            ts_ms: 2,
+            parent: None,
+            event: proxima::ProtocolEvent::Custom {
+                kind: "blackhole.ddos_incident".into(),
+                payload: serde_json::json!({"client":"192.0.2.1","cause":"rate_limit"}),
+            },
+        };
+        let mut actions = BTreeMap::new();
+        let mut incidents = 0;
+        let mut events = 0;
+        count_replay_event(&decision, &mut actions, &mut incidents, &mut events)
+            .expect("decision event");
+        count_replay_event(&incident, &mut actions, &mut incidents, &mut events)
+            .expect("incident event");
+        assert_eq!(events, 2);
+        assert_eq!(actions.get("reject"), Some(&1));
+        assert_eq!(incidents, 1);
     }
 }
 
@@ -459,17 +593,21 @@ impl SendPipe for AnyHandler {
 #[proxima::main]
 async fn main() -> Result<(), ProximaError> {
     let arguments: Vec<String> = env::args().skip(1).collect();
-    let (check_only, explicit_config_path) = match arguments.as_slice() {
-        [] => (false, None),
-        [flag] if flag == "--check" => (true, None),
-        [flag, path] if flag == "--check" => (true, Some(path.as_str())),
-        [path] => (false, Some(path.as_str())),
+    let (check_only, explicit_config_path, replay_path) = match arguments.as_slice() {
+        [] => (false, None, None),
+        [flag] if flag == "--check" => (true, None, None),
+        [flag, path] if flag == "--check" => (true, Some(path.as_str()), None),
+        [flag, path] if flag == "--replay" => (false, None, Some(path.as_str())),
+        [path] => (false, Some(path.as_str()), None),
         _ => {
             return Err(ProximaError::Config(
-                "usage: blackhole [--check] [config.toml]".into(),
+                "usage: blackhole [--check] [config.toml] | --replay recording.jsonl".into(),
             ));
         }
     };
+    if let Some(replay_path) = replay_path {
+        return replay_metadata(Path::new(replay_path)).await;
+    }
     let mut config = if let Some(config_path) = explicit_config_path {
         Config::from_file(Path::new(&config_path))
             .map_err(|error| ProximaError::Config(format!("cannot load {config_path}: {error}")))?

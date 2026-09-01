@@ -52,9 +52,6 @@ below are future capabilities, grouped by the dependency layer they extend.
 - Extend the bounded privacy-safe query-decision log with operator-selected
   redaction and deletion-verification backends beyond the current metadata-only,
   byte-bounded Proxima JSONL destination and bounded startup rotation.
-- Add deterministic metadata-only replay tooling through Proxima's existing
-  recording primitives, with bounded input, authorization, and deletion
-  semantics; do not add a standalone replay abstraction.
 - Extend the current bounded authenticated status UI into a full optional web
   UI beyond the current bounded status and policy-bundle controls.
 - Add the remaining Pi-hole/AdGuard Home policy features, including richer

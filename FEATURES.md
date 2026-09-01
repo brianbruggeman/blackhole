@@ -111,9 +111,10 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   wraps a supplied backend in Proxima's bounded queue, and the executable can
   append the same events to an operator-selected Proxima JSONL destination
   with a hard encoded-byte ceiling.
-- Replay is not currently exposed: recording is a bounded metadata sink, and
-  future replay must use Proxima's existing recording primitives without
-  retaining DNS payloads by default.
+- Bounded `--replay recording.jsonl` tooling consumes the existing Proxima
+  JSONL source and deterministically reports event, full-action, and DDoS
+  incident counts; it accepts only Blackhole metadata events, caps the input
+  at 64 MiB, and never reconstructs or retains DNS names or wire payloads.
 - The in-process query-decision log uses Proxima's lock-free live snapshot
   publication for concurrent append/read paths while retaining bounded count
   and age limits.
