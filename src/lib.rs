@@ -46,7 +46,7 @@ mod runtime {
     use std::collections::{BTreeSet, HashMap, VecDeque};
     use std::hash::Hash;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::{Arc, Mutex, RwLock};
     use std::time::{Duration, Instant};
 
@@ -1443,6 +1443,7 @@ mod runtime {
         regex_rules: Mutex<Vec<RegexRule>>,
         domain_rules_configured: AtomicBool,
         rules_configured: AtomicBool,
+        policy_generation: AtomicU64,
         telemetry: Option<TelemetryHandle>,
         recording: Option<DynRecordingSink>,
         query_log: Option<Arc<QueryLog>>,
@@ -1734,6 +1735,7 @@ mod runtime {
                 regex_rules: Mutex::new(regex_rules),
                 domain_rules_configured: AtomicBool::new(domain_rules_configured),
                 rules_configured: AtomicBool::new(rules_configured),
+                policy_generation: AtomicU64::new(1),
                 telemetry: None,
                 recording: None,
                 query_log,
@@ -1924,6 +1926,7 @@ mod runtime {
                 Ordering::Release,
             );
             self.cache.lock().expect("cache lock").clear();
+            self.policy_generation.fetch_add(1, Ordering::Relaxed);
             self.observe_reload_latency(reload_kind, started);
             Ok(published)
         }
@@ -1967,6 +1970,7 @@ mod runtime {
                 Ordering::Release,
             );
             self.cache.lock().expect("cache lock").clear();
+            self.policy_generation.fetch_add(1, Ordering::Relaxed);
             self.observe_reload_latency("blocklists", started);
             Ok(published)
         }
@@ -1977,6 +1981,7 @@ mod runtime {
             let started = Instant::now();
             let next = load_country_policy(&self.config.country_policy)?;
             *self.country_policy.write().expect("country policy lock") = next;
+            self.policy_generation.fetch_add(1, Ordering::Relaxed);
             self.observe_reload_latency("country", started);
             Ok(ReloadState::Published)
         }
@@ -2067,6 +2072,7 @@ mod runtime {
                 Ordering::Release,
             );
             self.cache.lock().expect("cache lock").clear();
+            self.policy_generation.fetch_add(1, Ordering::Relaxed);
             self.observe_reload_latency("policy_bundle", started);
             Ok(ReloadState::Published)
         }
@@ -2086,6 +2092,7 @@ mod runtime {
                 Ordering::Release,
             );
             self.cache.lock().expect("cache lock").clear();
+            self.policy_generation.fetch_add(1, Ordering::Relaxed);
             self.observe_reload_latency("regex", started);
             Ok(ReloadState::Published)
         }
@@ -2874,6 +2881,7 @@ mod runtime {
             serde_json::json!({
                 "status": "ok",
                 "rules_configured": self.rules_configured.load(Ordering::Acquire),
+                "policy_generation": self.policy_generation.load(Ordering::Acquire),
                 "profiles_configured": self.profiles.read().expect("profiles lock").len(),
                 "client_groups_configured": self.client_groups.read().expect("client groups lock").len(),
                 "upstream_configured": self.upstream.is_some(),
@@ -2912,6 +2920,7 @@ mod runtime {
                 "country_deny_rules": country_policy.as_ref().map_or(0, |policy| policy.deny.len()),
                 "country_observe_rules": country_policy.as_ref().map_or(0, |policy| policy.observe.len()),
                 "legacy_mode_active": !self.rules_configured.load(Ordering::Acquire),
+                "policy_generation": self.policy_generation.load(Ordering::Acquire),
             })
             .to_string()
         }

@@ -520,6 +520,10 @@ mod tests {
             .expect("policy bundle request");
         let response = block_on(handler.call(bundle)).expect("bundle response");
         assert_eq!(response.status, 200);
+        let status = block_on(handler.call(request("GET", "/policy/status"))).expect("status");
+        let status: serde_json::Value =
+            serde_json::from_slice(&status.payload).expect("status JSON");
+        assert_eq!(status["policy_generation"], 2);
         let profiles = block_on(handler.call(request("GET", "/profiles"))).expect("profiles");
         let profiles: serde_json::Value =
             serde_json::from_slice(&profiles.payload).expect("profiles JSON");
@@ -555,6 +559,10 @@ mod tests {
         assert_eq!(profiles["profiles"][0]["name"], "family");
         let answer = policy.evaluate(&rewrite_query).expect("retained rewrite");
         assert_eq!(answer.records[0].rdata, vec![192, 0, 2, 1]);
+        let status = block_on(handler.call(request("GET", "/policy/status"))).expect("status");
+        let status: serde_json::Value =
+            serde_json::from_slice(&status.payload).expect("status JSON");
+        assert_eq!(status["policy_generation"], 2);
     }
 
     #[test]
