@@ -1,6 +1,9 @@
 use std::fs;
 
 const LAUNCHD_PLIST: &str = "deploy/launchd/com.brianbruggeman.blackhole.plist";
+const SYSTEMD_UNIT: &str = "deploy/systemd/blackhole.service";
+const SYSTEMD_TMPFILES: &str = "deploy/systemd/blackhole.conf";
+const SYSTEMD_INSTALLER: &str = "deploy/systemd/install.sh";
 
 #[test]
 fn launchd_service_is_unprivileged_and_direct() {
@@ -30,4 +33,54 @@ fn launchd_service_restarts_only_after_failure() {
 
     assert!(keepalive.contains("<key>SuccessfulExit</key>\n    <false/>"));
     assert!(plist.contains("<key>ThrottleInterval</key>\n  <integer>2</integer>"));
+}
+
+#[test]
+fn systemd_service_is_restricted_and_direct() {
+    let unit = fs::read_to_string(SYSTEMD_UNIT).expect("read systemd service definition");
+
+    for required in [
+        "User=blackhole",
+        "Group=blackhole",
+        "ExecStart=/usr/local/bin/blackhole /etc/blackhole/blackhole.toml",
+        "NoNewPrivileges=yes",
+        "CapabilityBoundingSet=CAP_NET_BIND_SERVICE",
+        "AmbientCapabilities=CAP_NET_BIND_SERVICE",
+        "ProtectSystem=strict",
+        "ProtectHome=yes",
+        "ReadWritePaths=/var/lib/blackhole",
+        "MemoryDenyWriteExecute=yes",
+        "UMask=0077",
+    ] {
+        assert!(
+            unit.contains(required),
+            "missing systemd hardening: {required}"
+        );
+    }
+    for forbidden in ["ExecStart=/bin/sh", "ExecStart=/usr/bin/env", "User=root"] {
+        assert!(
+            !unit.contains(forbidden),
+            "forbidden systemd setting: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn systemd_state_and_installer_are_scoped() {
+    let tmpfiles = fs::read_to_string(SYSTEMD_TMPFILES).expect("read systemd tmpfiles definition");
+    assert!(tmpfiles.contains("d /var/lib/blackhole 0750 blackhole blackhole -"));
+
+    let installer = fs::read_to_string(SYSTEMD_INSTALLER).expect("read systemd installer");
+    for required in [
+        "set -eu",
+        "install -d -o blackhole -g blackhole -m 0750 /var/lib/blackhole",
+        "systemd-tmpfiles --create /etc/tmpfiles.d/blackhole.conf",
+        "systemctl daemon-reload",
+    ] {
+        assert!(
+            installer.contains(required),
+            "missing installer step: {required}"
+        );
+    }
+    assert!(installer.contains("if [ \"$(id -u)\" -ne 0 ]"));
 }
