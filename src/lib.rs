@@ -970,6 +970,10 @@ mod runtime {
         fn flush<'lifetime>(&'lifetime self) -> RecordingAppendFuture<'lifetime> {
             self.inner.flush()
         }
+
+        fn sync<'lifetime>(&'lifetime self) -> RecordingAppendFuture<'lifetime> {
+            self.inner.sync()
+        }
     }
 
     impl Default for SecurityConfig {
@@ -4444,7 +4448,7 @@ mod runtime {
                     }),
                 },
             };
-            if recording.append(event).await.is_err() {
+            if recording.append(event).await.is_err() || recording.sync().await.is_err() {
                 self.observe_failure("ddos_incident_recording");
             }
         }
