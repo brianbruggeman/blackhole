@@ -93,6 +93,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <h2>Adaptive abuse controls</h2><pre id="abuse-status">loading…</pre>
 <h2>Managed client denylist</h2><textarea id="denylist-config" rows="5" cols="80">loading…</textarea><p><button id="add-denylist">Add entries</button> <button id="remove-denylist">Revoke entries</button></p>
 <h2>Temporary incident revocation</h2><textarea id="abuse-revoke" rows="3" cols="80" placeholder='["192.0.2.10"]'></textarea><p><button id="revoke-abuse">Revoke temporary blocks</button></p>
+<h2>Incident review</h2><pre id="abuse-incidents">loading…</pre>
 <h2>Policy bundle</h2><textarea id="policy-bundle" rows="12" cols="80">loading…</textarea>
 <h2>Blocklists</h2><div id="blocklist-controls"></div><pre id="blocklists">loading…</pre>
 <h2>Country policy</h2><pre id="country-status">loading…</pre>
@@ -148,7 +149,7 @@ const operate = (path, options) => fetch(path, options).then(async response => {
   document.querySelector('#operation-status').textContent = `${path}: ${value.status || 'ok'}`;
   return value;
 }).catch(error => { document.querySelector('#operation-status').textContent = `${path}: ${error.message}`; throw error; });
-const refresh = () => Promise.all([load('/status','#status'), load('/stats','#stats'), load('/admission/status','#admission-status'), load('/abuse/status','#abuse-status'), load('/abuse/denylist','#denylist-config'), load('/policy-bundle','#policy-bundle'), load('/blocklists','#blocklists'), load('/country/status','#country-status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/client-identities','#identities'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
+const refresh = () => Promise.all([load('/status','#status'), load('/stats','#stats'), load('/admission/status','#admission-status'), load('/abuse/status','#abuse-status'), load('/abuse/incidents','#abuse-incidents'), load('/abuse/denylist','#denylist-config'), load('/policy-bundle','#policy-bundle'), load('/blocklists','#blocklists'), load('/country/status','#country-status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/client-identities','#identities'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
 document.querySelector('#clear-logs').onclick = () => operate('/logs/clear', {method:'POST'}).then(refresh);
 document.querySelector('#clear-stats').onclick = () => operate('/stats/clear', {method:'POST'}).then(refresh);
 document.querySelector('#clear-cache').onclick = () => operate('/cache/clear', {method:'POST'}).then(refresh);
@@ -212,6 +213,7 @@ impl SendPipe for AdminHandler {
             ))),
             ("GET", "/admission/status") => Ok(Response::ok(self.policy.admin_admission_status())),
             ("GET", "/abuse/status") => Ok(Response::ok(self.policy.admin_abuse_status())),
+            ("GET", "/abuse/incidents") => Ok(Response::ok(self.policy.admin_abuse_incidents())),
             ("GET", "/abuse/denylist") => Ok(Response::ok(self.policy.admin_abuse_denylist())),
             ("POST", "/abuse/clear") => Ok(Response::ok(format!(
                 "{{\"status\":\"cleared\",\"entries\":{}}}",
@@ -957,6 +959,7 @@ impl SendPipe for AdminHandler {
                 | "/stats/clear"
                 | "/admission/status"
                 | "/abuse/status"
+                | "/abuse/incidents"
                 | "/abuse/denylist"
                 | "/abuse/clear"
                 | "/abuse/revoke"
@@ -1092,6 +1095,11 @@ mod tests {
             ui.payload
                 .windows(b"/abuse/status".len())
                 .any(|window| window == b"/abuse/status")
+        );
+        assert!(
+            ui.payload
+                .windows(b"/abuse/incidents".len())
+                .any(|window| window == b"/abuse/incidents")
         );
         assert!(
             ui.payload
@@ -1272,6 +1280,13 @@ mod tests {
         assert_eq!(abuse_status["client_entries"], 0);
         assert_eq!(abuse_status["network_entries"], 0);
         assert_eq!(abuse_status["automatic_blacklist"], "temporary_cooldown");
+        let incidents =
+            block_on(handler.call(request("GET", "/abuse/incidents"))).expect("incidents");
+        assert_eq!(incidents.status, 200);
+        let incidents: serde_json::Value =
+            serde_json::from_slice(&incidents.payload).expect("incidents JSON");
+        assert_eq!(incidents["enabled"], false);
+        assert_eq!(incidents["incidents"], serde_json::json!([]));
         let clear_abuse =
             block_on(handler.call(request("POST", "/abuse/clear"))).expect("abuse clear");
         assert_eq!(clear_abuse.status, 200);

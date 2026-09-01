@@ -90,6 +90,9 @@ Authenticated operators can revoke temporary blocks with bounded
 `POST /abuse/revoke` using an array of exact client IPs; when persistence is
 enabled, the revocation is recorded before the live breaker state is cleared
 and startup replays it in event order.
+When the bounded query log is enabled, `GET /abuse/incidents` provides a
+redacted incident review containing causes and expiry timestamps without
+client addresses.
 The same setting persists authenticated operator denylist additions and
 revocations in order; startup replays those bounded mutations before serving,
 and a failed durable mutation is rolled back.
@@ -219,6 +222,7 @@ the configured client CIDRs), bounded
 `POST /abuse/denylist/add` and `/abuse/denylist/remove` (atomic bounded
 operator-managed additions and revocations), bounded
 `POST /abuse/revoke` (atomic bounded temporary-incident revocation), bounded
+`GET /abuse/incidents` (redacted bounded incident review), bounded
 `POST /reload/country`, bounded `POST /reload/policy` (a JSON array of complete rule objects), bounded
 `POST /reload/country/replace` (an atomic country/CIDR selector and map
 configuration replacement), bounded

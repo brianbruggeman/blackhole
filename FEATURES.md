@@ -110,6 +110,10 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   the matching client and network breakers through Proxima's lock-free keyed
   state, and persists the revocation before applying it when durability is
   enabled.
+- Authenticated bounded `GET /abuse/incidents` provides a redacted review
+  projection of retained incident causes, actions, and expiry timestamps;
+  client addresses remain available only to the durable operator-controlled
+  recovery stream.
 - When incident persistence is enabled, authenticated operator denylist
   additions and revocations are appended to that same bounded Proxima JSONL
   sink and replayed in order during startup; a failed durable append rolls the

@@ -5531,13 +5531,9 @@ mod runtime {
         /// enters the event; the client address is retained only because it is
         /// the operator's temporary blacklist key.
         pub(crate) async fn record_abuse_incident(&self, client: IpAddr, cause: &'static str) {
-            if !self.config.admission.ddos.persist_incidents {
+            if !self.config.admission.ddos.persist_incidents && self.query_log.is_none() {
                 return;
             }
-            let Some(recording) = self.recording.as_ref() else {
-                self.observe_failure("ddos_incident_recording_unconfigured");
-                return;
-            };
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |duration| {
@@ -5549,6 +5545,31 @@ mod runtime {
                     .max(self.admission_config().network_abuse_cooldown_secs)
                     .saturating_mul(1_000),
             );
+            let review_event = RecordingEvent {
+                id: InteractionId::new(),
+                ts_ms: now_ms,
+                parent: None,
+                event: ProtocolEvent::Custom {
+                    kind: "blackhole.ddos_incident".into(),
+                    payload: serde_json::json!({
+                        "cause": cause,
+                        "response": "temporary_blacklist",
+                        "expires_at_ms": expires_at_ms,
+                    }),
+                },
+            };
+            if let Some(query_log) = self.query_log.as_ref()
+                && query_log.append(review_event).await.is_err()
+            {
+                self.observe_failure("query_log_incident_append");
+            }
+            if !self.config.admission.ddos.persist_incidents {
+                return;
+            }
+            let Some(recording) = self.recording.as_ref() else {
+                self.observe_failure("ddos_incident_recording_unconfigured");
+                return;
+            };
             let event = RecordingEvent {
                 id: InteractionId::new(),
                 ts_ms: now_ms,
@@ -5566,6 +5587,44 @@ mod runtime {
             if recording.append(event).await.is_err() || recording.sync().await.is_err() {
                 self.observe_failure("ddos_incident_recording");
             }
+        }
+
+        /// Return the bounded, redacted incident review projection from the
+        /// existing in-memory Proxima recording primitive.
+        pub(crate) fn admin_abuse_incidents(&self) -> String {
+            let Some(query_log) = self.query_log.as_ref() else {
+                return "{\"enabled\":false,\"incidents\":[]}".into();
+            };
+            let incidents = query_log
+                .snapshot()
+                .into_iter()
+                .filter_map(|event| match event.event {
+                    ProtocolEvent::Custom { kind, payload }
+                        if kind == "blackhole.ddos_incident" =>
+                    {
+                        Some(serde_json::json!({
+                            "ts_ms": event.ts_ms,
+                            "cause": payload.get("cause"),
+                            "response": payload.get("response"),
+                            "expires_at_ms": payload.get("expires_at_ms"),
+                        }))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let truncated = incidents.len() > MAX_ADMIN_LOG_ENTRIES;
+            let incidents = incidents
+                .into_iter()
+                .rev()
+                .take(MAX_ADMIN_LOG_ENTRIES)
+                .collect::<Vec<_>>();
+            serde_json::json!({
+                "enabled": true,
+                "truncated": truncated,
+                "incidents": incidents,
+                "client_addresses": "redacted",
+            })
+            .to_string()
         }
 
         pub(crate) fn admin_query_log(&self) -> String {
@@ -10113,6 +10172,25 @@ mod runtime {
             assert!(!contents.contains("secret.example"));
             assert!(std::fs::metadata(&path).expect("recording metadata").len() <= 4_096);
             std::fs::remove_dir_all(directory).expect("remove recording directory");
+        }
+
+        #[test]
+        fn abuse_incident_review_redacts_client_addresses() {
+            let mut config = Config::default();
+            config.privacy.query_log_enabled = true;
+            config.privacy.query_log_max_entries = 4;
+            config.privacy.query_log_retention_secs = 60;
+            let policy = Policy::new(config).expect("valid query log config");
+            futures::executor::block_on(policy.record_abuse_incident(
+                "192.0.2.10".parse().expect("client address"),
+                "client_rate_overflow",
+            ));
+            let review: serde_json::Value =
+                serde_json::from_str(&policy.admin_abuse_incidents()).expect("review JSON");
+            assert_eq!(review["enabled"], true);
+            assert_eq!(review["incidents"].as_array().unwrap().len(), 1);
+            assert_eq!(review["client_addresses"], "redacted");
+            assert!(!policy.admin_abuse_incidents().contains("192.0.2.10"));
         }
 
         #[test]
