@@ -3521,6 +3521,9 @@ mod runtime {
                 "country_deny_rules": country_policy.as_ref().map_or(0, |policy| policy.deny.len()),
                 "country_observe_rules": country_policy.as_ref().map_or(0, |policy| policy.observe.len()),
                 "country_reload_interval_secs": self.config.country_policy.reload_interval_secs,
+                "legacy_domain_count": self.legacy_domains.read().expect("legacy domains lock").len(),
+                "legacy_mode": mode_label(*self.legacy_mode.read().expect("legacy mode lock")),
+                "default_action": action_label(*self.default_action.read().expect("default action lock")),
                 "legacy_mode_active": !self.rules_configured.load(Ordering::Acquire),
                 "policy_generation": self.policy_generation.load(Ordering::Acquire),
             })
@@ -3909,6 +3912,14 @@ mod runtime {
             Action::Honeypot => "honeypot",
             Action::Forward => "forward",
             Action::Observe => "observe",
+        }
+    }
+
+    fn mode_label(mode: Mode) -> &'static str {
+        match mode {
+            Mode::Ignore => "ignore",
+            Mode::Nxdomain => "nxdomain",
+            Mode::Honeypot => "honeypot",
         }
     }
 

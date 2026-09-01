@@ -512,6 +512,9 @@ mod tests {
             serde_json::from_slice(&policy_status.payload).expect("policy status JSON");
         assert_eq!(policy_status["domain_rules"], 0);
         assert_eq!(policy_status["blocklist_sources"], 0);
+        assert_eq!(policy_status["legacy_domain_count"], 0);
+        assert_eq!(policy_status["legacy_mode"], "nxdomain");
+        assert_eq!(policy_status["default_action"], "pass");
         assert_eq!(policy_status["legacy_mode_active"], true);
         let privacy_status =
             block_on(handler.call(request("GET", "/privacy/status"))).expect("privacy status");
