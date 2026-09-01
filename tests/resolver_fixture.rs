@@ -428,6 +428,7 @@ async fn listener_enforces_service_profile_on_the_real_udp_path() {
     config.policy.profiles = vec![blackhole::ServiceProfileConfig {
         id: 40_000,
         name: "telemetry".into(),
+        enabled: true,
         domains: vec!["ads.example".into()],
         action: Action::Nxdomain,
         groups: vec!["loopback".into()],

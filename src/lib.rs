@@ -1257,6 +1257,9 @@ mod runtime {
     pub struct ServiceProfileConfig {
         pub id: u32,
         pub name: String,
+        /// Keep the profile configured while excluding its generated rules.
+        #[serde(default = "default_profile_enabled")]
+        pub enabled: bool,
         pub domains: Vec<String>,
         pub action: Action,
         #[serde(default)]
@@ -1272,6 +1275,10 @@ mod runtime {
         pub qtype: Option<u16>,
         #[serde(default)]
         pub qclass: Option<u16>,
+    }
+
+    fn default_profile_enabled() -> bool {
+        true
     }
 
     #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -2028,6 +2035,9 @@ mod runtime {
                     name: profile.name.clone(),
                     reason: format!("combined domain count exceeds {}", policy::MAX_RULES),
                 });
+            }
+            if !profile.enabled {
+                continue;
             }
             if !profile.groups.is_empty() && !profile.client_cidrs.is_empty() {
                 return Err(policy::PolicyError::InvalidProfile {
@@ -5154,6 +5164,7 @@ mod runtime {
                 "profiles": profiles.iter().map(|profile| serde_json::json!({
                     "id": profile.id,
                     "name": profile.name,
+                    "enabled": profile.enabled,
                     "domains": profile.domains,
                     "action": action_label(profile.action),
                     "groups": profile.groups,
@@ -5256,7 +5267,9 @@ mod runtime {
                 .iter()
                 .take(MAX_ADMIN_LOG_ENTRIES)
                 .map(|profile| {
-                    let scope_count = if profile.groups.is_empty() {
+                    let scope_count = if !profile.enabled {
+                        0
+                    } else if profile.groups.is_empty() {
                         1
                     } else {
                         profile
@@ -5278,6 +5291,7 @@ mod runtime {
                     serde_json::json!({
                         "id": profile.id,
                         "name": profile.name,
+                        "enabled": profile.enabled,
                         "domains": profile.domains,
                         "action": action_label(profile.action),
                         "groups": profile.groups,
@@ -6372,6 +6386,7 @@ mod runtime {
             let profile = ServiceProfileConfig {
                 id: 70_002,
                 name: "generated".into(),
+                enabled: true,
                 domains: vec!["profile.example".into()],
                 action: Action::Nxdomain,
                 groups: Vec::new(),
@@ -6799,6 +6814,7 @@ mod runtime {
             config.policy.profiles = vec![ServiceProfileConfig {
                 id: 6_000,
                 name: "family-policy".into(),
+                enabled: true,
                 domains: vec!["identity.example".into()],
                 action: Action::Reject,
                 groups: Vec::new(),
@@ -6841,6 +6857,7 @@ mod runtime {
             config.policy.profiles = vec![ServiceProfileConfig {
                 id: 6_001,
                 name: "narrow-family-profile".into(),
+                enabled: true,
                 domains: vec!["identity.example".into()],
                 action: Action::Reject,
                 groups: Vec::new(),
@@ -7656,6 +7673,7 @@ mod runtime {
             config.policy.profiles = vec![ServiceProfileConfig {
                 id: 40_000,
                 name: "Adult content".into(),
+                enabled: true,
                 domains: vec!["ads.example".into(), "tracking.example".into()],
                 action: Action::Nxdomain,
                 groups: Vec::new(),
@@ -7703,6 +7721,39 @@ mod runtime {
         }
 
         #[test]
+        fn disabled_service_profiles_are_retained_but_do_not_generate_rules() {
+            let mut config = Config::default();
+            config.policy.profiles = vec![ServiceProfileConfig {
+                id: 60_000,
+                name: "paused-profile".into(),
+                enabled: false,
+                domains: vec!["ads.example".into()],
+                action: Action::Nxdomain,
+                groups: Vec::new(),
+                client_identity: None,
+                priority: 10,
+                client_cidrs: Vec::new(),
+                qtype: None,
+                qclass: None,
+            }];
+            let policy = Policy::new(config).expect("valid disabled profile");
+            let answer = policy
+                .evaluate(&proxima_dns::DnsQuery {
+                    id: 1,
+                    recursion_desired: true,
+                    name: "ads.example.".into(),
+                    qtype: 1,
+                    qclass: 1,
+                })
+                .expect("default pass answer");
+            assert_eq!(answer.rcode, 0);
+            let profiles: serde_json::Value =
+                serde_json::from_str(&policy.admin_profiles()).expect("profile status");
+            assert_eq!(profiles["profiles"][0]["enabled"], false);
+            assert_eq!(profiles["profiles"][0]["expanded_rule_count"], 0);
+        }
+
+        #[test]
         fn client_groups_assign_one_profile_to_multiple_networks() {
             let mut config = Config::default();
             config.policy.client_groups = vec![
@@ -7720,6 +7771,7 @@ mod runtime {
             config.policy.profiles = vec![ServiceProfileConfig {
                 id: 50_000,
                 name: "family-blocks".into(),
+                enabled: true,
                 domains: vec!["ads.example".into()],
                 action: Action::Nxdomain,
                 groups: vec!["FAMILY".into(), "guest".into()],
@@ -7764,6 +7816,7 @@ mod runtime {
             config.policy.profiles = vec![ServiceProfileConfig {
                 id: 51_000,
                 name: "named-policy".into(),
+                enabled: true,
                 domains: vec!["ads.example".into()],
                 action: Action::Reject,
                 groups: vec!["named-clients".into()],
@@ -7808,6 +7861,7 @@ mod runtime {
             unknown.policy.profiles = vec![ServiceProfileConfig {
                 id: 1,
                 name: "ads".into(),
+                enabled: true,
                 domains: vec!["ads.example".into()],
                 action: Action::Nxdomain,
                 groups: vec!["missing".into()],
@@ -7831,6 +7885,7 @@ mod runtime {
             ambiguous.policy.profiles = vec![ServiceProfileConfig {
                 id: 2,
                 name: "ads".into(),
+                enabled: true,
                 domains: vec!["ads.example".into()],
                 action: Action::Nxdomain,
                 groups: vec!["family".into()],
@@ -7867,6 +7922,7 @@ mod runtime {
                 ServiceProfileConfig {
                     id: 1,
                     name: "ads".into(),
+                    enabled: true,
                     domains: vec!["ads.example".into()],
                     action: Action::Nxdomain,
                     groups: Vec::new(),
@@ -7879,6 +7935,7 @@ mod runtime {
                 ServiceProfileConfig {
                     id: 2,
                     name: "ADS".into(),
+                    enabled: true,
                     domains: vec!["tracking.example".into()],
                     action: Action::Nxdomain,
                     groups: Vec::new(),
@@ -7903,6 +7960,7 @@ mod runtime {
                 ServiceProfileConfig {
                     id: 10_000,
                     name: "first".into(),
+                    enabled: true,
                     domains: vec!["first.example".into(); per_profile],
                     action: Action::Nxdomain,
                     groups: Vec::new(),
@@ -7915,6 +7973,7 @@ mod runtime {
                 ServiceProfileConfig {
                     id: 200_000,
                     name: "second".into(),
+                    enabled: true,
                     domains: vec!["second.example".into(); per_profile],
                     action: Action::Nxdomain,
                     groups: Vec::new(),

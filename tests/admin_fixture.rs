@@ -70,6 +70,7 @@ async fn admin_http_listener_enforces_bearer_auth() {
     config.policy.profiles = vec![ServiceProfileConfig {
         id: 400,
         name: "family".into(),
+        enabled: true,
         domains: vec!["ads.example".into()],
         action: blackhole::Action::Nxdomain,
         groups: vec!["home".into()],

@@ -21,8 +21,8 @@ below are future capabilities, grouped by the dependency layer they extend.
   append/upsert/removal, read-only status, and complete-snapshot reload
   routes.
 - Extend the authenticated profile and client-group metadata views with
-  additional policy controls beyond atomic profile, identity, and network
-  scope replacement/upsert/removal operations.
+  additional policy controls beyond atomic enabled/disabled profile,
+  identity, and network scope replacement/upsert/removal operations.
 - Extend adaptive amplification controls for repeated abusive patterns beyond
   the current per-query response-ratio cap, aggregate/per-client admission
   limits, bounded client/network/global rate and response-budget breakers,

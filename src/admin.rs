@@ -1398,6 +1398,7 @@ mod tests {
         config.policy.profiles = vec![crate::ServiceProfileConfig {
             id: 400,
             name: "family".into(),
+            enabled: true,
             domains: vec!["ads.example".into()],
             action: crate::Action::Nxdomain,
             groups: vec!["home".into()],
@@ -1490,6 +1491,7 @@ mod tests {
         config.policy.profiles = vec![crate::ServiceProfileConfig {
             id: 700,
             name: "family".into(),
+            enabled: true,
             domains: vec!["ads.example".into()],
             action: crate::Action::Nxdomain,
             groups: vec!["home".into()],
@@ -1581,6 +1583,7 @@ mod tests {
         config.policy.profiles = vec![crate::ServiceProfileConfig {
             id: 800,
             name: "family".into(),
+            enabled: true,
             domains: vec!["ads.example".into()],
             action: crate::Action::Nxdomain,
             groups: Vec::new(),
