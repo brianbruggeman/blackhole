@@ -268,6 +268,7 @@ fn request() -> proxima_dns::DnsPipeRequest {
 
 struct FakeDoh {
     calls: Arc<AtomicUsize>,
+    malformed: bool,
 }
 
 impl SendPipe for FakeDoh {
@@ -280,10 +281,15 @@ impl SendPipe for FakeDoh {
         request: Request<Bytes>,
     ) -> impl std::future::Future<Output = Result<Response<Bytes>, ProximaError>> + Send {
         let calls = Arc::clone(&self.calls);
+        let malformed = self.malformed;
         async move {
             assert_eq!(request.method.as_bytes(), b"POST");
             assert_eq!(request.path.as_ref(), b"/dns-query");
             calls.fetch_add(1, Ordering::SeqCst);
+
+            if malformed {
+                return Ok(Response::ok(Bytes::from_static(&[0; 12])));
+            }
 
             let message = parse_message(request.payload.as_ref())
                 .map_err(|_| ProximaError::Upstream("fake DoH received malformed query".into()))?;
@@ -333,6 +339,7 @@ async fn doh_upstream_flows_through_policy_and_cache() {
     let calls = Arc::new(AtomicUsize::new(0));
     let policy = policy.with_doh_upstream(into_handle(FakeDoh {
         calls: Arc::clone(&calls),
+        malformed: false,
     }));
 
     let first = policy.call(request()).await.expect("DoH exchange");
@@ -342,6 +349,17 @@ async fn doh_upstream_flows_through_policy_and_cache() {
     assert_eq!(second.payload.records.len(), 1);
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert!(socket.state.lock().expect("fake state").sent.is_empty());
+}
+
+#[proxima::test]
+async fn doh_upstream_malformed_payload_fails_closed() {
+    let (policy, _) = policy(ReplyMode::Timeout);
+    let policy = policy.with_doh_upstream(into_handle(FakeDoh {
+        calls: Arc::new(AtomicUsize::new(0)),
+        malformed: true,
+    }));
+
+    assert!(policy.call(request()).await.is_err());
 }
 
 #[proxima::test]
