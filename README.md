@@ -63,8 +63,10 @@ answers only during its configured stale window.
 Repeated per-client rate-limit violations open a bounded temporary abuse
 breaker; unidentified callers are not assigned a shared abuse identity.
 Set `[admission.ddos].persist_incidents = true` to persist temporary-blacklist
-events through the bounded Proxima recording sink; the equivalent environment
-override is `BLACKHOLE_DDOS_PERSIST_INCIDENTS=true`.
+events through the bounded Proxima recording sink; active markers are restored
+after restart until their configured expiry and expired markers are ignored.
+The equivalent environment override is
+`BLACKHOLE_DDOS_PERSIST_INCIDENTS=true`.
 Encoded responses also consume a bounded per-client byte budget per second;
 when it is exhausted, the listener sheds that client's response rather than
 amplifying the traffic pattern.

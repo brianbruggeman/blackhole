@@ -272,9 +272,85 @@ async fn replay_metadata(path: &Path) -> Result<(), ProximaError> {
     Ok(())
 }
 
+async fn restore_persisted_abuse(
+    policy: &Policy,
+    path: &Path,
+    max_bytes: u64,
+) -> Result<usize, ProximaError> {
+    let metadata = std::fs::metadata(path).map_err(|error| {
+        ProximaError::Record(format!(
+            "inspect abuse recording {}: {error}",
+            path.display()
+        ))
+    })?;
+    if !metadata.is_file() {
+        return Err(ProximaError::Record(format!(
+            "abuse recording {} is not a regular file",
+            path.display()
+        )));
+    }
+    if metadata.len() > max_bytes.min(MAX_REPLAY_BYTES) {
+        return Err(ProximaError::Record(format!(
+            "abuse recording exceeds the {} byte bound",
+            max_bytes.min(MAX_REPLAY_BYTES)
+        )));
+    }
+    let runtime = Arc::new(PrimeRuntime::new(1)?);
+    let source = proxima::JsonlSource::new(path, runtime);
+    let mut stream = source.events();
+    let mut restored = 0usize;
+    let mut seen = 0usize;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| {
+            duration.as_millis().min(u128::from(u64::MAX)) as u64
+        });
+    while let Some(event) = stream.next().await {
+        seen = seen
+            .checked_add(1)
+            .ok_or_else(|| ProximaError::Record("abuse recording event count overflow".into()))?;
+        if seen > 1_000_000 {
+            return Err(ProximaError::Record(
+                "abuse recording exceeds the event bound".into(),
+            ));
+        }
+        let event = event?;
+        let proxima::ProtocolEvent::Custom { kind, payload } = event.event else {
+            continue;
+        };
+        if kind != "blackhole.ddos_incident" {
+            continue;
+        }
+        let Some(expires_at_ms) = payload
+            .get("expires_at_ms")
+            .and_then(serde_json::Value::as_u64)
+        else {
+            continue;
+        };
+        let client = payload
+            .get("client")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                ProximaError::Record("abuse recording incident is missing its client".into())
+            })?
+            .parse()
+            .map_err(|error| {
+                ProximaError::Record(format!(
+                    "abuse recording incident has invalid client: {error}"
+                ))
+            })?;
+        if policy.restore_abuse_incident(client, expires_at_ms, now_ms) {
+            restored = restored.saturating_add(1);
+        }
+    }
+    Ok(restored)
+}
+
 #[cfg(test)]
 mod tests {
+    use super::restore_persisted_abuse;
     use super::{count_replay_event, rotate_query_recording, validate_query_recording_path};
+    use blackhole::{Config, Policy};
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
@@ -358,6 +434,40 @@ mod tests {
         assert_eq!(events, 2);
         assert_eq!(actions.get("reject"), Some(&1));
         assert_eq!(incidents, 1);
+    }
+
+    #[test]
+    fn startup_restores_active_incident_from_proxima_jsonl() {
+        let directory = temporary_path("restore");
+        std::fs::create_dir(&directory).expect("temporary directory");
+        let path = directory.join("incidents.jsonl");
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_millis() as u64;
+        let event = proxima::RecordingEvent {
+            id: proxima::InteractionId::new(),
+            ts_ms: now_ms,
+            parent: None,
+            event: proxima::ProtocolEvent::Custom {
+                kind: "blackhole.ddos_incident".into(),
+                payload: serde_json::json!({
+                    "client":"192.0.2.10",
+                    "cause":"client_rate_overflow",
+                    "response":"temporary_blacklist",
+                    "expires_at_ms":now_ms + 60_000,
+                }),
+            },
+        };
+        let mut line =
+            proxima::recording::jsonl::encode_jsonl_line(event).expect("encode incident event");
+        line.push(b'\n');
+        std::fs::write(&path, line).expect("write incident recording");
+        let policy = Policy::new(Config::default()).expect("valid default policy");
+        let restored = futures::executor::block_on(restore_persisted_abuse(&policy, &path, 4_096))
+            .expect("restore incident recording");
+        assert_eq!(restored, 1);
+        std::fs::remove_dir_all(directory).expect("remove temporary directory");
     }
 }
 
@@ -651,6 +761,7 @@ async fn main() -> Result<(), ProximaError> {
     let query_recording_max_bytes = config.privacy.query_recording_max_bytes;
     let query_recording_rotation_enabled = config.privacy.query_recording_rotation_enabled;
     let query_recording_max_files = config.privacy.query_recording_max_files;
+    let persist_ddos_incidents = config.admission.ddos.persist_incidents;
     if let Some(path) = query_recording_path.as_deref() {
         validate_query_recording_path(path)?;
         if query_recording_rotation_enabled {
@@ -665,6 +776,16 @@ async fn main() -> Result<(), ProximaError> {
     let upstream = config.upstream.clone();
     let mut policy = Policy::new(config)
         .map_err(|error| ProximaError::Config(format!("invalid policy rule: {error}")))?;
+    if persist_ddos_incidents {
+        if let Some(path) = query_recording_path.as_deref() {
+            let restored =
+                restore_persisted_abuse(&policy, Path::new(path), query_recording_max_bytes)
+                    .await?;
+            if restored != 0 {
+                println!("blackhole restored {restored} active DDoS incident(s)");
+            }
+        }
+    }
     if let Some(upstream) = upstream {
         let resolver = Policy::resolver_config(&upstream);
         let resolver_addr = SocketAddr::new(

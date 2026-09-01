@@ -36,6 +36,12 @@ DNS edge and is a prerequisite for any future honeypot terminal.
   or wire payloads. When explicitly enabled, bounded startup rotation retains
   at most the configured number of old files, deletes only the oldest exact
   path, and verifies that deletion before opening the active destination.
+- When `admission.ddos.persist_incidents` is explicitly enabled, the same
+  destination may retain the temporary blacklist key (client IP), cause,
+  timestamp, and bounded expiry. Startup restores only unexpired markers to
+  the exact-client and configured-network breakers; names and wire payloads
+  remain excluded. Durable incident deletion is operator-managed through the
+  recording files, not the in-memory `/abuse/clear` operation.
 - Country-policy classification uses adapter-owned client addresses against an
   operator-supplied CIDR map. It is an operational classification signal, not
   identity, attribution, authentication, or a substitute for network-level

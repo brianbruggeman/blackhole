@@ -417,6 +417,18 @@ mod runtime {
             true
         }
 
+        fn restore_blocked(&self, epoch: Instant, remaining: Duration) {
+            let now = epoch.elapsed().as_secs();
+            self.blocked_until.store(
+                now.saturating_add(remaining.as_secs().max(1)),
+                Ordering::Release,
+            );
+            self.last_access_micros.store(
+                epoch.elapsed().as_micros().min(u64::MAX as u128) as u64,
+                Ordering::Relaxed,
+            );
+        }
+
         fn record_abuse(
             &self,
             epoch: Instant,
@@ -511,6 +523,15 @@ mod runtime {
                 Ordering::Relaxed,
             );
             bucket.record_abuse(epoch, window, cooldown, threshold)
+        }
+
+        fn restore_blocked(&self, key: &[u8], epoch: Instant, remaining: Duration) {
+            if self.buckets.len() >= MAX_CLIENT_RATE_ENTRIES {
+                self.buckets
+                    .evict_one_lru(|bucket| bucket.last_access_micros.load(Ordering::Relaxed));
+            }
+            let bucket = self.buckets.get_or_insert(key, AtomicWindowBucket::new);
+            bucket.restore_blocked(epoch, remaining);
         }
 
         fn len(&self) -> usize {
@@ -4019,6 +4040,43 @@ mod runtime {
             exact_opened || network_opened
         }
 
+        /// Restore an active persisted incident without replaying a violation
+        /// window. Both the exact client and its configured network are
+        /// blocked so a restart cannot silently reopen the incident's path.
+        pub fn restore_abuse_incident(
+            &self,
+            client: IpAddr,
+            expires_at_ms: u64,
+            now_ms: u64,
+        ) -> bool {
+            let Some(remaining_ms) = expires_at_ms.checked_sub(now_ms) else {
+                return false;
+            };
+            if remaining_ms == 0 {
+                return false;
+            }
+            let remaining = Duration::from_millis(remaining_ms.min(u64::MAX));
+            let admission = self.admission_config();
+            let (client_key, client_key_len) = ip_key(client);
+            self.client_abuse.restore_blocked(
+                &client_key[..client_key_len],
+                self.breaker_epoch,
+                remaining,
+            );
+            let network = abuse_network_key(
+                client,
+                admission.network_abuse_ipv4_prefix,
+                admission.network_abuse_ipv6_prefix,
+            );
+            let (network_key, network_key_len) = abuse_network_bytes(network);
+            self.network_abuse.restore_blocked(
+                &network_key[..network_key_len],
+                self.breaker_epoch,
+                remaining,
+            );
+            true
+        }
+
         fn admission_allows(&self, query: &proxima_dns::DnsQuery) -> bool {
             let admission = self.admission_config();
             let name = query.name.trim_end_matches('.');
@@ -4431,13 +4489,20 @@ mod runtime {
                 self.observe_failure("ddos_incident_recording_unconfigured");
                 return;
             };
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |duration| {
+                    duration.as_millis().min(u128::from(u64::MAX)) as u64
+                });
+            let expires_at_ms = now_ms.saturating_add(
+                self.admission_config()
+                    .client_abuse_cooldown_secs
+                    .max(self.admission_config().network_abuse_cooldown_secs)
+                    .saturating_mul(1_000),
+            );
             let event = RecordingEvent {
                 id: InteractionId::new(),
-                ts_ms: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_or(0, |duration| {
-                        duration.as_millis().min(u128::from(u64::MAX)) as u64
-                    }),
+                ts_ms: now_ms,
                 parent: None,
                 event: ProtocolEvent::Custom {
                     kind: "blackhole.ddos_incident".into(),
@@ -4445,6 +4510,7 @@ mod runtime {
                         "client": client.to_string(),
                         "cause": cause,
                         "response": "temporary_blacklist",
+                        "expires_at_ms": expires_at_ms,
                     }),
                 },
             };
@@ -7326,6 +7392,23 @@ mod runtime {
             assert!(policy.record_client_abuse(client));
             assert!(!policy.allow_client_abuse(client));
             assert!(policy.allow_client_abuse(None));
+        }
+
+        #[test]
+        fn persisted_abuse_restores_active_client_and_network_until_expiry() {
+            let mut config = Config::default();
+            config.admission.client_abuse_cooldown_secs = 60;
+            config.admission.network_abuse_cooldown_secs = 60;
+            let policy = Policy::new(config).expect("valid abuse config");
+            let client = "192.0.2.10".parse().expect("client address");
+            let same_network = "192.0.2.11".parse().expect("same network address");
+            let other_network = "192.0.3.10".parse().expect("other network address");
+
+            assert!(policy.restore_abuse_incident(client, 61_000, 1_000));
+            assert!(!policy.allow_client_abuse(Some(client)));
+            assert!(!policy.allow_client_abuse(Some(same_network)));
+            assert!(policy.allow_client_abuse(Some(other_network)));
+            assert!(!policy.restore_abuse_incident(client, 1_000, 1_000));
         }
 
         #[test]
