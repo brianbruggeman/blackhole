@@ -31,6 +31,13 @@ optional capture rules:
 cargo run --release -- --check blackhole.example.toml
 ```
 
+The sans-IO edge also builds without the runtime tier. Because no-std targets
+cannot unwind panics, include the abort strategy explicitly:
+
+```sh
+RUSTFLAGS='-C panic=abort' cargo check --locked --no-default-features
+```
+
 Enable DHCP only on a dedicated LAN-facing address after reviewing the pool:
 
 ```toml

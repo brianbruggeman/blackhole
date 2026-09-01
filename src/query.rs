@@ -35,6 +35,7 @@ impl QueryParseError {
     /// Stable low-cardinality cause labels for the runtime telemetry boundary.
     /// Wire details stay in the error text; metrics must not use attacker-
     /// controlled parser messages as label values.
+    #[cfg(feature = "std")]
     #[must_use]
     pub(crate) const fn telemetry_cause(&self) -> &'static str {
         match self {

@@ -9,7 +9,7 @@
 
 extern crate alloc;
 
-#[cfg(all(not(feature = "std"), target_arch = "wasm32"))]
+#[cfg(not(feature = "std"))]
 mod wasm_runtime {
     use core::alloc::{GlobalAlloc, Layout};
     use core::sync::atomic::{AtomicUsize, Ordering};
@@ -20,8 +20,8 @@ mod wasm_runtime {
 
     struct BumpAllocator;
 
-    // This allocator is only for the bounded WASM edge experiment. The
-    // production scalar path does not use it, and deallocation is intentionally
+    // This allocator is only for the bounded no-std edge experiment. The
+    // production std path does not use it, and deallocation is intentionally
     // omitted because the module is short-lived for each benchmark instance.
     unsafe impl GlobalAlloc for BumpAllocator {
         unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
@@ -57,6 +57,7 @@ mod wasm_runtime {
     #[global_allocator]
     static ALLOCATOR: BumpAllocator = BumpAllocator;
 
+    #[cfg(target_arch = "wasm32")]
     pub fn reset() {
         NEXT.store(0, Ordering::Relaxed);
     }
