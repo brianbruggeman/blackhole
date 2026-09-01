@@ -91,6 +91,13 @@ has_user() {
         getent passwd blackhole >/dev/null 2>&1
     fi
 }
+if [ -n "$root" ]; then
+    blackhole_uid=$(awk -F: '$1 == "blackhole" { print $3 }' "$(root_path /etc/passwd)")
+    blackhole_gid=$(awk -F: '$1 == "blackhole" { print $3 }' "$(root_path /etc/group)")
+else
+    blackhole_uid=$(id -u blackhole 2>/dev/null || true)
+    blackhole_gid=$(id -g blackhole 2>/dev/null || true)
+fi
 if ! has_group; then
     groupadd --system ${root:+--root "$root"} blackhole
 fi
@@ -98,7 +105,14 @@ if ! has_user; then
     useradd --system ${root:+--root "$root"} --gid blackhole \
         --home-dir /var/lib/blackhole --shell /usr/sbin/nologin blackhole
 fi
-install -d -o blackhole -g blackhole -m 0750 "$(root_path /var/lib/blackhole)"
+if [ -z "$blackhole_uid" ] || [ -z "$blackhole_gid" ]; then
+    if [ -n "$root" ]; then
+        blackhole_uid=$(awk -F: '$1 == "blackhole" { print $3 }' "$(root_path /etc/passwd)")
+        blackhole_gid=$(awk -F: '$1 == "blackhole" { print $3 }' "$(root_path /etc/group)")
+    fi
+fi
+install -d -o "$blackhole_uid" -g "$blackhole_gid" -m 0750 \
+    "$(root_path /var/lib/blackhole)"
 if command -v systemd-tmpfiles >/dev/null 2>&1; then
     if [ -n "$root" ]; then
         systemd-tmpfiles --create --root="$root" /etc/tmpfiles.d/blackhole.conf
