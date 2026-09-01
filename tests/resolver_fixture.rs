@@ -111,6 +111,147 @@ async fn listener_preserves_distinct_terminal_actions_on_udp() {
     drop(server);
 }
 
+#[proxima::test]
+async fn listener_preserves_distinct_terminal_actions_on_tcp() {
+    let actions = [
+        ("reject.example.", Action::Reject),
+        ("nxdomain.example.", Action::Nxdomain),
+        ("sink.example.", Action::Sink),
+        ("honeypot.example.", Action::Honeypot),
+        ("drop.example.", Action::Drop),
+        ("ignore.example.", Action::Ignore),
+    ];
+    let mut config = Config::default();
+    config.server.listen = "127.0.0.1:0".into();
+    config.policy.rules = actions
+        .iter()
+        .enumerate()
+        .map(|(index, (domain, action))| RuleConfig {
+            id: index as u32 + 1,
+            domain: (*domain).into(),
+            action: *action,
+            priority: 0,
+            qtype: None,
+            qclass: None,
+            client: None,
+            client_cidr: None,
+            client_cidrs: Vec::new(),
+            client_identity: None,
+        })
+        .collect();
+    let policy = Arc::new(Policy::new(config).expect("valid TCP action policy"));
+    let listener_addr = test_listener_addr();
+    let server = Listener::builder()
+        .bind(listener_addr)
+        .any()
+        .protocol(TcpProtocol::new(Arc::clone(&policy)))
+        .handle(into_handle(Passthrough))
+        .serve()
+        .await
+        .expect("serve TCP listener");
+
+    for (index, (domain, action)) in actions.iter().enumerate() {
+        let mut client = PrimeTcpUpstream::new(listener_addr)
+            .connect()
+            .await
+            .expect("connect TCP action client");
+        let mut query = Vec::new();
+        encode::encode_query(
+            index as u16 + 1,
+            true,
+            encode::EncodeQuestion {
+                name: domain,
+                qtype: 1,
+                qclass: 1,
+            },
+            &mut query,
+        )
+        .expect("encode TCP action query");
+        let frame_len = u16::try_from(query.len()).expect("TCP query fits frame");
+        client
+            .write_all(&frame_len.to_be_bytes())
+            .await
+            .expect("write TCP action frame length");
+        client
+            .write_all(&query)
+            .await
+            .expect("write TCP action query");
+
+        match action {
+            Action::Drop | Action::Ignore => {
+                let mut follow_up = Vec::new();
+                encode::encode_query(
+                    0x7000 + index as u16,
+                    true,
+                    encode::EncodeQuestion {
+                        name: "reject.example.",
+                        qtype: 1,
+                        qclass: 1,
+                    },
+                    &mut follow_up,
+                )
+                .expect("encode TCP follow-up query");
+                let follow_up_len =
+                    u16::try_from(follow_up.len()).expect("TCP follow-up fits frame");
+                client
+                    .write_all(&follow_up_len.to_be_bytes())
+                    .await
+                    .expect("write TCP follow-up frame length");
+                client
+                    .write_all(&follow_up)
+                    .await
+                    .expect("write TCP follow-up query");
+                let mut follow_up_response_len = [0u8; 2];
+                client
+                    .read_exact(&mut follow_up_response_len)
+                    .await
+                    .expect("read TCP follow-up response length");
+                let follow_up_response_len =
+                    usize::from(u16::from_be_bytes(follow_up_response_len));
+                let mut follow_up_response = vec![0u8; follow_up_response_len];
+                client
+                    .read_exact(&mut follow_up_response)
+                    .await
+                    .expect("read TCP follow-up response");
+                let message =
+                    parse_message(&follow_up_response).expect("parse TCP follow-up response");
+                assert_eq!(message.header.id, 0x7000 + index as u16);
+                assert_eq!(message.header.flags.rcode(), 5);
+            }
+            Action::Reject | Action::Nxdomain | Action::Sink | Action::Honeypot => {
+                let mut response_len = [0u8; 2];
+                client
+                    .read_exact(&mut response_len)
+                    .await
+                    .expect("read TCP action response length");
+                let response_len = usize::from(u16::from_be_bytes(response_len));
+                let mut response = vec![0u8; response_len];
+                client
+                    .read_exact(&mut response)
+                    .await
+                    .expect("read TCP action response");
+                let message = parse_message(&response).expect("parse TCP action response");
+                assert_eq!(message.header.id, index as u16 + 1);
+                match action {
+                    Action::Reject => assert_eq!(message.header.flags.rcode(), 5),
+                    Action::Nxdomain => assert_eq!(message.header.flags.rcode(), 3),
+                    Action::Sink => {
+                        assert_eq!(message.header.flags.rcode(), 0);
+                        assert_eq!(message.answers().count(), 0);
+                    }
+                    Action::Honeypot => {
+                        assert_eq!(message.header.flags.rcode(), 0);
+                        assert_eq!(message.answers().count(), 1);
+                    }
+                    _ => unreachable!("response action already matched"),
+                }
+            }
+            _ => unreachable!("action matrix contains only terminal actions"),
+        }
+    }
+    server.stop();
+}
+
 struct Passthrough;
 
 impl SendPipe for Passthrough {
