@@ -111,6 +111,8 @@ retaining loaded blocklists. Its optional `blocklists` array can replace the
 blocklist source paths in the same validated publication; omitted or `null`
 retains the current blocklist snapshot. Reloads bound source count, path
 length, each file, and aggregate file bytes before touching the live snapshot.
+`GET /policy/status` includes a monotonic `policy_generation` that advances
+once for each successful publication and does not advance on rejected input.
 Send the token
 as a Bearer credential; `/rules` returns only bounded policy metadata and no
 query payloads. Query logs are disabled by default and retain only timestamp,
