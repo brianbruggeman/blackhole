@@ -104,6 +104,7 @@ mod runtime {
     };
     use proxima_primitives::pipe::CircuitBreaker as ProximaCircuitBreaker;
     use proxima_primitives::pipe::SendPipe;
+    use proxima_primitives::pipe::bucket_table::BucketTable;
     use proxima_primitives::pipe::endpoint::PeerInfo;
     use proxima_primitives::stream::DatagramFactory;
     use proxima_primitives::sync::Semaphore;
@@ -280,9 +281,81 @@ mod runtime {
         client: IpAddr,
     }
 
-    struct ClientRate {
-        window_started: Instant,
-        requests: usize,
+    struct ClientRateBucket {
+        state: AtomicU64,
+        last_access_micros: AtomicU64,
+    }
+
+    impl ClientRateBucket {
+        fn new() -> Self {
+            Self {
+                state: AtomicU64::new(0),
+                last_access_micros: AtomicU64::new(0),
+            }
+        }
+
+        fn allow(&self, epoch: Instant, limit: usize) -> bool {
+            if limit == 0 {
+                return false;
+            }
+            let window = epoch.elapsed().as_secs() & u32::MAX as u64;
+            let limit = limit.min(u32::MAX as usize) as u64;
+            loop {
+                let current = self.state.load(Ordering::Acquire);
+                let current_window = current >> 32;
+                let current_count = current & u32::MAX as u64;
+                let next = if current_window != window {
+                    (window << 32) | 1
+                } else if current_count >= limit {
+                    return false;
+                } else {
+                    current + 1
+                };
+                if self
+                    .state
+                    .compare_exchange(current, next, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+                {
+                    return true;
+                }
+            }
+        }
+    }
+
+    struct ClientRateTable {
+        buckets: BucketTable<ClientRateBucket>,
+    }
+
+    impl ClientRateTable {
+        fn new() -> Self {
+            Self {
+                buckets: BucketTable::with_max_keys(MAX_CLIENT_RATE_ENTRIES),
+            }
+        }
+
+        fn allow(&self, client: IpAddr, epoch: Instant, limit: usize) -> bool {
+            let mut key = [0u8; 17];
+            match client {
+                IpAddr::V4(address) => {
+                    key[0] = 4;
+                    key[1..5].copy_from_slice(&address.octets());
+                }
+                IpAddr::V6(address) => {
+                    key[0] = 6;
+                    key[1..].copy_from_slice(&address.octets());
+                }
+            }
+            if self.buckets.len() >= MAX_CLIENT_RATE_ENTRIES {
+                self.buckets
+                    .evict_one_lru(|bucket| bucket.last_access_micros.load(Ordering::Relaxed));
+            }
+            let bucket = self.buckets.get_or_insert(&key, ClientRateBucket::new);
+            bucket.last_access_micros.store(
+                epoch.elapsed().as_micros().min(u64::MAX as u128) as u64,
+                Ordering::Relaxed,
+            );
+            bucket.allow(epoch, limit)
+        }
     }
 
     /// Lock-free fixed-window budget. The upper half stores elapsed seconds
@@ -1969,7 +2042,7 @@ mod runtime {
         breaker_epoch: Instant,
         request_slots: Arc<Semaphore>,
         client_admission: Arc<Mutex<HashMap<IpAddr, usize>>>,
-        client_rates: Arc<Mutex<HashMap<IpAddr, ClientRate>>>,
+        client_rates: ClientRateTable,
         global_rate: AtomicWindowBudget,
         client_response_budgets: Arc<Mutex<HashMap<IpAddr, ClientResponseBudget>>>,
         network_response_budgets: Arc<Mutex<HashMap<AbuseNetworkKey, ClientResponseBudget>>>,
@@ -2338,7 +2411,7 @@ mod runtime {
                 breaker_epoch: Instant::now(),
                 request_slots: Arc::new(Semaphore::new(max_inflight_requests)),
                 client_admission: Arc::new(Mutex::new(HashMap::new())),
-                client_rates: Arc::new(Mutex::new(HashMap::new())),
+                client_rates: ClientRateTable::new(),
                 global_rate: AtomicWindowBudget::new(),
                 client_response_budgets: Arc::new(Mutex::new(HashMap::new())),
                 network_response_budgets: Arc::new(Mutex::new(HashMap::new())),
@@ -3678,37 +3751,11 @@ mod runtime {
                 return true;
             };
             let admission = self.admission_config();
-            let now = Instant::now();
-            let mut rates = self.client_rates.lock().expect("client rate lock");
-            if let Some(rate) = rates.get_mut(&client) {
-                if now.duration_since(rate.window_started) >= Duration::from_secs(1) {
-                    rate.window_started = now;
-                    rate.requests = 1;
-                    return true;
-                }
-                if rate.requests >= admission.max_queries_per_client_per_second {
-                    return false;
-                }
-                rate.requests += 1;
-                return true;
-            }
-            if rates.len() >= MAX_CLIENT_RATE_ENTRIES {
-                if let Some(oldest) = rates
-                    .iter()
-                    .min_by_key(|(_, rate)| rate.window_started)
-                    .map(|(client, _)| *client)
-                {
-                    rates.remove(&oldest);
-                }
-            }
-            rates.insert(
+            self.client_rates.allow(
                 client,
-                ClientRate {
-                    window_started: now,
-                    requests: 1,
-                },
-            );
-            true
+                self.breaker_epoch,
+                admission.max_queries_per_client_per_second,
+            )
         }
 
         fn allow_global_rate(&self) -> bool {
