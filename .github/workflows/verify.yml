@@ -49,6 +49,8 @@ jobs:
           deploy/package/build.sh target/release/blackhole dist
           BLACKHOLE_DEB_VERSION=0.0.9 deploy/package/build-deb.sh target/release/blackhole dist
           deploy/package/build-deb.sh target/release/blackhole dist
+          package_version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
+          test -n "$package_version"
           tar -tzf dist/blackhole-*.tar.gz >/dev/null
           ar t dist/blackhole_*.deb
           mkdir -p package-check/control package-check/data
@@ -73,7 +75,7 @@ jobs:
       - name: run Debian package install smoke
         run: |
           old_package=$(find dist -name 'blackhole_0.0.9_*.deb' -print -quit)
-          new_package=$(find dist -name 'blackhole_0.1.0_*.deb' -print -quit)
+          new_package=$(find dist -name "blackhole_${package_version}_*.deb" -print -quit)
           test -n "$old_package" && test -n "$new_package"
           sudo -n deploy/package/smoke-deb.sh "$old_package" "$new_package"
       - name: run archive installer smoke
