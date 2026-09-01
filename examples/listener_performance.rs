@@ -4,13 +4,14 @@
 //! policy, and encoder work, while this executable measures a real UDP client
 //! crossing the Proxima listener and Blackhole protocol adapter.
 
-use blackhole::listener::UdpProtocol;
+use blackhole::listener::{TcpProtocol, UdpProtocol};
 use blackhole::{Action, Config, Policy, RewriteConfig};
 use bytes::Bytes;
+use futures::io::{AsyncReadExt, AsyncWriteExt};
 use proxima::pipe::into_handle;
 use proxima::{Listener, ListenerBuilderEntry, ProximaError, Request, Response, SendPipe};
-use proxima_net::prime::PrimeDatagramFactory;
-use proxima_primitives::stream::{DatagramFactory, DatagramSocket};
+use proxima_net::prime::{PrimeDatagramFactory, PrimeTcpUpstream};
+use proxima_primitives::stream::{DatagramFactory, DatagramSocket, StreamUpstreamExt};
 use proxima_protocols::dns::{encode, parse_message};
 use std::future::poll_fn;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
@@ -73,6 +74,7 @@ async fn main() -> Result<(), ProximaError> {
         .bind(listener_addr)
         .any()
         .protocol(UdpProtocol::new(std::sync::Arc::clone(&policy)))
+        .protocol(TcpProtocol::new(std::sync::Arc::clone(&policy)))
         .handle(into_handle(Passthrough))
         .serve()
         .await?;
@@ -118,7 +120,6 @@ async fn main() -> Result<(), ProximaError> {
     let elapsed_ns = before.elapsed().as_nanos();
     let after_cpu = process_cpu_ticks();
     let rss = rss_kib();
-    server.stop();
 
     samples.sort_unstable();
     let sum: u128 = samples.iter().sum();
@@ -156,6 +157,57 @@ async fn main() -> Result<(), ProximaError> {
         load_average()
     );
     assert_eq!(errors, 0, "real-client listener errors must be zero");
+
+    let tcp_upstream = PrimeTcpUpstream::new(listener_addr);
+    let mut tcp = tcp_upstream.connect().await?;
+    let mut tcp_samples = Vec::with_capacity(SAMPLES);
+    let mut tcp_errors = 0_usize;
+    let mut tcp_single_request_ns = 0;
+    let tcp_before = Instant::now();
+    for id in 0..SAMPLES as u16 {
+        let start = Instant::now();
+        if tcp_exchange(&mut tcp, &query, id).await.is_err() {
+            tcp_errors += 1;
+        }
+        let elapsed = start.elapsed().as_nanos();
+        if id == 0 {
+            tcp_single_request_ns = elapsed;
+        }
+        tcp_samples.push(elapsed);
+    }
+    let tcp_elapsed_ns = tcp_before.elapsed().as_nanos();
+    tcp_samples.sort_unstable();
+    let tcp_sum: u128 = tcp_samples.iter().sum();
+    let tcp_mean = tcp_sum as f64 / tcp_samples.len() as f64;
+    let tcp_variance = tcp_samples
+        .iter()
+        .map(|sample| {
+            let difference = *sample as f64 - tcp_mean;
+            difference * difference
+        })
+        .sum::<f64>()
+        / tcp_samples.len() as f64;
+    let tcp_cov = tcp_variance.sqrt() / tcp_mean;
+    let tcp_throughput = SAMPLES as f64 / (tcp_elapsed_ns as f64 / 1_000_000_000.0);
+    println!(
+        "listener_tcp samples={SAMPLES} errors={tcp_errors} single_request_ns=MEASURED {tcp_single_request_ns}"
+    );
+    println!(
+        "listener_tcp_latency_ns=MEASURED p50={} p95={} p99={} min={} max={} cov={tcp_cov:.6} n={SAMPLES}",
+        percentile(&tcp_samples, 50),
+        percentile(&tcp_samples, 95),
+        percentile(&tcp_samples, 99),
+        tcp_samples[0],
+        tcp_samples[tcp_samples.len() - 1]
+    );
+    println!(
+        "listener_tcp_throughput_ops_s=DERIVED {tcp_throughput:.2} errors=MEASURED {tcp_errors}"
+    );
+    assert_eq!(
+        tcp_errors, 0,
+        "real-client TCP listener errors must be zero"
+    );
+    server.stop();
     Ok(())
 }
 
@@ -178,6 +230,32 @@ async fn exchange(
             "benchmark response mismatch id={} expected_id={id} answers={answer_count}",
             message.header.id
         )));
+    }
+    Ok(())
+}
+
+async fn tcp_exchange(
+    stream: &mut (impl AsyncReadExt + AsyncWriteExt + Unpin),
+    query: &[u8],
+    id: u16,
+) -> Result<(), ProximaError> {
+    let mut query = query.to_vec();
+    query[..2].copy_from_slice(&id.to_be_bytes());
+    let frame_length = u16::try_from(query.len())
+        .map_err(|_| ProximaError::Encode("benchmark query frame is too large".into()))?;
+    stream.write_all(&frame_length.to_be_bytes()).await?;
+    stream.write_all(&query).await?;
+    let mut response_length = [0_u8; 2];
+    stream.read_exact(&mut response_length).await?;
+    let response_length = usize::from(u16::from_be_bytes(response_length));
+    let mut response = vec![0_u8; response_length];
+    stream.read_exact(&mut response).await?;
+    let message = parse_message(&response)
+        .map_err(|error| ProximaError::Decode(format!("benchmark TCP response: {error}")))?;
+    if message.header.id != id || message.answers().count() != 1 {
+        return Err(ProximaError::Decode(
+            "benchmark TCP response mismatch".into(),
+        ));
     }
     Ok(())
 }
