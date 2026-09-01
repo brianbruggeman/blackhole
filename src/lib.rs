@@ -477,11 +477,25 @@ mod runtime {
         /// Country codes whose requests are observed but otherwise unchanged.
         #[serde(default)]
         pub observe: Vec<String>,
+        /// Optional region labels from map rows to deny.
+        #[serde(default)]
+        pub deny_regions: Vec<String>,
+        /// Optional region labels from map rows to observe.
+        #[serde(default)]
+        pub observe_regions: Vec<String>,
+        /// Optional autonomous system numbers from map rows to deny.
+        #[serde(default)]
+        pub deny_asns: Vec<u32>,
+        /// Optional autonomous system numbers from map rows to observe.
+        #[serde(default)]
+        pub observe_asns: Vec<u32>,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct CountryEntry {
         country: String,
+        region: Option<String>,
+        asn: Option<u32>,
         network: policy::IpNetwork,
     }
 
@@ -490,25 +504,46 @@ mod runtime {
         entries: Vec<CountryEntry>,
         deny: BTreeSet<String>,
         observe: BTreeSet<String>,
+        deny_regions: BTreeSet<String>,
+        observe_regions: BTreeSet<String>,
+        deny_asns: BTreeSet<u32>,
+        observe_asns: BTreeSet<u32>,
     }
 
     impl CountryPolicy {
-        fn country_for(&self, client: IpAddr) -> Option<&str> {
+        fn entry_for(&self, client: IpAddr) -> Option<&CountryEntry> {
             self.entries
                 .iter()
                 .filter(|entry| entry.network.contains(client))
                 .max_by_key(|entry| entry.network.prefix())
-                .map(|entry| entry.country.as_str())
         }
 
         fn denied(&self, client: IpAddr) -> bool {
-            self.country_for(client)
-                .is_some_and(|country| self.deny.contains(country))
+            self.entry_for(client).is_some_and(|entry| {
+                self.deny.contains(&entry.country)
+                    || entry
+                        .region
+                        .as_ref()
+                        .is_some_and(|region| self.deny_regions.contains(region))
+                    || entry.asn.is_some_and(|asn| self.deny_asns.contains(&asn))
+            })
         }
 
         fn observed(&self, client: IpAddr) -> bool {
-            self.country_for(client)
-                .is_some_and(|country| self.observe.contains(country))
+            self.entry_for(client).is_some_and(|entry| {
+                self.observe.contains(&entry.country)
+                    || entry
+                        .region
+                        .as_ref()
+                        .is_some_and(|region| self.observe_regions.contains(region))
+                    || entry
+                        .asn
+                        .is_some_and(|asn| self.observe_asns.contains(&asn))
+            })
+        }
+
+        fn country_for(&self, client: IpAddr) -> Option<&str> {
+            self.entry_for(client).map(|entry| entry.country.as_str())
         }
     }
 
@@ -1177,16 +1212,39 @@ mod runtime {
 
     const MAX_COUNTRY_MAP_BYTES: u64 = 16 * 1024 * 1024;
     const MAX_COUNTRY_MAP_LINE_BYTES: usize = 256;
+    const MAX_COUNTRY_SELECTORS: usize = 256;
 
     fn country_code(value: &str) -> Option<String> {
         (value.len() == 2 && value.bytes().all(|byte| byte.is_ascii_alphabetic()))
             .then(|| value.to_ascii_uppercase())
     }
 
+    fn region_code(value: &str) -> Option<String> {
+        (!value.is_empty()
+            && value.len() <= 32
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')))
+        .then(|| value.to_ascii_uppercase())
+    }
+
+    fn asn_number(value: &str) -> Option<u32> {
+        let value = value.strip_prefix("AS").unwrap_or(value);
+        let asn = value.parse::<u32>().ok()?;
+        (asn != 0).then_some(asn)
+    }
+
     fn load_country_policy(
         config: &CountryPolicyConfig,
     ) -> Result<Option<CountryPolicy>, policy::PolicyError> {
-        if config.map_path.is_none() && config.deny.is_empty() && config.observe.is_empty() {
+        if config.map_path.is_none()
+            && config.deny.is_empty()
+            && config.observe.is_empty()
+            && config.deny_regions.is_empty()
+            && config.observe_regions.is_empty()
+            && config.deny_asns.is_empty()
+            && config.observe_asns.is_empty()
+        {
             return Ok(None);
         }
         let path =
@@ -1217,10 +1275,58 @@ mod runtime {
                 })
             })
             .collect::<Result<_, _>>()?;
+        let deny_regions: BTreeSet<String> = config
+            .deny_regions
+            .iter()
+            .map(|region| {
+                region_code(region).ok_or_else(|| policy::PolicyError::InvalidCountryMap {
+                    path: path.into(),
+                    reason: format!("invalid deny region: {region}"),
+                })
+            })
+            .collect::<Result<_, _>>()?;
+        let observe_regions: BTreeSet<String> = config
+            .observe_regions
+            .iter()
+            .map(|region| {
+                region_code(region).ok_or_else(|| policy::PolicyError::InvalidCountryMap {
+                    path: path.into(),
+                    reason: format!("invalid observe region: {region}"),
+                })
+            })
+            .collect::<Result<_, _>>()?;
+        if config.deny_regions.len() > MAX_COUNTRY_SELECTORS
+            || config.observe_regions.len() > MAX_COUNTRY_SELECTORS
+            || config.deny_asns.len() > MAX_COUNTRY_SELECTORS
+            || config.observe_asns.len() > MAX_COUNTRY_SELECTORS
+        {
+            return Err(policy::PolicyError::InvalidCountryMap {
+                path: path.into(),
+                reason: format!("country selector count exceeds {MAX_COUNTRY_SELECTORS}"),
+            });
+        }
+        let deny_asns: BTreeSet<u32> = config.deny_asns.iter().copied().collect();
+        let observe_asns: BTreeSet<u32> = config.observe_asns.iter().copied().collect();
+        if deny_asns.contains(&0) || observe_asns.contains(&0) {
+            return Err(policy::PolicyError::InvalidCountryMap {
+                path: path.into(),
+                reason: "ASN zero is invalid".into(),
+            });
+        }
         if deny.iter().any(|country| observe.contains(country)) {
             return Err(policy::PolicyError::InvalidCountryMap {
                 path: path.into(),
                 reason: "a country cannot be both denied and observed".into(),
+            });
+        }
+        if deny_regions
+            .iter()
+            .any(|region| observe_regions.contains(region))
+            || deny_asns.iter().any(|asn| observe_asns.contains(asn))
+        {
+            return Err(policy::PolicyError::InvalidCountryMap {
+                path: path.into(),
+                reason: "a region or ASN cannot be both denied and observed".into(),
             });
         }
         let metadata =
@@ -1278,10 +1384,13 @@ mod runtime {
                 continue;
             }
             let fields: Vec<&str> = line.split_whitespace().collect();
-            if fields.len() != 2 {
+            if !(2..=4).contains(&fields.len()) {
                 return Err(policy::PolicyError::InvalidCountryMap {
                     path: path.into(),
-                    reason: format!("line {} must contain COUNTRY CIDR", line_number + 1),
+                    reason: format!(
+                        "line {} must contain COUNTRY CIDR [REGION] [ASN]",
+                        line_number + 1
+                    ),
                 });
             }
             let country =
@@ -1295,7 +1404,32 @@ mod runtime {
                     reason: format!("line {} has an invalid CIDR", line_number + 1),
                 }
             })?;
-            entries.push(CountryEntry { country, network });
+            let region = fields
+                .get(2)
+                .filter(|value| **value != "-")
+                .map(|value| {
+                    region_code(value).ok_or_else(|| policy::PolicyError::InvalidCountryMap {
+                        path: path.into(),
+                        reason: format!("line {} has an invalid region", line_number + 1),
+                    })
+                })
+                .transpose()?;
+            let asn = fields
+                .get(3)
+                .filter(|value| **value != "-")
+                .map(|value| {
+                    asn_number(value).ok_or_else(|| policy::PolicyError::InvalidCountryMap {
+                        path: path.into(),
+                        reason: format!("line {} has an invalid ASN", line_number + 1),
+                    })
+                })
+                .transpose()?;
+            entries.push(CountryEntry {
+                country,
+                region,
+                asn,
+                network,
+            });
         }
         if entries.is_empty() {
             return Err(policy::PolicyError::InvalidCountryMap {
@@ -1307,6 +1441,10 @@ mod runtime {
             entries,
             deny,
             observe,
+            deny_regions,
+            observe_regions,
+            deny_asns,
+            observe_asns,
         }))
     }
 
@@ -3933,6 +4071,10 @@ mod runtime {
                 "entries": policy.map_or(0, |value| value.entries.len()),
                 "deny": self.config.country_policy.deny,
                 "observe": self.config.country_policy.observe,
+                "deny_regions": self.config.country_policy.deny_regions,
+                "observe_regions": self.config.country_policy.observe_regions,
+                "deny_asns": self.config.country_policy.deny_asns,
+                "observe_asns": self.config.country_policy.observe_asns,
                 "max_age_secs": self.config.country_policy.max_age_secs,
                 "reload_interval_secs": self.config.country_policy.reload_interval_secs,
             })
@@ -5305,15 +5447,22 @@ mod runtime {
                 std::process::id(),
                 1
             ));
-            std::fs::write(&path, "US 192.0.2.0/24\nCA 198.51.100.0/24\n")
-                .expect("write country map");
+            std::fs::write(
+                &path,
+                "US 192.0.2.0/24 US-CA AS64500\nCA 198.51.100.0/24 CA-ON 64501\n",
+            )
+            .expect("write country map");
             let mut config = Config::default();
             config.country_policy = CountryPolicyConfig {
                 map_path: Some(path.to_string_lossy().into_owned()),
                 max_age_secs: None,
                 reload_interval_secs: 0,
                 deny: vec!["us".into()],
-                observe: vec!["CA".into()],
+                observe: Vec::new(),
+                deny_regions: vec!["us-ca".into()],
+                observe_regions: Vec::new(),
+                deny_asns: Vec::new(),
+                observe_asns: vec![64501],
             };
             let policy = Policy::new(config).expect("valid country policy");
             let denied = "192.0.2.10".parse().expect("client address");
@@ -5333,7 +5482,7 @@ mod runtime {
             );
             std::fs::write(
                 &path,
-                "US 192.0.2.0/24\nCA 198.51.100.0/24\nGB 203.0.113.0/24\n",
+                "US 192.0.2.0/24 US-CA AS64500\nCA 198.51.100.0/24 CA-ON 64501\nGB 203.0.113.0/24 GB-LND 64502\n",
             )
             .expect("change country map");
             assert_eq!(

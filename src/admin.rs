@@ -687,6 +687,10 @@ mod tests {
         assert_eq!(country_status["entries"], 0);
         assert_eq!(country_status["deny"], serde_json::json!([]));
         assert_eq!(country_status["observe"], serde_json::json!([]));
+        assert_eq!(country_status["deny_regions"], serde_json::json!([]));
+        assert_eq!(country_status["observe_regions"], serde_json::json!([]));
+        assert_eq!(country_status["deny_asns"], serde_json::json!([]));
+        assert_eq!(country_status["observe_asns"], serde_json::json!([]));
         assert_eq!(status["profiles_configured"], 0);
         assert_eq!(status["client_groups_configured"], 0);
         assert_eq!(status["upstream_configured"], false);
