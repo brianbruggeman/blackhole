@@ -1187,6 +1187,10 @@ mod runtime {
         pub regex_rules: Vec<RegexRuleConfig>,
         #[serde(default)]
         pub blocklists: Vec<String>,
+        /// Configured sources that remain retained but are excluded from the
+        /// active blocklist snapshot.
+        #[serde(default)]
+        pub disabled_blocklists: Vec<String>,
         /// Optional bounded background reload interval. Zero disables polling.
         #[serde(default)]
         pub blocklist_reload_interval_secs: u64,
@@ -1210,6 +1214,7 @@ mod runtime {
                 rules: Vec::new(),
                 regex_rules: Vec::new(),
                 blocklists: Vec::new(),
+                disabled_blocklists: Vec::new(),
                 blocklist_reload_interval_secs: 0,
                 rewrites: Vec::new(),
                 profiles: Vec::new(),
@@ -1517,6 +1522,31 @@ mod runtime {
     const MAX_BLOCKLIST_PATHS: usize = 4096;
     const MAX_BLOCKLIST_PATH_BYTES: usize = 4096;
     const MAX_BLOCKLIST_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
+
+    fn active_blocklist_paths(
+        paths: &[String],
+        disabled: &[String],
+    ) -> Result<Vec<String>, policy::PolicyError> {
+        let configured = paths.iter().collect::<BTreeSet<_>>();
+        let disabled_set = disabled.iter().collect::<BTreeSet<_>>();
+        if disabled_set.len() != disabled.len() {
+            return Err(policy::PolicyError::InvalidBlocklist {
+                path: "<disabled>".into(),
+                reason: "disabled source paths must be unique".into(),
+            });
+        }
+        if let Some(path) = disabled_set.iter().find(|path| !configured.contains(*path)) {
+            return Err(policy::PolicyError::InvalidBlocklist {
+                path: (*path).clone(),
+                reason: "disabled source path is not configured".into(),
+            });
+        }
+        Ok(paths
+            .iter()
+            .filter(|path| !disabled_set.contains(path))
+            .cloned()
+            .collect())
+    }
 
     fn load_blocklists(paths: &[String]) -> Result<Vec<RuleConfig>, policy::PolicyError> {
         if paths.len() > MAX_BLOCKLIST_PATHS {
@@ -2355,6 +2385,7 @@ mod runtime {
         explicit_rules: Mutex<Vec<RuleConfig>>,
         blocklist_rules: Mutex<Vec<RuleConfig>>,
         blocklist_paths: Mutex<Vec<String>>,
+        disabled_blocklist_paths: Mutex<BTreeSet<String>>,
         profiles: RwLock<Vec<ServiceProfileConfig>>,
         client_groups: RwLock<Vec<ClientGroupConfig>>,
         client_identities: Live<Vec<ClientIdentityConfig>>,
@@ -2640,7 +2671,11 @@ mod runtime {
             let explicit_rules = config.policy.rules.clone();
             config.policy.rules.extend(profile_rules);
             let base_rules = config.policy.rules.clone();
-            let blocklist_rules = load_blocklists(&config.policy.blocklists)?;
+            let active_blocklists = active_blocklist_paths(
+                &config.policy.blocklists,
+                &config.policy.disabled_blocklists,
+            )?;
+            let blocklist_rules = load_blocklists(&active_blocklists)?;
             let retained_blocklist_rules = blocklist_rules.clone();
             let country_policy = load_country_policy(&config.country_policy)?;
             let rewrites = compile_rewrites(&config.policy.rewrites)?;
@@ -2682,6 +2717,8 @@ mod runtime {
             let client_groups = config.policy.client_groups.clone();
             let client_identities = validate_client_identities(&config.policy.client_identities)?;
             let blocklist_paths = config.policy.blocklists.clone();
+            let disabled_blocklist_paths =
+                config.policy.disabled_blocklists.iter().cloned().collect();
             let legacy_domains = config.policy.domains.clone();
             let legacy_mode = config.policy.mode;
             let default_action = config.policy.default_action;
@@ -2704,6 +2741,7 @@ mod runtime {
                 explicit_rules: Mutex::new(explicit_rules),
                 blocklist_rules: Mutex::new(retained_blocklist_rules),
                 blocklist_paths: Mutex::new(blocklist_paths),
+                disabled_blocklist_paths: Mutex::new(disabled_blocklist_paths),
                 profiles: RwLock::new(profiles),
                 client_groups: RwLock::new(client_groups),
                 client_identities,
@@ -3059,7 +3097,16 @@ mod runtime {
                 .lock()
                 .expect("blocklist paths lock")
                 .clone();
-            self.replace_blocklist_sources(&paths)
+            let disabled = self
+                .disabled_blocklist_paths
+                .lock()
+                .expect("disabled blocklist paths lock")
+                .clone();
+            let active = paths
+                .into_iter()
+                .filter(|path| !disabled.contains(path))
+                .collect::<Vec<_>>();
+            self.replace_active_blocklist_rules(&active)
         }
 
         /// Replace the configured blocklist source paths and publish their
@@ -3098,7 +3145,22 @@ mod runtime {
                     paths.push(path.clone());
                 }
             }
-            self.replace_blocklist_sources_locked(&paths, started, "blocklists_add")
+            let disabled = self
+                .disabled_blocklist_paths
+                .lock()
+                .expect("disabled blocklist paths lock")
+                .clone();
+            let active = paths
+                .iter()
+                .filter(|path| !disabled.contains(*path))
+                .cloned()
+                .collect::<Vec<_>>();
+            let result =
+                self.replace_active_blocklist_rules_locked(&active, started, "blocklists_add");
+            if result.is_ok() {
+                *self.blocklist_paths.lock().expect("blocklist paths lock") = paths;
+            }
+            result
         }
 
         /// Atomically remove exact blocklist source paths. Unknown paths fail
@@ -3129,7 +3191,107 @@ mod runtime {
                 });
             }
             let started = Instant::now();
-            self.replace_blocklist_sources_locked(&paths, started, "blocklists_remove")
+            let disabled = self
+                .disabled_blocklist_paths
+                .lock()
+                .expect("disabled blocklist paths lock")
+                .clone();
+            let active = paths
+                .iter()
+                .filter(|path| !disabled.contains(*path))
+                .cloned()
+                .collect::<Vec<_>>();
+            let result =
+                self.replace_active_blocklist_rules_locked(&active, started, "blocklists_remove");
+            if result.is_ok() {
+                *self.blocklist_paths.lock().expect("blocklist paths lock") = paths;
+                let configured = self
+                    .blocklist_paths
+                    .lock()
+                    .expect("blocklist paths lock")
+                    .clone();
+                self.disabled_blocklist_paths
+                    .lock()
+                    .expect("disabled blocklist paths lock")
+                    .retain(|path| configured.contains(path));
+            }
+            result
+        }
+
+        /// Disable configured blocklist sources without deleting them. The
+        /// active rule snapshot is rebuilt before this state is published.
+        pub fn disable_blocklist_sources(
+            &self,
+            paths: &[String],
+        ) -> Result<ReloadState, policy::PolicyError> {
+            self.set_blocklist_sources_enabled(paths, false)
+        }
+
+        /// Re-enable configured blocklist sources and republish their rules.
+        pub fn enable_blocklist_sources(
+            &self,
+            paths: &[String],
+        ) -> Result<ReloadState, policy::PolicyError> {
+            self.set_blocklist_sources_enabled(paths, true)
+        }
+
+        fn set_blocklist_sources_enabled(
+            &self,
+            paths: &[String],
+            enabled: bool,
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
+            if paths.is_empty() {
+                return Err(policy::PolicyError::InvalidBlocklist {
+                    path: "<sources>".into(),
+                    reason: "at least one source path is required".into(),
+                });
+            }
+            let configured = self
+                .blocklist_paths
+                .lock()
+                .expect("blocklist paths lock")
+                .clone();
+            if paths.iter().any(|path| !configured.contains(path)) {
+                return Err(policy::PolicyError::InvalidBlocklist {
+                    path: "<sources>".into(),
+                    reason: "all source paths must already be configured".into(),
+                });
+            }
+            let mut disabled = self
+                .disabled_blocklist_paths
+                .lock()
+                .expect("disabled blocklist paths lock")
+                .clone();
+            for path in paths {
+                if enabled {
+                    disabled.remove(path);
+                } else {
+                    disabled.insert(path.clone());
+                }
+            }
+            let active = configured
+                .iter()
+                .filter(|path| !disabled.contains(*path))
+                .cloned()
+                .collect::<Vec<_>>();
+            let started = Instant::now();
+            let result = self.replace_active_blocklist_rules_locked(
+                &active,
+                started,
+                if enabled {
+                    "blocklists_enable"
+                } else {
+                    "blocklists_disable"
+                },
+            );
+            if result.is_ok() {
+                *self
+                    .disabled_blocklist_paths
+                    .lock()
+                    .expect("disabled blocklist paths lock") = disabled;
+            }
+            result
         }
 
         fn replace_blocklist_sources_locked(
@@ -3138,7 +3300,31 @@ mod runtime {
             started: Instant,
             reload_kind: &'static str,
         ) -> Result<ReloadState, policy::PolicyError> {
-            let replacement = load_blocklists(&paths)?;
+            let result =
+                self.replace_active_blocklist_rules_locked(&paths, started, reload_kind)?;
+            *self
+                .disabled_blocklist_paths
+                .lock()
+                .expect("disabled blocklist paths lock") = BTreeSet::new();
+            *self.blocklist_paths.lock().expect("blocklist paths lock") = paths.to_vec();
+            Ok(result)
+        }
+
+        fn replace_active_blocklist_rules(
+            &self,
+            paths: &[String],
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
+            self.replace_active_blocklist_rules_locked(paths, Instant::now(), "blocklists")
+        }
+
+        fn replace_active_blocklist_rules_locked(
+            &self,
+            paths: &[String],
+            started: Instant,
+            reload_kind: &'static str,
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let replacement = load_blocklists(paths)?;
             let base_rules = self.base_rules.lock().expect("base rules lock");
             let mut rules = base_rules.clone();
             rules.extend(replacement.iter().cloned());
@@ -3149,7 +3335,6 @@ mod runtime {
                 return Err(policy::PolicyError::DuplicateRule { id: rule.id });
             }
             let published = self.reference.reload(&rules)?;
-            *self.blocklist_paths.lock().expect("blocklist paths lock") = paths.to_vec();
             *self.blocklist_rules.lock().expect("blocklist rules lock") = replacement;
             self.domain_rules_configured
                 .store(!rules.is_empty(), Ordering::Release);
@@ -3179,6 +3364,15 @@ mod runtime {
                 .lock()
                 .expect("blocklist paths lock")
                 .clone();
+            let disabled = self
+                .disabled_blocklist_paths
+                .lock()
+                .expect("disabled blocklist paths lock")
+                .clone();
+            let paths = paths
+                .into_iter()
+                .filter(|path| !disabled.contains(path))
+                .collect::<Vec<_>>();
             let replacement = load_blocklists(&paths)?;
             if replacement == *self.blocklist_rules.lock().expect("blocklist rules lock") {
                 self.observe_reload_latency("blocklists_unchanged", started);
@@ -3314,6 +3508,7 @@ mod runtime {
                 Some(&next.policy.domains),
                 Some(next.policy.default_action),
                 Some(next.policy.filtering_enabled),
+                Some(&next.policy.disabled_blocklists),
                 Some(&next.admission),
             )
         }
@@ -3677,6 +3872,7 @@ mod runtime {
                 None,
                 None,
                 None,
+                None,
             )
         }
 
@@ -3696,6 +3892,7 @@ mod runtime {
             legacy_domains: Option<&[String]>,
             default_action: Option<Action>,
             filtering_enabled: Option<bool>,
+            disabled_blocklists: Option<&[String]>,
         ) -> Result<ReloadState, policy::PolicyError> {
             self.reload_policy_bundle_with_legacy_and_admission(
                 rules,
@@ -3710,6 +3907,7 @@ mod runtime {
                 legacy_domains,
                 default_action,
                 filtering_enabled,
+                disabled_blocklists,
                 None,
             )
         }
@@ -3730,6 +3928,7 @@ mod runtime {
             legacy_domains: Option<&[String]>,
             default_action: Option<Action>,
             filtering_enabled: Option<bool>,
+            disabled_blocklists: Option<&[String]>,
             admission: Option<&AdmissionConfig>,
         ) -> Result<ReloadState, policy::PolicyError> {
             let _reload = self.reload_lock.write().expect("reload lock");
@@ -3743,17 +3942,28 @@ mod runtime {
             let client_identities = validate_client_identities(client_identities)?;
             let rewrites = compile_rewrites(rewrite_configs)?;
             let country_policy = load_country_policy(country_config)?;
-            let (replacement, selected_paths) = if let Some(paths) = blocklist_paths {
-                (load_blocklists(paths)?, Some(paths.to_vec()))
-            } else {
-                (
-                    self.blocklist_rules
+            let configured_paths = blocklist_paths.map_or_else(
+                || {
+                    self.blocklist_paths
                         .lock()
-                        .expect("blocklist rules lock")
-                        .clone(),
-                    None,
-                )
-            };
+                        .expect("blocklist paths lock")
+                        .clone()
+                },
+                <[String]>::to_vec,
+            );
+            let configured_disabled = disabled_blocklists.map_or_else(
+                || {
+                    self.disabled_blocklist_paths
+                        .lock()
+                        .expect("disabled blocklist paths lock")
+                        .iter()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                },
+                <[String]>::to_vec,
+            );
+            let active_paths = active_blocklist_paths(&configured_paths, &configured_disabled)?;
+            let replacement = load_blocklists(&active_paths)?;
             let mut base = rules.to_vec();
             base.extend(generated);
             let mut published = base.clone();
@@ -3793,8 +4003,15 @@ mod runtime {
                 self.filtering_enabled_control.replace(enabled);
             }
             *self.blocklist_rules.lock().expect("blocklist rules lock") = replacement;
-            if let Some(paths) = selected_paths {
-                *self.blocklist_paths.lock().expect("blocklist paths lock") = paths;
+            if blocklist_paths.is_some() {
+                *self.blocklist_paths.lock().expect("blocklist paths lock") = configured_paths;
+            }
+            if disabled_blocklists.is_some() {
+                *self
+                    .disabled_blocklist_paths
+                    .lock()
+                    .expect("disabled blocklist paths lock") =
+                    configured_disabled.into_iter().collect();
             }
             self.domain_rules_configured
                 .store(!published.is_empty(), Ordering::Release);
@@ -5096,6 +5313,10 @@ mod runtime {
             let regex_rules = self.regex_rules.snapshot();
             let blocklist_rules = self.blocklist_rules.lock().expect("blocklist rules lock");
             let blocklist_paths = self.blocklist_paths.lock().expect("blocklist paths lock");
+            let disabled_blocklists = self
+                .disabled_blocklist_paths
+                .lock()
+                .expect("disabled blocklist paths lock");
             let profiles = self.profiles.read().expect("profiles lock");
             let client_groups = self.client_groups.read().expect("client groups lock");
             let identity_rules = base_rules
@@ -5113,6 +5334,7 @@ mod runtime {
                 "domain_rules": base_rules.len(),
                 "regex_rules": regex_rules.len(),
                 "blocklist_sources": blocklist_paths.len(),
+                "disabled_blocklist_sources": disabled_blocklists.len(),
                 "blocklist_rules": blocklist_rules.len(),
                 "rewrites": rewrites.len(),
                 "profiles": profiles.len(),
@@ -5138,6 +5360,10 @@ mod runtime {
         pub(crate) fn admin_blocklists(&self) -> String {
             let _reload = self.reload_lock.read().expect("reload lock");
             let paths = self.blocklist_paths.lock().expect("blocklist paths lock");
+            let disabled = self
+                .disabled_blocklist_paths
+                .lock()
+                .expect("disabled blocklist paths lock");
             let rules = self.blocklist_rules.lock().expect("blocklist rules lock");
             let now = std::time::SystemTime::now();
             let sources = paths
@@ -5161,6 +5387,7 @@ mod runtime {
                     };
                     serde_json::json!({
                         "path": path,
+                        "enabled": !disabled.contains(path),
                         "status": status,
                         "bytes": bytes,
                         "modified_age_secs": modified_age_secs,
@@ -5170,6 +5397,7 @@ mod runtime {
             serde_json::json!({
                 "sources": sources,
                 "source_count": paths.len(),
+                "disabled_source_count": disabled.len(),
                 "rule_count": rules.len(),
                 "reload_interval_secs": self.config.policy.blocklist_reload_interval_secs,
                 "policy_generation": self.policy_generation.load(Ordering::Acquire),
@@ -5252,6 +5480,13 @@ mod runtime {
                     .expect("country policy config lock")
                     .clone(),
                 "blocklists": serde_json::Value::Null,
+                "disabled_blocklists": self
+                    .disabled_blocklist_paths
+                    .lock()
+                    .expect("disabled blocklist paths lock")
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>(),
                 "admission": self.admission_config(),
             });
             let encoded = value.to_string();
@@ -6366,6 +6601,28 @@ mod runtime {
                 Policy::new(config),
                 Err(policy::PolicyError::InvalidBlocklist { .. })
             ));
+        }
+
+        #[test]
+        fn disabled_blocklists_retain_sources_without_loading_rules() {
+            let path = std::env::temp_dir().join(format!(
+                "blackhole-disabled-blocklist-{}-{}.txt",
+                std::process::id(),
+                1
+            ));
+            std::fs::write(&path, "disabled.example\n").expect("write blocklist");
+            let path = path.to_string_lossy().into_owned();
+            let mut config = Config::default();
+            config.policy.blocklists = vec![path.clone()];
+            config.policy.disabled_blocklists = vec![path.clone()];
+            let policy = Policy::new(config).expect("disabled blocklist configuration");
+            let status: serde_json::Value =
+                serde_json::from_str(&policy.admin_blocklists()).expect("blocklist status");
+            assert_eq!(status["source_count"], 1);
+            assert_eq!(status["disabled_source_count"], 1);
+            assert_eq!(status["rule_count"], 0);
+            assert_eq!(status["sources"][0]["enabled"], false);
+            std::fs::remove_file(path).expect("remove blocklist");
         }
 
         #[test]

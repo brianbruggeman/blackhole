@@ -97,6 +97,10 @@ Configured blocklists may be refreshed by Proxima's cancellable background
 interval with `policy.blocklist_reload_interval_secs`; zero disables polling,
 the interval is bounded to one day, unchanged content does not create a new
 policy generation, and failed reloads retain the last good snapshot.
+Individual sources can be retained but disabled with
+`policy.disabled_blocklists`; the authenticated admin API also exposes
+`POST /reload/blocklists/disable` and `/reload/blocklists/enable` for atomic
+runtime changes.
 Set the top-level `reload_interval_secs` to enable bounded polling of the
 policy-bearing portions of the same configuration file; listener, transport,
 capture, storage, and process-capacity changes fail closed until restart.
@@ -168,7 +172,8 @@ authenticated `GET /health`, `GET /status`, bounded `GET /admission/status`,
 `GET /rules`, `GET /logs`,
 and `POST /logs/clear`, `POST /cache/clear`, `POST /reload/blocklists`, bounded
 `POST /reload/blocklists/replace`, `/reload/blocklists/add`, and
-`/reload/blocklists/remove` (atomic exact source-path management), bounded
+`/reload/blocklists/remove`, `/reload/blocklists/enable`, and
+`/reload/blocklists/disable` (atomic exact source-path management), bounded
 `POST /reload/admission` (a bounded JSON admission configuration; the global
 in-flight capacity remains startup-only), bounded
 `POST /reload/country`, bounded `POST /reload/policy` (a JSON array of complete rule objects), bounded
@@ -211,8 +216,9 @@ retaining loaded blocklists. Its optional `mode`, `domains`, `default_action`,
 and `filtering_enabled` fields also replace the legacy fallback settings
 atomically;
 its optional `blocklists` array can replace the
-blocklist source paths in the same validated publication; omitted or `null`
-retains the current blocklist snapshot. Reloads bound source count, path
+blocklist source paths in the same validated publication, while
+`disabled_blocklists` retains configured paths without loading their rules;
+omitted or `null` retains the current blocklist snapshot. Reloads bound source count, path
 length, each file, and aggregate file bytes before touching the live snapshot.
 `POST /reload/config` accepts the same policy shape plus a required `admission`
 object and publishes policy tables and live admission limits together;

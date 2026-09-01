@@ -71,6 +71,9 @@ struct PolicyBundle {
     /// Omitted/null retains the currently loaded blocklist snapshot.
     #[serde(default)]
     blocklists: Option<Vec<String>>,
+    /// Omitted retains the currently disabled source set.
+    #[serde(default)]
+    disabled_blocklists: Option<Vec<String>>,
     /// Required by the full configuration reload route; ignored by the
     /// policy-only route.
     #[serde(default)]
@@ -321,6 +324,7 @@ impl SendPipe for AdminHandler {
                     bundle.domains.as_deref(),
                     bundle.default_action,
                     bundle.filtering_enabled,
+                    bundle.disabled_blocklists.as_deref(),
                 ) {
                     Ok(_) => Ok(Response::ok(r#"{"status":"reloaded"}"#)),
                     Err(error) => Ok(Response::new(422).with_body(format!(
@@ -360,6 +364,7 @@ impl SendPipe for AdminHandler {
                     config.domains.as_deref(),
                     config.default_action,
                     config.filtering_enabled,
+                    config.disabled_blocklists.as_deref(),
                     Some(admission),
                 ) {
                     Ok(_) => Ok(Response::ok(r#"{"status":"reloaded"}"#)),
@@ -498,6 +503,38 @@ impl SendPipe for AdminHandler {
                     serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
                 ))),
             },
+            ("POST", "/reload/blocklists/enable" | "/reload/blocklists/disable") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let paths = match serde_json::from_slice::<Vec<String>>(&request.payload) {
+                    Ok(paths) => paths,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                let enabled = path == "/reload/blocklists/enable";
+                let result = if enabled {
+                    self.policy.enable_blocklist_sources(&paths)
+                } else {
+                    self.policy.disable_blocklist_sources(&paths)
+                };
+                match result {
+                    Ok(_) => Ok(Response::ok(if enabled {
+                        "{\"status\":\"enabled\"}"
+                    } else {
+                        "{\"status\":\"disabled\"}"
+                    })),
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
             ("POST", "/reload/blocklists/replace") => {
                 if request.payload.len() > MAX_POLICY_BODY_BYTES {
                     return Ok(Response::new(413));
@@ -789,6 +826,8 @@ impl SendPipe for AdminHandler {
                 | "/reload/blocklists/replace"
                 | "/reload/blocklists/add"
                 | "/reload/blocklists/remove"
+                | "/reload/blocklists/enable"
+                | "/reload/blocklists/disable"
                 | "/reload/country"
                 | "/reload/policy"
                 | "/reload/policy/add"
@@ -1277,8 +1316,50 @@ mod tests {
             "both apex plus subdomain rules"
         );
 
-        let first_json = serde_json::to_string(&vec![path.to_string_lossy().into_owned()])
-            .expect("first blocklist JSON");
+        let first_path = path.to_string_lossy().into_owned();
+        let first_json =
+            serde_json::to_string(std::slice::from_ref(&first_path)).expect("first blocklist JSON");
+        let disabled = block_on(
+            handler.call(
+                Request::builder()
+                    .method("POST")
+                    .path("/reload/blocklists/disable")
+                    .payload(Bytes::from(first_json.clone()))
+                    .build()
+                    .expect("disable request"),
+            ),
+        )
+        .expect("disable response");
+        assert_eq!(disabled.status, 200);
+        let status = block_on(handler.call(request("GET", "/policy/status")))
+            .expect("disabled status response");
+        let status: serde_json::Value = serde_json::from_slice(&status.payload).expect("status");
+        assert_eq!(status["disabled_blocklist_sources"], 1);
+        assert_eq!(status["blocklist_rules"], 2);
+        let blocklists = block_on(handler.call(request("GET", "/blocklists")))
+            .expect("disabled blocklist inspection response");
+        let blocklists: serde_json::Value =
+            serde_json::from_slice(&blocklists.payload).expect("disabled blocklist JSON");
+        assert_eq!(blocklists["sources"][0]["enabled"], false);
+
+        let enabled = block_on(
+            handler.call(
+                Request::builder()
+                    .method("POST")
+                    .path("/reload/blocklists/enable")
+                    .payload(Bytes::from(first_json.clone()))
+                    .build()
+                    .expect("enable request"),
+            ),
+        )
+        .expect("enable response");
+        assert_eq!(enabled.status, 200);
+        let status = block_on(handler.call(request("GET", "/policy/status")))
+            .expect("enabled status response");
+        let status: serde_json::Value = serde_json::from_slice(&status.payload).expect("status");
+        assert_eq!(status["disabled_blocklist_sources"], 0);
+        assert_eq!(status["blocklist_rules"], 4);
+
         let removed = block_on(
             handler.call(
                 Request::builder()

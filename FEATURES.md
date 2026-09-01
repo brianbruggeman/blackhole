@@ -34,7 +34,8 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   configured address and network scope.
 - Bounded Pi-hole/AdGuard-compatible blocklist ingestion from hosts/domain files
   with comments, normalization, deduplication, apex-and-subdomain blocking,
-  `@@` exceptions, and fail-closed startup reloads.
+  `@@` exceptions, fail-closed startup reloads, and retained per-source
+  enable/disable state.
 - Bounded local A/AAAA rewrites with explicit policy precedence and fail-closed
   validation for malformed, duplicate, or oversized configuration.
 - Named service-blocking profiles compile into the authoritative rule table,
@@ -164,6 +165,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Authenticated bounded `POST /reload/blocklists/add` and `/reload/blocklists/remove`
   atomically add or remove exact source paths while retaining the prior live
   snapshot when validation or loading fails.
+- Authenticated bounded blocklist source enable/disable routes atomically
+  rebuild the active rule snapshot while retaining configured source paths and
+  their operator state.
 - Authenticated bounded `GET /blocklists` inspects the configured source paths,
   loaded rule count, source count, reload interval, and policy generation
   without reading or returning source contents; each source also reports
