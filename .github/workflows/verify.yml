@@ -39,6 +39,7 @@ jobs:
       - name: record macOS toolchain
         run: |
           {
+            echo "source_commit=$GITHUB_SHA"
             uname -a
             xcodebuild -version
             rustc -vV
@@ -90,7 +91,31 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
       - run: cargo install cargo-fuzz --locked
-      - run: timeout 120s cargo +nightly fuzz run query_view -- -runs=1000
+      - name: fuzz query boundary
+        id: fuzz-run
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          timeout 120s cargo +nightly fuzz run query_view -- -runs=1000 2>&1 | tee fuzz-gate.txt
+      - name: record fuzz provenance
+        if: always()
+        run: |
+          {
+            echo "source_commit=$GITHUB_SHA"
+            rustc +nightly -vV
+            echo "corpus_files=$(find fuzz/corpus/query_view -type f | wc -l)"
+            sha256sum fuzz/Cargo.lock
+          } > fuzz-metadata.txt
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: blackhole-fuzz-gate-${{ github.sha }}
+          path: |
+            fuzz-gate.txt
+            fuzz-metadata.txt
+      - name: fail if fuzz failed
+        if: steps.fuzz-run.outcome == 'failure'
+        run: exit 1
 
   performance:
     runs-on: ubuntu-latest
@@ -101,7 +126,17 @@ jobs:
       - env:
           BLACKHOLE_SOURCE_COMMIT: ${{ github.sha }}
         run: cargo run --release --example performance_gate --features perf-instrument > performance-gate.txt
+      - name: record performance provenance
+        run: |
+          {
+            echo "source_commit=$GITHUB_SHA"
+            rustc -vV
+            uname -a
+            sha256sum Cargo.lock
+          } > performance-metadata.txt
       - uses: actions/upload-artifact@v4
         with:
           name: blackhole-performance-gate-${{ github.sha }}
-          path: performance-gate.txt
+          path: |
+            performance-gate.txt
+            performance-metadata.txt
