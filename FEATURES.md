@@ -90,6 +90,8 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - An optional bounded background country-map reload uses Proxima's interval
   and lifecycle primitives, publishes only changed valid maps, and preserves
   the last good snapshot after a failed refresh.
+- Country-policy request reads use Proxima's lock-free `Live` snapshot;
+  validated reloads replace one complete immutable generation.
 - A committed libFuzzer target for the borrowed DNS query boundary, with a
   privacy-safe corpus location for minimized wire samples.
 - Proxima-native action counters, bounded failure-cause counters, and
