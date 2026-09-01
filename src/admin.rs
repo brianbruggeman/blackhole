@@ -1168,6 +1168,20 @@ mod tests {
             .expect("policy bundle request");
         let response = block_on(handler.call(bundle)).expect("bundle response");
         assert_eq!(response.status, 200);
+        let bundle = block_on(handler.call(request("GET", "/policy-bundle")))
+            .expect("published policy bundle response");
+        assert_eq!(bundle.status, 200);
+        let bundle: serde_json::Value =
+            serde_json::from_slice(&bundle.payload).expect("published policy bundle JSON");
+        assert_eq!(bundle["rules"][0]["id"], 7);
+        assert_eq!(bundle["rules"][0]["action"], "nxdomain");
+        assert_eq!(bundle["regex_rules"][0]["pattern"], "^ads\\.");
+        assert_eq!(bundle["regex_rules"][0]["action"], "drop");
+        assert_eq!(bundle["profiles"][0]["name"], "family");
+        assert_eq!(bundle["profiles"][0]["action"], "reject");
+        assert_eq!(bundle["rewrites"][0]["name"], "router.example");
+        assert_eq!(bundle["rewrites"][0]["ipv4"], "192.0.2.1");
+        assert_eq!(bundle["blocklists"], serde_json::Value::Null);
         let status = block_on(handler.call(request("GET", "/policy/status"))).expect("status");
         let status: serde_json::Value =
             serde_json::from_slice(&status.payload).expect("status JSON");
