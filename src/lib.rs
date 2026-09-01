@@ -110,7 +110,7 @@ mod runtime {
     use proxima_primitives::stream::DatagramFactory;
     use proxima_primitives::sync::AtomicPermitPool;
     use serde::Deserialize;
-    use std::collections::{BTreeSet, HashMap, VecDeque};
+    use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
     use std::fs::Metadata;
     use std::hash::Hash;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -133,6 +133,7 @@ mod runtime {
     const MAX_ADMIN_RULES_BODY_BYTES: usize = 64 * 1024;
     const MAX_ADMIN_LOG_ENTRIES: usize = 1_024;
     const MAX_BLOCKLIST_RELOAD_INTERVAL_SECS: u64 = 86_400;
+    const MAX_BLOCKLIST_DENYALLOW_DOMAINS: usize = 256;
 
     #[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]
     pub struct Config {
@@ -1565,6 +1566,7 @@ mod runtime {
         let mut exceptions = BTreeSet::new();
         let mut important_domains = BTreeSet::new();
         let mut badfilter_domains = BTreeSet::new();
+        let mut denyallow_domains = BTreeMap::<String, BTreeSet<String>>::new();
         let mut total_bytes = 0_u64;
         for path in paths {
             if path.len() > MAX_BLOCKLIST_PATH_BYTES {
@@ -1627,11 +1629,15 @@ mod runtime {
                         });
                     let mut important = false;
                     let mut badfilter = false;
+                    let mut denyallow = None;
                     if let Some(modifiers) = modifiers {
                         for modifier in modifiers.split(',') {
                             match modifier {
                                 "important" => important = true,
                                 "badfilter" => badfilter = true,
+                                value if value.strip_prefix("denyallow=").is_some() => {
+                                    denyallow = value.strip_prefix("denyallow=")
+                                }
                                 "" => {
                                     return Err(policy::PolicyError::InvalidBlocklist {
                                         path: path.clone(),
@@ -1663,6 +1669,28 @@ mod runtime {
                             reason: format!("invalid domain {raw_domain}"),
                         });
                     }
+                    if let Some(denyallow) = denyallow {
+                        if exception || denyallow.is_empty() {
+                            return Err(policy::PolicyError::InvalidBlocklist {
+                                path: path.clone(),
+                                reason: "denyallow requires a blocking filter and domain list"
+                                    .into(),
+                            });
+                        }
+                        let allowed = denyallow_domains.entry(domain.clone()).or_default();
+                        for value in denyallow.split('|') {
+                            if !valid_blocklist_domain(value)
+                                || allowed.len() >= MAX_BLOCKLIST_DENYALLOW_DOMAINS
+                            {
+                                return Err(policy::PolicyError::InvalidBlocklist {
+                                    path: path.clone(),
+                                    reason: "denyallow contains an invalid or excessive domain"
+                                        .into(),
+                                });
+                            }
+                            allowed.insert(value.to_ascii_lowercase());
+                        }
+                    }
                     domains.insert(domain.clone());
                     if exception {
                         exceptions.insert(domain.clone());
@@ -1685,9 +1713,16 @@ mod runtime {
             domains.remove(domain);
             exceptions.remove(domain);
             important_domains.remove(domain);
+            denyallow_domains.remove(domain);
         }
-        let mut rules = Vec::with_capacity(domains.len().saturating_mul(2));
-        for (index, domain) in domains.into_iter().enumerate() {
+        let mut rules = Vec::with_capacity(
+            domains
+                .len()
+                .saturating_mul(2)
+                .saturating_add(denyallow_domains.values().map(BTreeSet::len).sum::<usize>() * 2),
+        );
+        let mut next_id = u32::MAX;
+        for domain in domains {
             let exception = exceptions.contains(&domain);
             let action = if exception {
                 Action::Pass
@@ -1701,7 +1736,8 @@ mod runtime {
             } else {
                 i32::MAX - 2
             };
-            let id = u32::MAX.saturating_sub((index.saturating_mul(2)) as u32);
+            let id = next_id;
+            next_id = next_id.saturating_sub(2);
             rules.push(RuleConfig {
                 id,
                 domain: domain.clone(),
@@ -1726,6 +1762,23 @@ mod runtime {
                 client_cidrs: Vec::new(),
                 client_identity: None,
             });
+        }
+        for allowed in denyallow_domains.values().flatten() {
+            for domain in [allowed.clone(), format!("*.{allowed}")] {
+                rules.push(RuleConfig {
+                    id: next_id,
+                    domain,
+                    action: Action::Pass,
+                    priority: i32::MAX,
+                    qtype: None,
+                    qclass: None,
+                    client: None,
+                    client_cidr: None,
+                    client_cidrs: Vec::new(),
+                    client_identity: None,
+                });
+                next_id = next_id.saturating_sub(1);
+            }
         }
         Ok(rules)
     }
@@ -6559,7 +6612,7 @@ mod runtime {
             ));
             std::fs::write(
                 &path,
-                "||cancel.example^$badfilter\n||important.example^$important\n||cancel.example^\n",
+                "||cancel.example^$badfilter\n||important.example^$important\n||cancel.example^\n||scoped.example^$denyallow=allowed.scoped.example|safe.example\n",
             )
             .expect("write blocklist");
             let mut config = Config::default();
@@ -6575,6 +6628,29 @@ mod runtime {
             assert_eq!(policy.evaluate(&query("cancel.example.")).unwrap().rcode, 0);
             assert_eq!(
                 policy.evaluate(&query("important.example.")).unwrap().rcode,
+                3
+            );
+            assert_eq!(policy.evaluate(&query("scoped.example.")).unwrap().rcode, 3);
+            assert_eq!(
+                policy
+                    .evaluate(&query("allowed.scoped.example."))
+                    .unwrap()
+                    .rcode,
+                0
+            );
+            assert_eq!(
+                policy
+                    .evaluate(&query("deep.allowed.scoped.example."))
+                    .unwrap()
+                    .rcode,
+                0
+            );
+            assert_eq!(policy.evaluate(&query("safe.example.")).unwrap().rcode, 0);
+            assert_eq!(
+                policy
+                    .evaluate(&query("other.scoped.example."))
+                    .unwrap()
+                    .rcode,
                 3
             );
             std::fs::remove_file(path).expect("remove blocklist");
@@ -6593,6 +6669,21 @@ mod runtime {
                     if reason.contains("unsupported AdGuard filter modifier")
             ));
             std::fs::remove_file(unsupported).expect("remove blocklist");
+
+            let malformed = std::env::temp_dir().join(format!(
+                "blackhole-blocklist-denyallow-{}-{}",
+                std::process::id(),
+                1
+            ));
+            std::fs::write(&malformed, "||example^$denyallow=").expect("write blocklist");
+            let mut config = Config::default();
+            config.policy.blocklists = vec![malformed.to_string_lossy().into_owned()];
+            assert!(matches!(
+                Policy::new(config),
+                Err(policy::PolicyError::InvalidBlocklist { reason, .. })
+                    if reason.contains("denyallow requires")
+            ));
+            std::fs::remove_file(malformed).expect("remove blocklist");
         }
 
         #[test]

@@ -100,8 +100,10 @@ repeated violations open the same bounded, expiring blacklist and can be
 persisted when DDoS incident persistence is enabled.
 Blocklist files accept hosts/domain entries and bounded AdGuard filters;
 `@@||domain^` exceptions override the generated apex and subdomain blocks,
-`$important` raises a block's priority, and `$badfilter` cancels that domain's
-block regardless of source order. Unknown filter modifiers fail closed. Local
+`$important` raises a block's priority, `$badfilter` cancels that domain's
+block regardless of source order, and `$denyallow=domain|domain` permits
+listed domains and their subdomains for that blocking filter. Unknown or
+malformed filter modifiers fail closed. Local
 A/AAAA rewrites are bounded and apply to `pass`/`observe` queries;
 explicit policy actions take precedence. The `[capture]` section is disabled
 by default; when enabled, it installs and recovers only the platform-native,

@@ -45,7 +45,8 @@ default_action = "pass"
 
 # Optional Pi-hole/AdGuard-compatible hosts/domain lists. Entries become
 # bounded generated apex and subdomain NXDOMAIN rules; basic @@||domain^
-# exceptions override them. Missing or malformed files fail startup.
+# exceptions and $denyallow=domain|domain exceptions are supported. Missing
+# or malformed files fail startup.
 blocklists = []
 # Optional cancellable background reload interval; zero disables polling.
 blocklist_reload_interval_secs = 0
