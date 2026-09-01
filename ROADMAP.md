@@ -15,9 +15,6 @@ below are future capabilities, grouped by the dependency layer they extend.
 
 ## Resolver completion
 
-- Extend the forwarding boundary with response-question and truncation metadata
-  so DNS-over-TCP fallback can be implemented through the GitHub Proxima client
-  without weakening transaction validation.
 - Isolate the synthetic honeypot answer from any future payload-collection
   terminal and preserve its bounded DNS-only contract.
 

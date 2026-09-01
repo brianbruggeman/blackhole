@@ -22,7 +22,7 @@ use proxima::{Listener, ListenerBuilderEntry, ProximaError};
 #[cfg(feature = "std")]
 use proxima::{Request, Response, SendPipe};
 #[cfg(feature = "std")]
-use proxima_net::prime::PrimeDatagramFactory;
+use proxima_net::prime::{PrimeDatagramFactory, PrimeTcpUpstream};
 #[cfg(feature = "std")]
 use std::{env, net::SocketAddr, path::Path, sync::Arc};
 
@@ -240,11 +240,18 @@ async fn main() -> Result<(), ProximaError> {
         .map_err(|error| ProximaError::Config(format!("invalid policy rule: {error}")))?;
     if let Some(upstream) = upstream {
         let resolver = Policy::resolver_config(&upstream);
-        policy = policy.with_upstream(
-            Arc::new(PrimeDatagramFactory),
-            resolver,
-            upstream.max_outstanding,
-        );
+        policy = policy
+            .with_upstream(
+                Arc::new(PrimeDatagramFactory),
+                resolver,
+                upstream.max_outstanding,
+            )
+            .with_tcp_upstream(PrimeTcpUpstream::boxed(std::net::SocketAddr::new(
+                upstream.resolver_ip.parse().map_err(|error| {
+                    ProximaError::Config(format!("invalid upstream resolver address: {error}"))
+                })?,
+                upstream.port,
+            )));
     }
     let policy = Arc::new(policy);
     let admin_server = if let Some((admin_bind, token)) = admin_endpoint {

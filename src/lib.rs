@@ -1569,6 +1569,25 @@ mod runtime {
             self
         }
 
+        /// Attach the optional TCP transport used when the UDP resolver sets
+        /// the DNS truncation bit. It reuses the same `DnsClientUpstream`
+        /// exchange and bounded semaphore; no second upstream abstraction is
+        /// introduced.
+        #[must_use]
+        pub fn with_tcp_upstream(
+            mut self,
+            tcp_upstream: Arc<
+                dyn proxima_primitives::stream::StreamUpstream<
+                        Conn = Box<dyn proxima_primitives::stream::StreamConnection>,
+                    >,
+            >,
+        ) -> Self {
+            if let Some(upstream) = self.upstream.take() {
+                self.upstream = Some(upstream.with_tcp_upstream(tcp_upstream));
+            }
+            self
+        }
+
         fn validate_upstream(&self, upstream: &UpstreamConfig) -> Result<(), policy::PolicyError> {
             let resolver_ip = upstream
                 .resolver_ip

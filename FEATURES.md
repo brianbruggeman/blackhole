@@ -32,9 +32,10 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Configured upstream pass-through for `pass` and `observe`, after local
   rewrites; explicit `forward` remains a distinct fail-closed action.
 - Explicit fail-closed behavior when a forward rule has no upstream attached.
-- Configured UDP upstream forwarding through Proxima's `DnsClientUpstream`,
-  with timeout bounded to 60 seconds, at most eight attempts per exchange, and
-  a bounded outstanding-query limit.
+- Configured upstream forwarding through Proxima's `DnsClientUpstream`, using
+  bounded UDP exchanges and DNS-over-TCP fallback when UDP sets `TC`; timeout
+  is bounded to 60 seconds, at most eight attempts per exchange, and the
+  outstanding-query limit is bounded.
 - Bounded positive and negative response caching with a configured maximum
   protocol TTL, a bounded stale-serving window for upstream outages, plus
   Proxima-native hit/miss/stale/eviction counters and effective positive/
