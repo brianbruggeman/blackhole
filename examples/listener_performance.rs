@@ -98,7 +98,7 @@ async fn main() -> Result<(), ProximaError> {
     .map_err(|error| ProximaError::Config(format!("benchmark query: {error}")))?;
 
     for id in 0..10_u16 {
-        let _ = exchange(&mut *client, listener_addr, &query, id).await?;
+        exchange(&mut *client, listener_addr, &query, id).await?;
     }
     let clock_ticks = clock_ticks_per_second();
     let before_cpu = process_cpu_ticks();
