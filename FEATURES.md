@@ -124,6 +124,8 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - The authenticated control plane can atomically upsert and remove local DNS
   rewrites by normalized name, preserving the prior table after invalid or
   unknown updates.
+- The bounded authenticated status UI also displays configured rewrite metadata
+  through the existing Proxima HTTP pipe.
 - The authenticated admin control plane includes a bounded status UI for
   status, privacy status, rule metadata, and privacy-log inspection/clearing;
   it includes an authenticated blocklist reload control and contains no

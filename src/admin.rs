@@ -75,12 +75,13 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <h2>Rules</h2><pre id="rules">loading…</pre>
 <h2>Service profiles</h2><pre id="profiles">loading…</pre>
 <h2>Client groups</h2><pre id="groups">loading…</pre>
+<h2>Local rewrites</h2><pre id="rewrites">loading…</pre>
 <h2>Privacy log</h2><pre id="logs">loading…</pre>
 <script>
 const load = (path, target) => fetch(path).then(response => response.json()).then(value => {
   document.querySelector(target).textContent = JSON.stringify(value, null, 2);
 });
-const refresh = () => Promise.all([load('/status','#status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/logs','#logs')]);
+const refresh = () => Promise.all([load('/status','#status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
 document.querySelector('#clear-logs').onclick = () => fetch('/logs/clear', {method:'POST'}).then(refresh);
 document.querySelector('#reload-blocklists').onclick = () => fetch('/reload/blocklists', {method:'POST'}).then(refresh);
 refresh();
@@ -132,6 +133,7 @@ impl SendPipe for AdminHandler {
             ("GET", "/rules") => Ok(Response::ok(self.policy.admin_rules())),
             ("GET", "/profiles") => Ok(Response::ok(self.policy.admin_profiles())),
             ("GET", "/client-groups") => Ok(Response::ok(self.policy.admin_client_groups())),
+            ("GET", "/rewrites") => Ok(Response::ok(self.policy.admin_rewrites())),
             ("POST", "/reload/policy-bundle") => {
                 if request.payload.len() > MAX_POLICY_BODY_BYTES {
                     return Ok(Response::new(413));
@@ -504,6 +506,7 @@ impl SendPipe for AdminHandler {
                 | "/rules"
                 | "/profiles"
                 | "/client-groups"
+                | "/rewrites"
                 | "/reload/profiles"
                 | "/reload/profiles/upsert"
                 | "/reload/profiles/remove"
@@ -1342,6 +1345,11 @@ mod tests {
                 .status,
             200
         );
+        let listed = block_on(handler.call(request("GET", "/rewrites"))).expect("rewrite list");
+        let listed: serde_json::Value =
+            serde_json::from_slice(&listed.payload).expect("rewrite list JSON");
+        assert_eq!(listed["total"], 2);
+        assert_eq!(listed["rewrites"][0]["name"], "ROUTER.EXAMPLE");
 
         let query = proxima_dns::DnsQuery {
             id: 1,

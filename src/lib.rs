@@ -3823,6 +3823,29 @@ mod runtime {
             .to_string()
         }
 
+        pub(crate) fn admin_rewrites(&self) -> String {
+            let _reload = self.reload_lock.read().expect("reload lock");
+            let rewrites = self.rewrite_configs.read().expect("rewrite configs lock");
+            let visible = rewrites
+                .iter()
+                .take(MAX_ADMIN_LOG_ENTRIES)
+                .map(|rewrite| {
+                    serde_json::json!({
+                        "name": rewrite.name,
+                        "ipv4": rewrite.ipv4,
+                        "ipv6": rewrite.ipv6,
+                        "ttl": rewrite.ttl,
+                    })
+                })
+                .collect::<Vec<_>>();
+            serde_json::json!({
+                "rewrites": visible,
+                "total": rewrites.len(),
+                "truncated": rewrites.len() > MAX_ADMIN_LOG_ENTRIES,
+            })
+            .to_string()
+        }
+
         fn observe_latency(&self, elapsed: Duration) {
             let Some(telemetry) = self.telemetry.as_ref() else {
                 return;
