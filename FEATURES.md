@@ -91,6 +91,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - An operator-configured bounded IPv4/IPv6 CIDR denylist, including exact
   addresses via `/32` or `/128`, that rejects clients before policy matching
   and is atomically reloadable without publishing invalid entries.
+- Local filesystem and hosted HTTP(S) blocklist sources, fetched through
+  Proxima's existing HTTP client with bounded streamed bodies and atomic
+  last-good-snapshot retention on fetch or parse failure.
 - Authenticated bounded denylist export, operator-managed additions, and
   revocations through the same atomic lock-free admission snapshot; updates
   are idempotent, bounded, and fail closed on invalid CIDRs.

@@ -96,8 +96,9 @@ mod runtime {
     use futures::StreamExt;
     use proxima::runtime::PrimeRuntime;
     use proxima::{
-        BoundedRecordingSink, DynRecordingSink, FailMode, InteractionId, Labels, ProtocolEvent,
-        RecordingAppendFuture, RecordingEvent, RecordingSink, RecordingSource, TelemetryHandle,
+        BoundedRecordingSink, Client, DynRecordingSink, FailMode, InteractionId, Labels,
+        ProtocolEvent, RecordingAppendFuture, RecordingEvent, RecordingSink, RecordingSource,
+        TelemetryHandle,
     };
     use proxima_core::ProximaError;
     use proxima_core::live::{Live, LiveControl, live};
@@ -1565,6 +1566,91 @@ mod runtime {
     const MAX_BLOCKLIST_PATH_BYTES: usize = 4096;
     const MAX_BLOCKLIST_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
 
+    fn http_source_parts(source: &str) -> Option<(&str, &str)> {
+        let scheme_end = source.find("://")?;
+        let authority_start = scheme_end + 3;
+        let path_start = source[authority_start..]
+            .find('/')
+            .map_or(source.len(), |offset| authority_start + offset);
+        let base = &source[..path_start];
+        let path = if path_start == source.len() {
+            "/"
+        } else {
+            &source[path_start..]
+        };
+        (base.len() > authority_start && !base.contains('#') && !path.contains('#'))
+            .then_some((base, path))
+    }
+
+    fn read_remote_blocklist(source: &str) -> Result<Vec<u8>, policy::PolicyError> {
+        let (base, path) =
+            http_source_parts(source).ok_or_else(|| policy::PolicyError::InvalidBlocklist {
+                path: source.into(),
+                reason: "remote source must be an absolute http:// or https:// URL".into(),
+            })?;
+        let client = Client::http(base).map_err(|error| policy::PolicyError::InvalidBlocklist {
+            path: source.into(),
+            reason: format!("create Proxima HTTP client: {error}"),
+        })?;
+        futures::executor::block_on(async {
+            let response = client.get(path).send().await.map_err(|error| {
+                policy::PolicyError::InvalidBlocklist {
+                    path: source.into(),
+                    reason: format!("fetch through Proxima: {error}"),
+                }
+            })?;
+            if !response.ok() {
+                return Err(policy::PolicyError::InvalidBlocklist {
+                    path: source.into(),
+                    reason: format!("remote source returned HTTP {}", response.status()),
+                });
+            }
+            let mut stream = response.into_body().into_chunk_stream();
+            let mut contents = Vec::new();
+            while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
+                let chunk = chunk.map_err(|error| policy::PolicyError::InvalidBlocklist {
+                    path: source.into(),
+                    reason: format!("read through Proxima: {error}"),
+                })?;
+                let next_len = contents.len().checked_add(chunk.len()).ok_or_else(|| {
+                    policy::PolicyError::InvalidBlocklist {
+                        path: source.into(),
+                        reason: "remote source size overflow".into(),
+                    }
+                })?;
+                if next_len > MAX_BLOCKLIST_BYTES as usize {
+                    return Err(policy::PolicyError::InvalidBlocklist {
+                        path: source.into(),
+                        reason: format!("remote source exceeds {MAX_BLOCKLIST_BYTES} bytes"),
+                    });
+                }
+                contents.extend_from_slice(&chunk);
+            }
+            Ok(contents)
+        })
+    }
+
+    fn read_blocklist_source(source: &str) -> Result<Vec<u8>, policy::PolicyError> {
+        if source.starts_with("http://") || source.starts_with("https://") {
+            return read_remote_blocklist(source);
+        }
+        let metadata =
+            std::fs::metadata(source).map_err(|error| policy::PolicyError::InvalidBlocklist {
+                path: source.into(),
+                reason: error.to_string(),
+            })?;
+        if metadata.len() > MAX_BLOCKLIST_BYTES {
+            return Err(policy::PolicyError::InvalidBlocklist {
+                path: source.into(),
+                reason: format!("file exceeds {MAX_BLOCKLIST_BYTES} bytes"),
+            });
+        }
+        std::fs::read(source).map_err(|error| policy::PolicyError::InvalidBlocklist {
+            path: source.into(),
+            reason: error.to_string(),
+        })
+    }
+
     fn active_blocklist_paths(
         paths: &[String],
         disabled: &[String],
@@ -1610,28 +1696,18 @@ mod runtime {
                     reason: format!("path exceeds {MAX_BLOCKLIST_PATH_BYTES} bytes"),
                 });
             }
-            let metadata =
-                std::fs::metadata(path).map_err(|error| policy::PolicyError::InvalidBlocklist {
-                    path: path.clone(),
-                    reason: error.to_string(),
-                })?;
-            if metadata.len() > MAX_BLOCKLIST_BYTES {
-                return Err(policy::PolicyError::InvalidBlocklist {
-                    path: path.clone(),
-                    reason: format!("file exceeds {MAX_BLOCKLIST_BYTES} bytes"),
-                });
-            }
-            total_bytes = total_bytes.saturating_add(metadata.len());
+            let contents = read_blocklist_source(path)?;
+            total_bytes = total_bytes.saturating_add(contents.len() as u64);
             if total_bytes > MAX_BLOCKLIST_TOTAL_BYTES {
                 return Err(policy::PolicyError::InvalidBlocklist {
                     path: "<table>".into(),
                     reason: format!("aggregate files exceed {MAX_BLOCKLIST_TOTAL_BYTES} bytes"),
                 });
             }
-            let contents = std::fs::read_to_string(path).map_err(|error| {
+            let contents = String::from_utf8(contents).map_err(|error| {
                 policy::PolicyError::InvalidBlocklist {
                     path: path.clone(),
-                    reason: error.to_string(),
+                    reason: format!("source is not UTF-8: {error}"),
                 }
             })?;
             for line in contents.lines() {
@@ -5971,29 +6047,37 @@ mod runtime {
             let sources = paths
                 .iter()
                 .map(|path| {
-                    let metadata = std::fs::metadata(path);
-                    let (status, bytes, modified_age_secs, source_fingerprint) = match metadata {
-                        Ok(metadata) if metadata.is_file() => {
-                            let age = metadata
-                                .modified()
-                                .ok()
-                                .and_then(|modified| now.duration_since(modified).ok())
-                                .map(|duration| duration.as_secs());
-                            let bytes = metadata.len().min(MAX_BLOCKLIST_BYTES);
-                            let fingerprint = (metadata.len() <= MAX_BLOCKLIST_BYTES)
-                                .then(|| std::fs::read(path).ok())
-                                .flatten()
-                                .map(|contents| format!("{:016x}", source_fingerprint(&contents)));
-                            ("ok", bytes, age, fingerprint)
+                    let remote = http_source_parts(path).is_some();
+                    let (status, bytes, modified_age_secs, source_fingerprint) = if remote {
+                        ("remote", 0, None, None)
+                    } else {
+                        match std::fs::metadata(path) {
+                            Ok(metadata) if metadata.is_file() => {
+                                let age = metadata
+                                    .modified()
+                                    .ok()
+                                    .and_then(|modified| now.duration_since(modified).ok())
+                                    .map(|duration| duration.as_secs());
+                                let bytes = metadata.len().min(MAX_BLOCKLIST_BYTES);
+                                let fingerprint = (metadata.len() <= MAX_BLOCKLIST_BYTES)
+                                    .then(|| std::fs::read(path).ok())
+                                    .flatten()
+                                    .map(|contents| {
+                                        format!("{:016x}", source_fingerprint(&contents))
+                                    });
+                                ("ok", bytes, age, fingerprint)
+                            }
+                            Ok(_) => ("unreadable", 0, None, None),
+                            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                                ("missing", 0, None, None)
+                            }
+                            Err(_) => ("unreadable", 0, None, None),
                         }
-                        Ok(_) => ("unreadable", 0, None, None),
-                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                            ("missing", 0, None, None)
-                        }
-                        Err(_) => ("unreadable", 0, None, None),
                     };
                     let (load_status, source_rule_count) = if disabled.contains(path) {
                         ("disabled", 0)
+                    } else if remote {
+                        ("configured", 0)
                     } else {
                         match load_blocklists(std::slice::from_ref(path)) {
                             Ok(source_rules) => ("ok", source_rules.len()),
@@ -7178,6 +7262,37 @@ mod runtime {
                 Err(policy::PolicyError::InvalidBlocklist { reason, .. })
                     if reason.contains("path exceeds")
             ));
+        }
+
+        #[test]
+        fn hosted_blocklist_sources_use_proxima_http_and_remain_bounded() {
+            use std::io::{Read, Write};
+
+            let server = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+                .expect("bind blocklist fixture");
+            let address = server.local_addr().expect("blocklist fixture address");
+            let thread = std::thread::spawn(move || {
+                let (mut stream, _) = server.accept().expect("accept blocklist request");
+                let mut request = [0_u8; 2048];
+                let size = stream.read(&mut request).expect("read blocklist request");
+                assert!(
+                    std::str::from_utf8(&request[..size])
+                        .expect("request is UTF-8")
+                        .contains("GET /filters/list.txt HTTP/1.1")
+                );
+                let body = b"||remote.example^\n";
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                )
+                .expect("write blocklist headers");
+                stream.write_all(body).expect("write blocklist body");
+            });
+            let source = format!("http://{address}/filters/list.txt");
+            let rules = load_blocklists(&[source]).expect("load hosted blocklist");
+            assert!(rules.iter().any(|rule| rule.domain == "remote.example"));
+            thread.join().expect("join blocklist fixture");
         }
 
         #[test]
