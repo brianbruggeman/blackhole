@@ -457,6 +457,20 @@ mod runtime {
         }
     }
 
+    #[derive(Debug, Clone, Copy, Deserialize)]
+    #[serde(rename_all = "lowercase")]
+    pub enum UpstreamTransport {
+        Udp,
+        Tcp,
+        Tls,
+    }
+
+    impl Default for UpstreamTransport {
+        fn default() -> Self {
+            Self::Udp
+        }
+    }
+
     #[derive(Debug, Clone, Deserialize)]
     pub struct UpstreamConfig {
         #[serde(default = "default_resolver_ip")]
@@ -473,6 +487,10 @@ mod runtime {
         pub breaker_failures: u32,
         #[serde(default = "default_breaker_cooldown_secs")]
         pub breaker_cooldown_secs: u64,
+        #[serde(default)]
+        pub transport: UpstreamTransport,
+        #[serde(default)]
+        pub tls_server_name: Option<String>,
     }
 
     impl Default for UpstreamConfig {
@@ -485,6 +503,8 @@ mod runtime {
                 max_outstanding: default_max_outstanding(),
                 breaker_failures: default_breaker_failures(),
                 breaker_cooldown_secs: default_breaker_cooldown_secs(),
+                transport: UpstreamTransport::Udp,
+                tls_server_name: None,
             }
         }
     }
@@ -1588,6 +1608,17 @@ mod runtime {
             self
         }
 
+        /// Use the configured stream transport for every upstream exchange.
+        /// This is required for DNS-over-TLS; it keeps Proxima's bounded
+        /// framed DNS client and does not add a second upstream abstraction.
+        #[must_use]
+        pub fn with_tcp_only(mut self) -> Self {
+            if let Some(upstream) = self.upstream.take() {
+                self.upstream = Some(upstream.with_tcp_only());
+            }
+            self
+        }
+
         fn validate_upstream(&self, upstream: &UpstreamConfig) -> Result<(), policy::PolicyError> {
             let resolver_ip = upstream
                 .resolver_ip
@@ -1622,6 +1653,16 @@ mod runtime {
             if upstream.breaker_failures == 0 || upstream.breaker_cooldown_secs == 0 {
                 return Err(policy::PolicyError::InvalidUpstream {
                     reason: "breaker_failures and breaker_cooldown_secs must be non-zero".into(),
+                });
+            }
+            if matches!(upstream.transport, UpstreamTransport::Tls)
+                && upstream
+                    .tls_server_name
+                    .as_deref()
+                    .is_none_or(str::is_empty)
+            {
+                return Err(policy::PolicyError::InvalidUpstream {
+                    reason: "tls_server_name is required for TLS upstreams".into(),
                 });
             }
             let broadcast = matches!(resolver_ip, std::net::IpAddr::V4(ip) if ip.is_broadcast());
@@ -2987,6 +3028,28 @@ mod runtime {
                 Policy::new(config),
                 Err(policy::PolicyError::InvalidUpstream { .. })
             ));
+
+            let config = Config {
+                upstream: Some(UpstreamConfig {
+                    transport: UpstreamTransport::Tls,
+                    ..UpstreamConfig::default()
+                }),
+                ..Config::default()
+            };
+            assert!(matches!(
+                Policy::new(config),
+                Err(policy::PolicyError::InvalidUpstream { .. })
+            ));
+
+            let config = Config {
+                upstream: Some(UpstreamConfig {
+                    transport: UpstreamTransport::Tls,
+                    tls_server_name: Some("resolver.example".into()),
+                    ..UpstreamConfig::default()
+                }),
+                ..Config::default()
+            };
+            assert!(Policy::new(config).is_ok());
 
             let config = Config {
                 upstream: Some(UpstreamConfig {

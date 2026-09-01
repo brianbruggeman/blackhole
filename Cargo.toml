@@ -22,6 +22,7 @@ std = [
     "dep:proxima-listen",
     "dep:proxima-net",
     "dep:proxima-primitives",
+    "dep:proxima-tls",
     "dep:regex",
     "dep:serde_json",
     "dep:toml",
@@ -42,6 +43,7 @@ proxima-dns = { git = "https://github.com/brianbruggeman/proxima.git", default-f
 proxima-net = { git = "https://github.com/brianbruggeman/proxima.git", default-features = false, features = ["prime"], version = "0.1.0", optional = true }
 proxima-listen = { git = "https://github.com/brianbruggeman/proxima.git", default-features = false, features = ["framed-any"], version = "0.1.0", optional = true }
 proxima-primitives = { git = "https://github.com/brianbruggeman/proxima.git", default-features = false, features = ["alloc", "std"], optional = true }
+proxima-tls = { git = "https://github.com/brianbruggeman/proxima.git", default-features = false, features = ["futures-io"], optional = true }
 proxima-protocols = { git = "https://github.com/brianbruggeman/proxima.git", default-features = false, features = ["dns", "dns-codec-trait", "alloc"] }
 regex = { version = "1", optional = true }
 serde = { version = "1", default-features = false, features = ["alloc", "derive"] }

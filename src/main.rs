@@ -12,7 +12,7 @@ use blackhole::listener::{TcpProtocol, UdpProtocol};
 #[cfg(target_os = "macos")]
 use blackhole::pf_capture::{PfRulePlan, native::PfctlCommandBackend};
 #[cfg(feature = "std")]
-use blackhole::{Config, Policy};
+use blackhole::{Config, Policy, UpstreamTransport};
 #[cfg(feature = "std")]
 use bytes::Bytes;
 #[cfg(feature = "std")]
@@ -24,7 +24,35 @@ use proxima::{Request, Response, SendPipe};
 #[cfg(feature = "std")]
 use proxima_net::prime::{PrimeDatagramFactory, PrimeTcpUpstream};
 #[cfg(feature = "std")]
-use std::{env, net::SocketAddr, path::Path, sync::Arc};
+use proxima_primitives::stream::{StreamConnection, StreamUpstream};
+#[cfg(feature = "std")]
+use proxima_tls::{TlsClientConfig, TlsStreamUpstream};
+#[cfg(feature = "std")]
+use std::{
+    env, io,
+    net::SocketAddr,
+    path::Path,
+    sync::Arc,
+    task::{Context, Poll},
+};
+
+#[cfg(feature = "std")]
+struct BoxedTlsUpstream {
+    inner: TlsStreamUpstream<PrimeTcpUpstream>,
+}
+
+#[cfg(feature = "std")]
+impl StreamUpstream for BoxedTlsUpstream {
+    type Conn = Box<dyn StreamConnection>;
+
+    fn poll_connect(&self, cx: &mut Context<'_>) -> Poll<io::Result<Self::Conn>> {
+        match self.inner.poll_connect(cx) {
+            Poll::Ready(Ok(connection)) => Poll::Ready(Ok(Box::new(connection))),
+            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
 
 #[cfg(target_os = "linux")]
 struct CaptureGuard {
@@ -240,18 +268,44 @@ async fn main() -> Result<(), ProximaError> {
         .map_err(|error| ProximaError::Config(format!("invalid policy rule: {error}")))?;
     if let Some(upstream) = upstream {
         let resolver = Policy::resolver_config(&upstream);
-        policy = policy
-            .with_upstream(
-                Arc::new(PrimeDatagramFactory),
-                resolver,
-                upstream.max_outstanding,
-            )
-            .with_tcp_upstream(PrimeTcpUpstream::boxed(std::net::SocketAddr::new(
-                upstream.resolver_ip.parse().map_err(|error| {
-                    ProximaError::Config(format!("invalid upstream resolver address: {error}"))
-                })?,
-                upstream.port,
-            )));
+        let resolver_addr = SocketAddr::new(
+            upstream.resolver_ip.parse().map_err(|error| {
+                ProximaError::Config(format!("invalid upstream resolver address: {error}"))
+            })?,
+            upstream.port,
+        );
+        policy = policy.with_upstream(
+            Arc::new(PrimeDatagramFactory),
+            resolver,
+            upstream.max_outstanding,
+        );
+        let tcp_upstream: Arc<dyn StreamUpstream<Conn = Box<dyn StreamConnection>>> = match upstream
+            .transport
+        {
+            UpstreamTransport::Udp | UpstreamTransport::Tcp => {
+                PrimeTcpUpstream::boxed(resolver_addr)
+            }
+            UpstreamTransport::Tls => {
+                let server_name = upstream.tls_server_name.ok_or_else(|| {
+                    ProximaError::Config("tls_server_name is required for TLS upstreams".into())
+                })?;
+                let tls_config = TlsClientConfig {
+                    server_name,
+                    // DNS-over-TLS does not require an HTTP ALPN token.
+                    alpn_protocols: Vec::new(),
+                };
+                let tls = TlsStreamUpstream::from_config(
+                    PrimeTcpUpstream::new(resolver_addr),
+                    &tls_config,
+                )
+                .map_err(|error| ProximaError::Config(format!("invalid TLS upstream: {error}")))?;
+                Arc::new(BoxedTlsUpstream { inner: tls })
+            }
+        };
+        policy = policy.with_tcp_upstream(tcp_upstream);
+        if !matches!(upstream.transport, UpstreamTransport::Udp) {
+            policy = policy.with_tcp_only();
+        }
     }
     let policy = Arc::new(policy);
     let admin_server = if let Some((admin_bind, token)) = admin_endpoint {
