@@ -53,3 +53,9 @@ Blackhole rotates only oversized files within the configured bounded generation
 count and verifies deletion of the exact oldest generation. Its encoded size is bounded by
 `privacy.query_recording_max_bytes`; operators must configure rotation and deletion
 before enabling it.
+
+When `admission.ddos.persist_incidents` is enabled, the same Proxima JSONL
+destination also records authenticated operator denylist mutations. The
+bounded `add` and `remove` events replay in file order during startup; an
+unavailable recording sink rejects the live mutation and leaves the prior
+admission snapshot active.

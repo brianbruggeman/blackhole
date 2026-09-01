@@ -229,13 +229,30 @@ impl SendPipe for AdminHandler {
                         )));
                     }
                 };
+                let previous = self.policy.admission_config();
                 let result = if path.ends_with("/add") {
                     self.policy.add_deny_client_cidrs(&cidrs)
                 } else {
                     self.policy.remove_deny_client_cidrs(&cidrs)
                 };
                 match result {
-                    Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
+                    Ok(_) => {
+                        let operation = if path.ends_with("/add") {
+                            "add"
+                        } else {
+                            "remove"
+                        };
+                        if let Err(error) =
+                            self.policy.persist_denylist_change(operation, &cidrs).await
+                        {
+                            let _ = self.policy.reload_admission(&previous);
+                            return Ok(Response::new(503).with_body(format!(
+                                "{{\"status\":\"error\",\"message\":{}}}",
+                                serde_json::to_string(&error).unwrap_or_else(|_| "null".into())
+                            )));
+                        }
+                        Ok(Response::ok("{\"status\":\"reloaded\"}"))
+                    }
                     Err(error) => Ok(Response::new(422).with_body(format!(
                         "{{\"status\":\"error\",\"message\":{}}}",
                         serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
@@ -1441,6 +1458,25 @@ mod tests {
             serde_json::from_slice::<Vec<String>>(&exported.payload).expect("export JSON"),
             vec!["2001:db8:42::/48"]
         );
+    }
+
+    #[test]
+    fn persisted_managed_denylist_rolls_back_when_recording_is_unavailable() {
+        let mut config = crate::Config::default();
+        config.admission.ddos.persist_incidents = true;
+        config.privacy.query_recording_path = Some("operator-denylist.jsonl".into());
+        let handler = AdminHandler::new(Arc::new(Policy::new(config).expect("valid config")));
+        let add = Request::builder()
+            .method("POST")
+            .path("/abuse/denylist/add")
+            .payload(r#"["192.0.2.10/32"]"#)
+            .build()
+            .expect("valid denylist add");
+        let response = block_on(handler.call(add)).expect("add response");
+        assert_eq!(response.status, 503);
+        let exported =
+            block_on(handler.call(request("GET", "/abuse/denylist"))).expect("denylist export");
+        assert_eq!(exported.payload, Bytes::from_static(b"[]"));
     }
 
     #[test]

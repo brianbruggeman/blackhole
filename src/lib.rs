@@ -3135,6 +3135,63 @@ mod runtime {
             self.reload_admission(&admission)
         }
 
+        /// Replace only the live denylist during startup recovery. All other
+        /// admission settings remain untouched and the normal validation path
+        /// still guards the bounded CIDR set.
+        pub fn replace_deny_client_cidrs(
+            &self,
+            cidrs: &[String],
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let mut admission = self.admission_config();
+            admission.deny_client_cidrs = cidrs.to_vec();
+            self.reload_admission(&admission)
+        }
+
+        /// Return the bounded operator-managed denylist for startup recovery
+        /// and authenticated control-plane integrations.
+        #[must_use]
+        pub fn deny_client_cidrs(&self) -> Vec<String> {
+            self.admission_config().deny_client_cidrs
+        }
+
+        /// Persist an operator denylist mutation through the existing bounded
+        /// Proxima recording sink when incident persistence is enabled.
+        pub(crate) async fn persist_denylist_change(
+            &self,
+            operation: &'static str,
+            cidrs: &[String],
+        ) -> Result<(), String> {
+            if !self.config.admission.ddos.persist_incidents {
+                return Ok(());
+            }
+            let recording = self
+                .recording
+                .as_ref()
+                .ok_or_else(|| "denylist persistence sink is not configured".to_owned())?;
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |duration| {
+                    duration.as_millis().min(u128::from(u64::MAX)) as u64
+                });
+            let event = RecordingEvent {
+                id: InteractionId::new(),
+                ts_ms: now_ms,
+                parent: None,
+                event: ProtocolEvent::Custom {
+                    kind: "blackhole.ddos_denylist".into(),
+                    payload: serde_json::json!({
+                        "operation": operation,
+                        "cidrs": cidrs,
+                    }),
+                },
+            };
+            recording
+                .append(event)
+                .await
+                .map_err(|error| error.to_string())?;
+            recording.sync().await.map_err(|error| error.to_string())
+        }
+
         /// Append validated rules to the current authoritative table and
         /// publish the combined snapshot atomically. The base-table lock is
         /// held through validation and publication so concurrent appenders do

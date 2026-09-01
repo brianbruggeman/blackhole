@@ -86,6 +86,9 @@ atomic admission snapshot and are safe to retry.
 Set `[admission.ddos].persist_incidents = true` to persist temporary-blacklist
 events through the bounded Proxima recording sink; active markers are restored
 after restart until their configured expiry and expired markers are ignored.
+The same setting persists authenticated operator denylist additions and
+revocations in order; startup replays those bounded mutations before serving,
+and a failed durable mutation is rolled back.
 The equivalent environment override is
 `BLACKHOLE_DDOS_PERSIST_INCIDENTS=true`.
 Encoded responses also consume a bounded per-client byte budget per second;

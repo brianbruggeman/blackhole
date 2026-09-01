@@ -410,13 +410,116 @@ async fn restore_persisted_abuse(
     Ok(restored)
 }
 
+async fn restore_persisted_denylist(
+    policy: &Policy,
+    path: &Path,
+    max_bytes: u64,
+) -> Result<usize, ProximaError> {
+    let metadata = std::fs::metadata(path).map_err(|error| {
+        ProximaError::Record(format!(
+            "inspect denylist recording {}: {error}",
+            path.display()
+        ))
+    })?;
+    if !metadata.is_file() {
+        return Err(ProximaError::Record(format!(
+            "denylist recording {} is not a regular file",
+            path.display()
+        )));
+    }
+    if metadata.len() > max_bytes.min(MAX_REPLAY_BYTES) {
+        return Err(ProximaError::Record(format!(
+            "denylist recording exceeds the {} byte bound",
+            max_bytes.min(MAX_REPLAY_BYTES)
+        )));
+    }
+    let runtime = Arc::new(PrimeRuntime::new(1)?);
+    let source = proxima::JsonlSource::new(path, runtime);
+    let mut stream = source.events();
+    let mut cidrs = policy.deny_client_cidrs();
+    let mut changes = 0usize;
+    let mut seen = 0usize;
+    while let Some(event) = stream.next().await {
+        seen = seen
+            .checked_add(1)
+            .ok_or_else(|| ProximaError::Record("denylist event count overflow".into()))?;
+        if seen > 1_000_000 {
+            return Err(ProximaError::Record(
+                "denylist recording exceeds the event bound".into(),
+            ));
+        }
+        let event = event?;
+        let proxima::ProtocolEvent::Custom { kind, payload } = event.event else {
+            continue;
+        };
+        if kind != "blackhole.ddos_denylist" {
+            continue;
+        }
+        let operation = payload
+            .get("operation")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| ProximaError::Record("denylist event is missing operation".into()))?;
+        let values = payload
+            .get("cidrs")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| ProximaError::Record("denylist event is missing cidrs".into()))?;
+        if values.len() > blackhole::policy::MAX_CLIENT_CIDRS {
+            return Err(ProximaError::Record(
+                "denylist event contains too many CIDRs".into(),
+            ));
+        }
+        let values = values
+            .iter()
+            .map(|value| {
+                let value = value.as_str().ok_or_else(|| {
+                    ProximaError::Record("denylist event contains a non-string CIDR".into())
+                })?;
+                Ok(value.to_owned())
+            })
+            .collect::<Result<Vec<_>, ProximaError>>()?;
+        match operation {
+            "add" => {
+                for value in values {
+                    if !cidrs.contains(&value) {
+                        cidrs.push(value);
+                        changes = changes.saturating_add(1);
+                    }
+                }
+            }
+            "remove" => {
+                for value in values {
+                    let before = cidrs.len();
+                    cidrs.retain(|current| current != &value);
+                    changes = changes.saturating_add(before.saturating_sub(cidrs.len()));
+                }
+            }
+            _ => {
+                return Err(ProximaError::Record(format!(
+                    "denylist event has unknown operation {operation}"
+                )));
+            }
+        }
+        if cidrs.len() > blackhole::policy::MAX_CLIENT_CIDRS {
+            return Err(ProximaError::Record(
+                "restored denylist exceeds the CIDR bound".into(),
+            ));
+        }
+    }
+    if changes != 0 {
+        policy
+            .replace_deny_client_cidrs(&cidrs)
+            .map_err(|error| ProximaError::Record(error.to_string()))?;
+    }
+    Ok(changes)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::restore_persisted_abuse;
     use super::{
         count_replay_event, delete_query_recording, rotate_query_recording,
         validate_query_recording_path,
     };
+    use super::{restore_persisted_abuse, restore_persisted_denylist};
     use blackhole::{Config, Policy};
     use std::collections::BTreeMap;
     use std::path::PathBuf;
@@ -550,6 +653,48 @@ mod tests {
         let restored = futures::executor::block_on(restore_persisted_abuse(&policy, &path, 4_096))
             .expect("restore incident recording");
         assert_eq!(restored, 1);
+        std::fs::remove_dir_all(directory).expect("remove temporary directory");
+    }
+
+    #[test]
+    fn startup_replays_ordered_operator_denylist_changes() {
+        let directory = temporary_path("restore-denylist");
+        std::fs::create_dir(&directory).expect("temporary directory");
+        let path = directory.join("incidents.jsonl");
+        let events = [
+            ("add", serde_json::json!(["192.0.2.10/32", "2001:db8::/48"])),
+            ("remove", serde_json::json!(["192.0.2.10/32"])),
+            ("add", serde_json::json!(["198.51.100.0/24"])),
+        ];
+        let mut recording = Vec::new();
+        for (operation, cidrs) in events {
+            let event = proxima::RecordingEvent {
+                id: proxima::InteractionId::new(),
+                ts_ms: 1,
+                parent: None,
+                event: proxima::ProtocolEvent::Custom {
+                    kind: "blackhole.ddos_denylist".into(),
+                    payload: serde_json::json!({
+                        "operation": operation,
+                        "cidrs": cidrs,
+                    }),
+                },
+            };
+            recording.extend(
+                proxima::recording::jsonl::encode_jsonl_line(event).expect("encode denylist event"),
+            );
+            recording.push(b'\n');
+        }
+        std::fs::write(&path, recording).expect("write denylist recording");
+        let policy = Policy::new(Config::default()).expect("valid default policy");
+        let restored =
+            futures::executor::block_on(restore_persisted_denylist(&policy, &path, 4_096))
+                .expect("restore denylist recording");
+        assert_eq!(restored, 4);
+        assert_eq!(
+            policy.deny_client_cidrs(),
+            vec!["2001:db8::/48", "198.51.100.0/24"]
+        );
         std::fs::remove_dir_all(directory).expect("remove temporary directory");
     }
 }
@@ -926,6 +1071,11 @@ async fn main() -> Result<(), ProximaError> {
             restore_persisted_abuse(&policy, Path::new(path), query_recording_max_bytes).await?;
         if restored != 0 {
             println!("blackhole restored {restored} active DDoS incident(s)");
+        }
+        let denylist_changes =
+            restore_persisted_denylist(&policy, Path::new(path), query_recording_max_bytes).await?;
+        if denylist_changes != 0 {
+            println!("blackhole restored {denylist_changes} operator denylist change(s)");
         }
     }
     if let Some(upstream) = upstream {
