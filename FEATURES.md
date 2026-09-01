@@ -42,7 +42,8 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Configurable Proxima upstream transport: `udp` (with TCP fallback), `tcp`,
   `tls` for DNS-over-TLS, or `doh` for DNS-over-HTTPS stream-only exchanges;
   encrypted modes require an explicit server name and use Proxima's GitHub
-  HTTP/TLS pipe adapters.
+  HTTP/TLS pipe adapters. An opt-in `doq` feature uses Proxima's GitHub QUIC
+  stream adapter with the DoQ ALPN; the default Prime build remains QUIC-free.
 - Bounded positive and negative response caching with a configured maximum
   protocol TTL, a bounded stale-serving window for upstream outages, plus
   Proxima-native hit/miss/stale/eviction counters and effective positive/

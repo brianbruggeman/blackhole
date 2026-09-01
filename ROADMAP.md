@@ -45,8 +45,9 @@ below are future capabilities, grouped by the dependency layer they extend.
 
 ## Incumbent parity and extensions
 
-- Add optional DoQ upstream/server endpoints; DNS-over-TLS and DNS-over-HTTPS
-  upstream transports are implemented in the current baseline.
+- Add live DoQ interoperability fixtures and bounded connection/stream reuse
+  around the current opt-in Proxima QUIC upstream adapter; keep the default
+  Prime build QUIC-free.
 - Add bounded query logs and privacy controls for retention, redaction, access,
   and deletion.
 - Extend the current bounded authenticated status page into a full optional
