@@ -17,6 +17,8 @@ enum ReplyMode {
     Negative,
     Servfail,
     WrongId,
+    WrongQuestion,
+    NotResponse,
     Malformed,
     WrongSender,
     Timeout,
@@ -62,7 +64,9 @@ impl FakeSocket {
             | ReplyMode::Servfail
             | ReplyMode::WrongId
             | ReplyMode::WrongSender
-            | ReplyMode::Overflow => {
+            | ReplyMode::Overflow
+            | ReplyMode::WrongQuestion
+            | ReplyMode::NotResponse => {
                 let message = parse_message(query).expect("fake query");
                 let question = message
                     .questions()
@@ -70,9 +74,14 @@ impl FakeSocket {
                     .expect("fake question")
                     .expect("valid fake question");
                 let name = question.name.to_dotted();
+                let response_name = if matches!(mode, ReplyMode::WrongQuestion) {
+                    "other.example.".to_owned()
+                } else {
+                    name.clone()
+                };
                 let rdata = encode::ipv4_rdata(Ipv4Addr::new(93, 184, 216, 34));
                 let record = encode::AnswerRecord {
-                    name: &name,
+                    name: &response_name,
                     rtype: 1,
                     rclass: question.qclass,
                     ttl: 30,
@@ -114,7 +123,7 @@ impl FakeSocket {
                         },
                     ),
                     encode::EncodeQuestion {
-                        name: &name,
+                        name: &response_name,
                         qtype: question.qtype,
                         qclass: question.qclass,
                     },
@@ -122,6 +131,9 @@ impl FakeSocket {
                     &mut response,
                 )
                 .expect("fake response");
+                if matches!(mode, ReplyMode::NotResponse) {
+                    response[2] &= 0x7f;
+                }
                 response
             }
         };
@@ -287,6 +299,20 @@ async fn fake_upstream_wrong_id_fails_closed() {
     let (policy, _) = policy(ReplyMode::WrongId);
     let result = policy.call(request()).await;
     assert!(result.is_err());
+}
+
+#[proxima::test]
+async fn fake_upstream_wrong_question_fails_closed() {
+    let (policy, _) = policy(ReplyMode::WrongQuestion);
+    let answer = policy.call(request()).await.expect("fail-closed response");
+    assert_eq!(answer.payload.rcode, 2);
+    assert!(answer.payload.records.is_empty());
+}
+
+#[proxima::test]
+async fn fake_upstream_response_bit_failure_is_fail_closed() {
+    let (policy, _) = policy(ReplyMode::NotResponse);
+    assert!(policy.call(request()).await.is_err());
 }
 
 #[proxima::test]
