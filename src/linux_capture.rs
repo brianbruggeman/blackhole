@@ -11,6 +11,14 @@ use std::path::{Path, PathBuf};
 const MAX_INTERFACE_BYTES: usize = 15;
 const MAX_CHAIN_BYTES: usize = 32;
 
+fn valid_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_CHAIN_BYTES
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CaptureContext {
     pub original_destination: SocketAddr,
@@ -56,26 +64,39 @@ impl NftRulePlan {
         Self::for_ports(chain, listen_port, listen_port, mark)
     }
 
-    pub fn for_ports(
+    pub fn for_table(
+        table: impl Into<String>,
         chain: impl Into<String>,
         inbound_port: u16,
         redirect_port: u16,
         mark: u32,
     ) -> Result<Self, CaptureError> {
         let plan = Self {
-            table: "blackhole".into(),
+            table: table.into(),
             chain: chain.into(),
             inbound_port,
             redirect_port,
             mark,
         };
-        if plan.chain.is_empty() || plan.chain.len() > MAX_CHAIN_BYTES || !plan.chain.is_ascii() {
+        if !valid_identifier(&plan.table) {
+            return Err(CaptureError::Bound("table"));
+        }
+        if !valid_identifier(&plan.chain) {
             return Err(CaptureError::Bound("chain"));
         }
         if plan.inbound_port == 0 || plan.redirect_port == 0 || plan.mark == 0 {
             return Err(CaptureError::InvalidPlan);
         }
         Ok(plan)
+    }
+
+    pub fn for_ports(
+        chain: impl Into<String>,
+        inbound_port: u16,
+        redirect_port: u16,
+        mark: u32,
+    ) -> Result<Self, CaptureError> {
+        Self::for_table("blackhole", chain, inbound_port, redirect_port, mark)
     }
 
     /// Stable dry-run representation. The ownership comment is part of the
@@ -107,12 +128,8 @@ pub struct CaptureOwnership {
 
 impl CaptureOwnership {
     fn is_valid(&self) -> bool {
-        !self.table.is_empty()
-            && self.table.len() <= MAX_CHAIN_BYTES
-            && self.table.is_ascii()
-            && !self.chain.is_empty()
-            && self.chain.len() <= MAX_CHAIN_BYTES
-            && self.chain.is_ascii()
+        valid_identifier(&self.table)
+            && valid_identifier(&self.chain)
             && self.inbound_port != 0
             && self.redirect_port != 0
     }
@@ -519,6 +536,27 @@ mod tests {
         assert!(rendered.contains("tcp dport 53"));
         assert!(rendered.contains("udp dport 53"));
         assert!(rendered.contains("redirect to :5353"));
+    }
+
+    #[test]
+    fn capture_plan_can_use_an_isolated_table_for_smoke_tests() {
+        let plan = NftRulePlan::for_table("blackhole_ci", "capture_ci", 53, 5353, 42).unwrap();
+        assert!(plan.render().starts_with("table inet blackhole_ci {"));
+        assert_eq!(plan.ownership().table, "blackhole_ci");
+    }
+
+    #[test]
+    fn capture_plan_rejects_unquoted_nft_identifiers() {
+        for (table, chain) in [("blackhole-ci", "capture"), ("blackhole", "capture/ci")] {
+            assert_eq!(
+                NftRulePlan::for_table(table, chain, 53, 5353, 42),
+                Err(CaptureError::Bound(if table.contains('-') {
+                    "table"
+                } else {
+                    "chain"
+                }))
+            );
+        }
     }
 
     #[test]
