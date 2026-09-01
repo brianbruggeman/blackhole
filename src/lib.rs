@@ -3243,7 +3243,10 @@ mod runtime {
 
         fn admission_allows(&self, query: &proxima_dns::DnsQuery) -> bool {
             let name = query.name.trim_end_matches('.');
-            if name.len() > self.config.admission.max_name_bytes {
+            if name.len() > self.config.admission.max_name_bytes
+                || query.qtype == 0
+                || query.qclass == 0
+            {
                 return false;
             }
             if self.config.admission.reject_any && query.qtype == 255 {
@@ -5822,6 +5825,12 @@ mod runtime {
                 policy.evaluate(&query("bad..example.", 1)).unwrap().rcode,
                 5
             );
+            let mut zero_type = query("example.com.", 1);
+            zero_type.qtype = 0;
+            assert_eq!(policy.evaluate(&zero_type).unwrap().rcode, 5);
+            let mut zero_class = query("example.com.", 1);
+            zero_class.qclass = 0;
+            assert_eq!(policy.evaluate(&zero_class).unwrap().rcode, 5);
             assert!(
                 Policy::new({
                     let mut config = Config::default();
