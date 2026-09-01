@@ -392,6 +392,9 @@ mod runtime {
         /// Operator-supplied lines of `COUNTRY CIDR`; no database is bundled.
         #[serde(default)]
         pub map_path: Option<String>,
+        /// Optional maximum age of the map file. Stale maps fail closed.
+        #[serde(default)]
+        pub max_age_secs: Option<u64>,
         /// Country codes whose clients are denied before DNS policy evaluation.
         #[serde(default)]
         pub deny: Vec<String>,
@@ -1000,6 +1003,28 @@ mod runtime {
                 path: path.into(),
                 reason: error.to_string(),
             })?;
+        if let Some(max_age_secs) = config.max_age_secs {
+            if max_age_secs == 0 {
+                return Err(policy::PolicyError::InvalidCountryMap {
+                    path: path.into(),
+                    reason: "max_age_secs must be non-zero when configured".into(),
+                });
+            }
+            let modified =
+                metadata
+                    .modified()
+                    .map_err(|error| policy::PolicyError::InvalidCountryMap {
+                        path: path.into(),
+                        reason: format!("cannot read map modification time: {error}"),
+                    })?;
+            let now = std::time::SystemTime::now();
+            if !country_map_is_fresh(modified, now, max_age_secs) {
+                return Err(policy::PolicyError::InvalidCountryMap {
+                    path: path.into(),
+                    reason: format!("map is older than configured {max_age_secs}s freshness bound"),
+                });
+            }
+        }
         if metadata.len() > MAX_COUNTRY_MAP_BYTES {
             return Err(policy::PolicyError::InvalidCountryMap {
                 path: path.into(),
@@ -1058,6 +1083,17 @@ mod runtime {
             deny,
             observe,
         }))
+    }
+
+    fn country_map_is_fresh(
+        modified: std::time::SystemTime,
+        now: std::time::SystemTime,
+        max_age_secs: u64,
+    ) -> bool {
+        max_age_secs != 0
+            && now
+                .duration_since(modified)
+                .map_or(false, |age| age <= Duration::from_secs(max_age_secs))
     }
 
     const MAX_REWRITES: usize = 10_000;
@@ -3605,6 +3641,7 @@ mod runtime {
             let mut config = Config::default();
             config.country_policy = CountryPolicyConfig {
                 map_path: Some(path.to_string_lossy().into_owned()),
+                max_age_secs: None,
                 deny: vec!["us".into()],
                 observe: vec!["CA".into()],
             };
@@ -3654,6 +3691,19 @@ mod runtime {
                 .payload;
             assert_eq!(outside_answer.rcode, 0);
             std::fs::remove_file(path).expect("remove country map");
+        }
+
+        #[test]
+        fn country_map_freshness_is_bounded_and_clock_skew_fails_closed() {
+            let now = std::time::UNIX_EPOCH + Duration::from_secs(10_000);
+            assert!(country_map_is_fresh(now - Duration::from_secs(60), now, 60));
+            assert!(!country_map_is_fresh(
+                now - Duration::from_secs(61),
+                now,
+                60
+            ));
+            assert!(!country_map_is_fresh(now + Duration::from_secs(1), now, 60));
+            assert!(!country_map_is_fresh(now, now, 0));
         }
 
         #[test]

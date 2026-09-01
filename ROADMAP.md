@@ -30,8 +30,8 @@ below are future capabilities, grouped by the dependency layer they extend.
   the current per-query response-ratio cap, per-client admission limits, and
   bounded rate/response-budget abuse breaker.
 - Add managed GeoIP/region/ASN data lifecycle and richer country policy beyond
-  the current explicit country-to-CIDR map; keep uncertainty and database
-  freshness explicit.
+  the current explicit country-to-CIDR map; the current optional map freshness
+  bound is the first lifecycle safeguard, and uncertainty must remain explicit.
 - Add authenticated configuration reload and incremental background updates on
   top of the current in-process atomic rule-table reload API.
 

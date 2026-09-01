@@ -68,7 +68,8 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   multicast, and IPv6 unique-local A/AAAA answers, with fail-closed SERVFAIL.
 - Optional country deny and observe-only (“snitch”) policy from a bounded,
   operator-supplied country-to-CIDR map; longest-prefix entries win and the
-  classification is not treated as exact identity.
+  classification is not treated as exact identity. An optional freshness bound
+  fails closed when the map file is stale or its timestamp is unavailable.
 - A committed libFuzzer target for the borrowed DNS query boundary, with a
   privacy-safe corpus location for minimized wire samples.
 - Proxima-native action counters, failure-cause counters, and request-latency

@@ -32,7 +32,8 @@ DNS edge and is a prerequisite for any future honeypot terminal.
 - Country-policy classification uses adapter-owned client addresses against an
   operator-supplied CIDR map. It is an operational classification signal, not
   identity, attribution, authentication, or a substitute for network-level
-  DDoS protection.
+  DDoS protection. Operators may configure `country_policy.max_age_secs`; a
+  stale or timestamp-unreadable map fails closed before publication.
 
 ## Future terminal requirements
 
