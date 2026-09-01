@@ -9,7 +9,9 @@ use proxima::middlewares::auth::Auth;
 use proxima::pipe::{PipeHandle, into_handle};
 use proxima::{ProximaError, Request, Response, SendPipe};
 
-use crate::{ClientGroupConfig, Policy, RegexRuleConfig, RuleConfig, ServiceProfileConfig};
+use crate::{
+    ClientGroupConfig, Policy, RegexRuleConfig, RewriteConfig, RuleConfig, ServiceProfileConfig,
+};
 
 const MAX_POLICY_BODY_BYTES: usize = 64 * 1024;
 
@@ -30,6 +32,8 @@ struct PolicyBundle {
     profiles: Vec<ServiceProfileConfig>,
     #[serde(default)]
     client_groups: Vec<ClientGroupConfig>,
+    #[serde(default)]
+    rewrites: Vec<RewriteConfig>,
 }
 const ADMIN_UI: &str = r#"<!doctype html>
 <meta charset="utf-8">
@@ -115,6 +119,7 @@ impl SendPipe for AdminHandler {
                     &bundle.regex_rules,
                     &bundle.profiles,
                     &bundle.client_groups,
+                    &bundle.rewrites,
                 ) {
                     Ok(_) => Ok(Response::ok(r#"{"status":"reloaded"}"#)),
                     Err(error) => Ok(Response::new(422).with_body(format!(
@@ -491,7 +496,7 @@ mod tests {
             .method("POST")
             .path("/reload/policy-bundle")
             .payload(
-                r#"{"rules":[{"id":7,"domain":"blocked.example","action":"nxdomain"}],"regex_rules":[{"id":8,"pattern":"^ads\\.","action":"drop"}],"profiles":[{"id":9,"name":"family","domains":["family.example"],"action":"reject"}],"client_groups":[]}"#,
+                r#"{"rules":[{"id":7,"domain":"blocked.example","action":"nxdomain"}],"regex_rules":[{"id":8,"pattern":"^ads\\.","action":"drop"}],"profiles":[{"id":9,"name":"family","domains":["family.example"],"action":"reject"}],"client_groups":[],"rewrites":[{"name":"router.example","ipv4":"192.0.2.1","ipv6":null,"ttl":30}]}"#,
             )
             .build()
             .expect("policy bundle request");
@@ -507,6 +512,15 @@ mod tests {
         wire.extend_from_slice(&[0, 0, 1, 0, 1]);
         let query = crate::query::QueryView::parse(&wire).expect("profile query");
         assert_eq!(policy.action_for_view(query), crate::Action::Reject);
+        let rewrite_query = proxima_dns::DnsQuery {
+            id: 1,
+            recursion_desired: true,
+            name: "router.example.".into(),
+            qtype: 1,
+            qclass: 1,
+        };
+        let answer = policy.evaluate(&rewrite_query).expect("rewrite answer");
+        assert_eq!(answer.records[0].rdata, vec![192, 0, 2, 1]);
         let invalid = Request::builder()
             .method("POST")
             .path("/reload/policy-bundle")
@@ -521,6 +535,8 @@ mod tests {
         let profiles: serde_json::Value =
             serde_json::from_slice(&profiles.payload).expect("profiles JSON");
         assert_eq!(profiles["profiles"][0]["name"], "family");
+        let answer = policy.evaluate(&rewrite_query).expect("retained rewrite");
+        assert_eq!(answer.records[0].rdata, vec![192, 0, 2, 1]);
     }
 
     #[test]

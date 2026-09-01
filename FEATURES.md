@@ -101,8 +101,8 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   profiles and client groups, preserves explicit domain rules, and rejects
   invalid expansions without publishing them.
 - Authenticated bounded `POST /reload/policy-bundle` validates and replaces
-  domain, regex, profile, and client-group tables as one snapshot while
-  retaining the loaded blocklist snapshot.
+  domain, regex, profile, client-group, and local-rewrite tables as one
+  snapshot while retaining the loaded blocklist snapshot.
 - Authenticated cache deletion clears all bounded positive and negative DNS
   answers and reports only the number of entries removed.
 - Optional bounded privacy-safe query-decision logs use Proxima's recording

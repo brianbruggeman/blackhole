@@ -1402,7 +1402,7 @@ mod runtime {
         profiles: RwLock<Vec<ServiceProfileConfig>>,
         client_groups: RwLock<Vec<ClientGroupConfig>>,
         country_policy: Arc<RwLock<Option<CountryPolicy>>>,
-        rewrites: RewriteTable,
+        rewrites: RwLock<RewriteTable>,
         reference: PolicyStore,
         regex_rules: Mutex<Vec<RegexRule>>,
         domain_rules_configured: AtomicBool,
@@ -1681,7 +1681,7 @@ mod runtime {
                 profiles: RwLock::new(profiles),
                 client_groups: RwLock::new(client_groups),
                 country_policy: Arc::new(RwLock::new(country_policy)),
-                rewrites,
+                rewrites: RwLock::new(rewrites),
                 reference,
                 regex_rules: Mutex::new(regex_rules),
                 domain_rules_configured: AtomicBool::new(domain_rules_configured),
@@ -1963,9 +1963,11 @@ mod runtime {
             regex_configs: &[RegexRuleConfig],
             profiles: &[ServiceProfileConfig],
             client_groups: &[ClientGroupConfig],
+            rewrite_configs: &[RewriteConfig],
         ) -> Result<ReloadState, policy::PolicyError> {
             let started = Instant::now();
             let generated = compile_profiles(profiles, client_groups)?;
+            let rewrites = compile_rewrites(rewrite_configs)?;
             let mut base = rules.to_vec();
             base.extend(generated);
             let mut published = base.clone();
@@ -1987,6 +1989,7 @@ mod runtime {
             *self.regex_rules.lock().expect("regex rules lock") = compiled_regex;
             *self.profiles.write().expect("profiles lock") = profiles.to_vec();
             *self.client_groups.write().expect("client groups lock") = client_groups.to_vec();
+            *self.rewrites.write().expect("rewrites lock") = rewrites;
             self.domain_rules_configured
                 .store(!published.is_empty(), Ordering::Release);
             self.rules_configured.store(
@@ -2622,6 +2625,8 @@ mod runtime {
                 }
                 Some(Action::Pass | Action::Observe) => self
                     .rewrites
+                    .read()
+                    .expect("rewrites lock")
                     .answer(query)
                     .or_else(|| Some(DnsAnswer::ok(Vec::new()))),
                 None => Some(DnsAnswer::ok(Vec::new())),
@@ -3007,7 +3012,7 @@ mod runtime {
                 self.record_decision(action, &query).await;
             }
             if matches!(action, Some(Action::Pass | Action::Observe) | None) {
-                if let Some(answer) = self.rewrites.answer(&query) {
+                if let Some(answer) = self.rewrites.read().expect("rewrites lock").answer(&query) {
                     self.observe(action.unwrap_or(Action::Pass));
                     return Ok(DnsPipeReply::typed(200, self.cap_answer(&query, answer)));
                 }
