@@ -30,7 +30,8 @@ pub mod snapshot;
 #[cfg(feature = "std")]
 mod runtime {
     use proxima::{
-        DynRecordingSink, InteractionId, Labels, ProtocolEvent, RecordingEvent, TelemetryHandle,
+        BoundedRecordingSink, DynRecordingSink, FailMode, InteractionId, Labels, ProtocolEvent,
+        RecordingEvent, TelemetryHandle,
     };
     use proxima_core::ProximaError;
     use proxima_dns::{
@@ -1435,6 +1436,19 @@ mod runtime {
         pub fn with_recording_sink(mut self, recording: DynRecordingSink) -> Self {
             self.recording = Some(recording);
             self
+        }
+
+        /// Attach a Proxima recording backend behind its bounded recording
+        /// queue. The newest metadata is retained when the queue is full;
+        /// callers must still configure the backend's retention policy.
+        #[must_use]
+        pub fn with_bounded_recording_sink(
+            self,
+            backend: DynRecordingSink,
+            capacity: usize,
+        ) -> Self {
+            let bounded = BoundedRecordingSink::new(backend, capacity.max(1), FailMode::DropOldest);
+            self.with_recording_sink(Arc::new(bounded))
         }
 
         /// Validate and atomically publish a complete replacement rule table.
