@@ -1398,6 +1398,7 @@ mod runtime {
         config: Config,
         base_rules: Mutex<Vec<RuleConfig>>,
         explicit_rules: Mutex<Vec<RuleConfig>>,
+        blocklist_rules: Mutex<Vec<RuleConfig>>,
         profiles: RwLock<Vec<ServiceProfileConfig>>,
         client_groups: RwLock<Vec<ClientGroupConfig>>,
         country_policy: Arc<RwLock<Option<CountryPolicy>>>,
@@ -1636,6 +1637,7 @@ mod runtime {
             config.policy.rules.extend(profile_rules);
             let base_rules = config.policy.rules.clone();
             let blocklist_rules = load_blocklists(&config.policy.blocklists)?;
+            let retained_blocklist_rules = blocklist_rules.clone();
             let country_policy = load_country_policy(&config.country_policy)?;
             let rewrites = compile_rewrites(&config.policy.rewrites)?;
             config.policy.rules.extend(blocklist_rules);
@@ -1675,6 +1677,7 @@ mod runtime {
                 config,
                 base_rules: Mutex::new(base_rules),
                 explicit_rules: Mutex::new(explicit_rules),
+                blocklist_rules: Mutex::new(retained_blocklist_rules),
                 profiles: RwLock::new(profiles),
                 client_groups: RwLock::new(client_groups),
                 country_policy: Arc::new(RwLock::new(country_policy)),
@@ -1833,6 +1836,14 @@ mod runtime {
             reload_kind: &'static str,
             started: Instant,
         ) -> Result<ReloadState, policy::PolicyError> {
+            let mut published_rules = rules.to_vec();
+            published_rules.extend(
+                self.blocklist_rules
+                    .lock()
+                    .expect("blocklist rules lock")
+                    .iter()
+                    .cloned(),
+            );
             let regex_ids = self
                 .regex_rules
                 .lock()
@@ -1840,16 +1851,19 @@ mod runtime {
                 .iter()
                 .map(|rule| rule.id)
                 .collect::<BTreeSet<_>>();
-            if let Some(rule) = rules.iter().find(|rule| regex_ids.contains(&rule.id)) {
+            if let Some(rule) = published_rules
+                .iter()
+                .find(|rule| regex_ids.contains(&rule.id))
+            {
                 return Err(policy::PolicyError::DuplicateRule { id: rule.id });
             }
-            let published = self.reference.reload(rules)?;
+            let published = self.reference.reload(&published_rules)?;
             *base_rules = rules.to_vec();
             *self.explicit_rules.lock().expect("explicit rules lock") = explicit_rules.to_vec();
             self.domain_rules_configured
-                .store(!rules.is_empty(), Ordering::Release);
+                .store(!published_rules.is_empty(), Ordering::Release);
             self.rules_configured.store(
-                !rules.is_empty()
+                !published_rules.is_empty()
                     || !self
                         .regex_rules
                         .lock()
@@ -1868,8 +1882,10 @@ mod runtime {
         /// so an unreadable or malformed update keeps the last good generation.
         pub fn reload_blocklists(&self) -> Result<ReloadState, policy::PolicyError> {
             let started = Instant::now();
-            let mut rules = self.base_rules.lock().expect("base rules lock").clone();
-            rules.extend(load_blocklists(&self.config.policy.blocklists)?);
+            let replacement = load_blocklists(&self.config.policy.blocklists)?;
+            let base_rules = self.base_rules.lock().expect("base rules lock");
+            let mut rules = base_rules.clone();
+            rules.extend(replacement.iter().cloned());
             let regex_ids = self
                 .regex_rules
                 .lock()
@@ -1881,6 +1897,7 @@ mod runtime {
                 return Err(policy::PolicyError::DuplicateRule { id: rule.id });
             }
             let published = self.reference.reload(&rules)?;
+            *self.blocklist_rules.lock().expect("blocklist rules lock") = replacement;
             self.domain_rules_configured
                 .store(!rules.is_empty(), Ordering::Release);
             self.rules_configured.store(
@@ -1923,35 +1940,17 @@ mod runtime {
                 .lock()
                 .expect("explicit rules lock")
                 .clone();
-            let mut combined = explicit;
+            let mut combined = explicit.clone();
             combined.extend(generated);
-            let regex_ids = self
-                .regex_rules
-                .lock()
-                .expect("regex rules lock")
-                .iter()
-                .map(|rule| rule.id)
-                .collect::<BTreeSet<_>>();
-            if let Some(rule) = combined.iter().find(|rule| regex_ids.contains(&rule.id)) {
-                return Err(policy::PolicyError::DuplicateRule { id: rule.id });
-            }
-            let published = self.reference.reload(&combined)?;
-            *base_rules = combined;
+            let published = self.publish_rules_locked(
+                &combined,
+                &explicit,
+                &mut base_rules,
+                "profiles",
+                started,
+            )?;
             *self.profiles.write().expect("profiles lock") = profiles.to_vec();
             *self.client_groups.write().expect("client groups lock") = client_groups.to_vec();
-            self.domain_rules_configured
-                .store(!base_rules.is_empty(), Ordering::Release);
-            self.rules_configured.store(
-                self.domain_rules_configured.load(Ordering::Acquire)
-                    || !self
-                        .regex_rules
-                        .lock()
-                        .expect("regex rules lock")
-                        .is_empty(),
-                Ordering::Release,
-            );
-            self.cache.lock().expect("cache lock").clear();
-            self.observe_reload_latency("profiles", started);
             Ok(published)
         }
 
@@ -3450,6 +3449,23 @@ mod runtime {
                 qtype: 1,
                 qclass: 1,
             };
+            assert_eq!(policy.evaluate(&query("old.example.")).unwrap().rcode, 3);
+
+            assert_eq!(
+                policy.reload_rules(&[RuleConfig {
+                    id: 901,
+                    domain: "local.example".into(),
+                    action: Action::Reject,
+                    priority: 0,
+                    qtype: None,
+                    qclass: None,
+                    client: None,
+                    client_cidr: None,
+                    client_cidrs: Vec::new(),
+                }]),
+                Ok(ReloadState::Published)
+            );
+            assert_eq!(policy.evaluate(&query("local.example.")).unwrap().rcode, 5);
             assert_eq!(policy.evaluate(&query("old.example.")).unwrap().rcode, 3);
 
             std::fs::write(&path, "new.example\n").expect("write replacement blocklist");
