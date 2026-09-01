@@ -86,6 +86,7 @@ jobs:
       - name: build capture smoke
         run: cargo build --locked --example capture_smoke
       - name: run systemd install and rollback smoke
+        id: systemd-smoke
         run: |
           set -o pipefail
           sudo -n env BLACKHOLE_SMOKE_TRACE=1 \
@@ -97,6 +98,15 @@ jobs:
         with:
           name: blackhole-linux-smoke-${{ github.sha }}
           path: systemd-smoke.log
+      - name: report systemd smoke failure
+        if: steps.systemd-smoke.outcome == 'failure'
+        run: |
+          while IFS= read -r line; do
+            escaped=${line//'%'/'%25'}
+            escaped=${escaped//$'\r'/'%0D'}
+            escaped=${escaped//$'\n'/'%0A'}
+            echo "::error title=systemd smoke::$escaped"
+          done < <(tail -n 80 systemd-smoke.log)
       - name: run Debian package install smoke
         run: |
           old_package=$(find dist -name 'blackhole_0.0.9_*.deb' -print -quit)
@@ -162,6 +172,7 @@ jobs:
         if: always()
         run: cargo build --locked --release --bin blackhole
       - name: run launchd host install and upgrade smoke
+        id: launchd-smoke
         if: always()
         timeout-minutes: 2
         run: |
@@ -179,6 +190,15 @@ jobs:
             macos-toolchain.txt
             macos-cargo-check.log
             launchd-smoke.log
+      - name: report launchd smoke failure
+        if: steps.launchd-smoke.outcome == 'failure'
+        run: |
+          while IFS= read -r line; do
+            escaped=${line//'%'/'%25'}
+            escaped=${escaped//$'\r'/'%0D'}
+            escaped=${escaped//$'\n'/'%0A'}
+            echo "::error title=launchd smoke::$escaped"
+          done < <(tail -n 80 launchd-smoke.log)
       - name: fail if macOS check failed
         if: steps.macos-check.outcome == 'failure'
         run: |

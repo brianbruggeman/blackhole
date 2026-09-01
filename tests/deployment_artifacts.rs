@@ -135,6 +135,7 @@ fn systemd_smoke_covers_install_and_rollback() {
     assert!(systemd_contract.contains("BLACKHOLE_SMOKE_TRACE=1"));
     assert!(systemd_contract.contains("tee systemd-smoke.log"));
     assert!(systemd_contract.contains("name: blackhole-linux-smoke-"));
+    assert!(systemd_contract.contains("report systemd smoke failure"));
 }
 
 #[test]
@@ -185,6 +186,14 @@ fn launchd_smoke_covers_host_install_and_upgrade() {
             "missing launchd smoke step: {required}"
         );
     }
+}
+
+#[test]
+fn workflow_reports_platform_smoke_failures() {
+    let workflow = fs::read_to_string(VERIFY_WORKFLOW).expect("read verification workflow");
+    assert!(workflow.contains("report launchd smoke failure"));
+    assert!(workflow.contains("tail -n 80 launchd-smoke.log"));
+    assert!(workflow.contains("tail -n 80 systemd-smoke.log"));
 }
 
 #[cfg(unix)]
