@@ -19,6 +19,9 @@ DNS edge and is a prerequisite for any future honeypot terminal.
   must not contain client identity or production payloads.
 - The capture ownership journal contains only the exact firewall plan needed
   for recovery; it is not a query log.
+- An authenticated `POST /cache/clear` operation deletes all currently cached
+  DNS answers and returns only the bounded number of entries removed. It does
+  not expose names, client identity, or payloads.
 - Country-policy classification uses adapter-owned client addresses against an
   operator-supplied CIDR map. It is an operational classification signal, not
   identity, attribution, authentication, or a substitute for network-level

@@ -88,6 +88,8 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   unknown IDs fail without changing the published snapshot.
 - The authenticated admin control plane includes a bounded static status page;
   it contains no query data and uses the existing Proxima HTTP pipe.
+- Authenticated cache deletion clears all bounded positive and negative DNS
+  answers and reports only the number of entries removed.
 - A tested policy/FSM/snapshot core that does not require privileged capture
   APIs.
 - Shared capture-controller orchestration with exact ownership journaling,

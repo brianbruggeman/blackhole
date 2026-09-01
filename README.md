@@ -89,7 +89,7 @@ listen = "127.0.0.1:8081"
 token = "a-long-random-secret"
 ```
 
-It provides an authenticated bounded status page at `GET /`, `GET /health`, authenticated `GET /status` and bounded `GET /rules`, `POST /reload/blocklists`, bounded
+It provides an authenticated bounded status page at `GET /`, `GET /health`, authenticated `GET /status` and bounded `GET /rules`, `POST /cache/clear`, `POST /reload/blocklists`, bounded
 `POST /reload/country`, bounded `POST /reload/policy` (a JSON array of complete rule objects), bounded
 `POST /reload/policy/add` (a non-empty JSON array appended atomically to the current domain rules), and bounded
 `POST /reload/policy/remove` (a JSON array of stable rule IDs removed atomically), and bounded
