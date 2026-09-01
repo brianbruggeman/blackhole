@@ -100,6 +100,9 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   monotonic policy generation advances once per successful publication.
 - The authenticated control plane can also remove domain rules by stable ID;
   unknown IDs fail without changing the published snapshot.
+- The authenticated control plane can atomically upsert domain rules by stable
+  ID, preserving unspecified rules and rejecting duplicate update IDs without
+  publication.
 - The authenticated admin control plane includes a bounded status UI for
   status, rule metadata, and privacy-log inspection/clearing; it contains no
   packet payloads and uses the existing Proxima HTTP pipe.

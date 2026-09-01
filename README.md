@@ -102,7 +102,8 @@ authenticated `GET /health`, `GET /status`, bounded `GET /policy/status`,
 `GET /rules`, `GET /logs`,
 and `POST /logs/clear`, `POST /cache/clear`, `POST /reload/blocklists`, bounded
 `POST /reload/country`, bounded `POST /reload/policy` (a JSON array of complete rule objects), bounded
-`POST /reload/policy/add` (a non-empty JSON array appended atomically to the current domain rules), and bounded
+`POST /reload/policy/add` (a non-empty JSON array appended atomically to the current domain rules), bounded
+`POST /reload/policy/upsert` (a non-empty JSON array that replaces or adds rules by stable ID while preserving unspecified rules), and bounded
 `POST /reload/policy/remove` (a JSON array of stable rule IDs removed atomically), and bounded
 `POST /reload/regex` (a JSON array of regex rule objects), bounded `GET /profiles`
 and `GET /client-groups` metadata views, plus bounded privacy-safe
