@@ -297,6 +297,24 @@ fn package_builder_contains_provenance_and_bounded_inputs() {
 }
 
 #[test]
+fn linux_workflow_selects_one_debian_package_for_inspection() {
+    let workflow = fs::read_to_string(VERIFY_WORKFLOW).expect("read verification workflow");
+    let packages = workflow
+        .find("name: build release packages")
+        .expect("Linux package build step");
+    let smoke = workflow
+        .find("name: run Debian package install smoke")
+        .expect("Debian package smoke step");
+    let package_contract = &workflow[packages..smoke];
+    assert!(package_contract.contains("new_package=$(find dist -name"));
+    assert!(package_contract.contains("ar t \"$new_package\""));
+    assert!(package_contract.contains("ar p \"$new_package\" control.tar.gz"));
+    assert!(package_contract.contains("ar p \"$new_package\" data.tar.gz"));
+    let smoke_contract = &workflow[smoke..];
+    assert!(smoke_contract.contains("package_version=$(sed -n"));
+}
+
+#[test]
 fn deb_builder_contains_native_package_contract() {
     let builder = fs::read_to_string(DEB_BUILDER).expect("read Debian package builder");
     for required in [
