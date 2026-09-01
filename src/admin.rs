@@ -477,8 +477,7 @@ mod tests {
             clear.payload,
             Bytes::from_static(b"{\"status\":\"cleared\",\"entries\":0}")
         );
-        let status =
-            block_on(handler.call(request("GET", "/policy/status"))).expect("status response");
+        let status = block_on(handler.call(request("GET", "/status"))).expect("status response");
         assert_eq!(status.status, 200);
         let status: serde_json::Value =
             serde_json::from_slice(&status.payload).expect("status JSON");
