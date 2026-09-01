@@ -480,3 +480,49 @@ async fn listener_enforces_service_profile_on_the_real_udp_path() {
     assert_eq!(message.answers().count(), 0);
     server.stop();
 }
+
+#[proxima::test]
+async fn listener_enforces_runtime_denylist_on_the_real_udp_path() {
+    let policy = Arc::new(Policy::new(Config::default()).expect("valid default policy"));
+    policy
+        .add_deny_client_cidrs(&["127.0.0.0/8".into()])
+        .expect("runtime denylist update");
+    let listener_addr = test_listener_addr();
+    let server = Listener::builder()
+        .bind(listener_addr)
+        .any()
+        .protocol(UdpProtocol::new(Arc::clone(&policy)))
+        .protocol(TcpProtocol::new(Arc::clone(&policy)))
+        .handle(into_handle(Passthrough))
+        .serve()
+        .await
+        .expect("serve listener");
+
+    let mut client = PrimeDatagramFactory
+        .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+        .expect("bind client");
+    let mut query = Vec::new();
+    encode::encode_query(
+        0x4323,
+        true,
+        encode::EncodeQuestion {
+            name: "runtime-denied.example.",
+            qtype: 1,
+            qclass: 1,
+        },
+        &mut query,
+    )
+    .expect("encode denylist query");
+    std::future::poll_fn(|cx| client.poll_send_to(cx, &query, listener_addr))
+        .await
+        .expect("send denylist query");
+    let mut response = [0u8; 4096];
+    let (len, _) = std::future::poll_fn(|cx| client.poll_recv_from(cx, &mut response))
+        .await
+        .expect("receive denylist response");
+    let message = parse_message(&response[..len]).expect("parse denylist response");
+    assert_eq!(message.header.id, 0x4323);
+    assert_eq!(message.header.flags.rcode(), 5);
+    assert_eq!(message.answers().count(), 0);
+    server.stop();
+}
