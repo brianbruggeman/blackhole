@@ -34,6 +34,11 @@ struct ProfileUpsert {
 }
 
 #[derive(Debug, serde::Deserialize)]
+struct RewriteUpsert {
+    rewrites: Vec<RewriteConfig>,
+}
+
+#[derive(Debug, serde::Deserialize)]
 struct PolicyBundle {
     /// Optional legacy fallback mode; omitted fields retain their live value.
     #[serde(default)]
@@ -445,6 +450,50 @@ impl SendPipe for AdminHandler {
                     ))),
                 }
             }
+            ("POST", "/reload/rewrites/upsert") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let update = match serde_json::from_slice::<RewriteUpsert>(&request.payload) {
+                    Ok(update) => update,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                match self.policy.upsert_rewrites(&update.rewrites) {
+                    Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
+            ("POST", "/reload/rewrites/remove") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let names = match serde_json::from_slice::<Vec<String>>(&request.payload) {
+                    Ok(names) => names,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                match self.policy.remove_rewrites(&names) {
+                    Ok(_) => Ok(Response::ok("{\"status\":\"removed\"}")),
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
             (
                 _,
                 "/"
@@ -473,7 +522,9 @@ impl SendPipe for AdminHandler {
                 | "/reload/policy/remove"
                 | "/reload/regex"
                 | "/reload/regex/upsert"
-                | "/reload/regex/remove",
+                | "/reload/regex/remove"
+                | "/reload/rewrites/upsert"
+                | "/reload/rewrites/remove",
             ) => Ok(Response::new(405)),
             _ => Ok(Response::not_found()),
         }
@@ -1245,6 +1296,98 @@ mod tests {
             .method("POST")
             .path("/reload/regex/remove")
             .payload("[999]")
+            .build()
+            .expect("unknown removal request");
+        assert_eq!(
+            block_on(handler.call(unknown))
+                .expect("unknown response")
+                .status,
+            422
+        );
+    }
+
+    #[test]
+    fn rewrite_upsert_and_removal_are_atomic_by_name() {
+        let mut config = crate::Config::default();
+        config.policy.rewrites = vec![RewriteConfig {
+            name: "router.example".into(),
+            ipv4: Some("192.0.2.1".parse().expect("address")),
+            ipv6: None,
+            ttl: 30,
+        }];
+        config.policy.rules = vec![crate::RuleConfig {
+            id: 1,
+            domain: "unrelated.example".into(),
+            action: crate::Action::Pass,
+            priority: 0,
+            qtype: None,
+            qclass: None,
+            client: None,
+            client_cidr: None,
+            client_cidrs: Vec::new(),
+        }];
+        let policy = Arc::new(Policy::new(config).expect("valid rewrite policy"));
+        let handler = AdminHandler::new(Arc::clone(&policy));
+        let update = Request::builder()
+            .method("POST")
+            .path("/reload/rewrites/upsert")
+            .payload(
+                r#"{"rewrites":[{"name":"ROUTER.EXAMPLE","ipv4":"198.51.100.1","ttl":60},{"name":"guest.example","ipv6":"2001:db8::1","ttl":20}]}"#,
+            )
+            .build()
+            .expect("rewrite upsert request");
+        assert_eq!(
+            block_on(handler.call(update))
+                .expect("upsert response")
+                .status,
+            200
+        );
+
+        let query = proxima_dns::DnsQuery {
+            id: 1,
+            recursion_desired: true,
+            name: "router.example.".into(),
+            qtype: 1,
+            qclass: 1,
+        };
+        let answer = policy.evaluate(&query).expect("updated rewrite");
+        assert_eq!(answer.records[0].rdata, vec![198, 51, 100, 1]);
+        assert_eq!(answer.records[0].ttl, 60);
+
+        let invalid = Request::builder()
+            .method("POST")
+            .path("/reload/rewrites/upsert")
+            .payload(r#"{"rewrites":[{"name":"router.example","ttl":1}]}"#)
+            .build()
+            .expect("invalid rewrite request");
+        assert_eq!(
+            block_on(handler.call(invalid))
+                .expect("invalid response")
+                .status,
+            422
+        );
+        let answer = policy.evaluate(&query).expect("rewrite retained");
+        assert_eq!(answer.records[0].rdata, vec![198, 51, 100, 1]);
+
+        let remove = Request::builder()
+            .method("POST")
+            .path("/reload/rewrites/remove")
+            .payload(r#"["ROUTER.EXAMPLE"]"#)
+            .build()
+            .expect("rewrite removal request");
+        assert_eq!(
+            block_on(handler.call(remove))
+                .expect("removal response")
+                .status,
+            200
+        );
+        let answer = policy.evaluate(&query).expect("pass answer after removal");
+        assert!(answer.records.is_empty());
+
+        let unknown = Request::builder()
+            .method("POST")
+            .path("/reload/rewrites/remove")
+            .payload(r#"["missing.example"]"#)
             .build()
             .expect("unknown removal request");
         assert_eq!(

@@ -1548,6 +1548,7 @@ mod runtime {
         legacy_domains: RwLock<Vec<String>>,
         legacy_mode: RwLock<Mode>,
         default_action: RwLock<Action>,
+        rewrite_configs: RwLock<Vec<RewriteConfig>>,
         rewrites: RwLock<RewriteTable>,
         reference: PolicyStore,
         regex_rules: Mutex<Vec<RegexRule>>,
@@ -1874,6 +1875,7 @@ mod runtime {
             let legacy_domains = config.policy.domains.clone();
             let legacy_mode = config.policy.mode;
             let default_action = config.policy.default_action;
+            let rewrite_configs = config.policy.rewrites.clone();
             let policy = Self {
                 config,
                 base_rules: Mutex::new(base_rules),
@@ -1887,6 +1889,7 @@ mod runtime {
                 legacy_domains: RwLock::new(legacy_domains),
                 legacy_mode: RwLock::new(legacy_mode),
                 default_action: RwLock::new(default_action),
+                rewrite_configs: RwLock::new(rewrite_configs),
                 rewrites: RwLock::new(rewrites),
                 reference,
                 regex_rules: Mutex::new(regex_rules),
@@ -2602,6 +2605,7 @@ mod runtime {
             *self.profiles.write().expect("profiles lock") = profiles.to_vec();
             *self.client_groups.write().expect("client groups lock") = client_groups.to_vec();
             *self.rewrites.write().expect("rewrites lock") = rewrites;
+            *self.rewrite_configs.write().expect("rewrite configs lock") = rewrite_configs.to_vec();
             *self.country_policy.write().expect("country policy lock") = country_policy;
             if let Some(domains) = normalized_legacy_domains {
                 *self.legacy_domains.write().expect("legacy domains lock") = domains;
@@ -2625,6 +2629,103 @@ mod runtime {
             self.cache.lock().expect("cache lock").clear();
             self.policy_generation.fetch_add(1, Ordering::Relaxed);
             self.observe_reload_latency("policy_bundle", started);
+            Ok(ReloadState::Published)
+        }
+
+        /// Atomically replace or add local rewrites by normalized DNS name.
+        /// All entries compile before the live table changes.
+        pub fn upsert_rewrites(
+            &self,
+            updates: &[RewriteConfig],
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
+            let started = Instant::now();
+            if updates.is_empty() {
+                return Err(policy::PolicyError::InvalidRewrite {
+                    name: "<rewrite-upsert>".into(),
+                    reason: "at least one rewrite is required".into(),
+                });
+            }
+            let mut seen = BTreeSet::new();
+            for rewrite in updates {
+                if !seen.insert(normalize(&rewrite.name)) {
+                    return Err(policy::PolicyError::InvalidRewrite {
+                        name: rewrite.name.clone(),
+                        reason: "rewrite name must be unique within an upsert".into(),
+                    });
+                }
+            }
+            let mut next = self
+                .rewrite_configs
+                .read()
+                .expect("rewrite configs lock")
+                .clone();
+            for update in updates {
+                let name = normalize(&update.name);
+                if let Some(existing) = next
+                    .iter_mut()
+                    .find(|rewrite| normalize(&rewrite.name) == name)
+                {
+                    *existing = update.clone();
+                } else {
+                    next.push(update.clone());
+                }
+            }
+            self.publish_rewrites_locked(&next, "rewrites_upsert", started)
+        }
+
+        /// Remove local rewrites by normalized DNS name. Unknown names fail
+        /// without changing the published rewrite table.
+        pub fn remove_rewrites(
+            &self,
+            names: &[String],
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
+            let started = Instant::now();
+            if names.is_empty() {
+                return Err(policy::PolicyError::InvalidRewrite {
+                    name: "<rewrite-removal>".into(),
+                    reason: "at least one rewrite name is required".into(),
+                });
+            }
+            let requested = names
+                .iter()
+                .map(|name| normalize(name))
+                .collect::<BTreeSet<_>>();
+            if requested.iter().any(String::is_empty) {
+                return Err(policy::PolicyError::InvalidRewrite {
+                    name: "<rewrite-removal>".into(),
+                    reason: "rewrite names must be non-empty".into(),
+                });
+            }
+            let current = self
+                .rewrite_configs
+                .read()
+                .expect("rewrite configs lock")
+                .clone();
+            let mut next = current.clone();
+            next.retain(|rewrite| !requested.contains(&normalize(&rewrite.name)));
+            if next.len() == current.len() {
+                return Err(policy::PolicyError::InvalidRewrite {
+                    name: "<rewrite-removal>".into(),
+                    reason: "no requested rewrite exists".into(),
+                });
+            }
+            self.publish_rewrites_locked(&next, "rewrites_remove", started)
+        }
+
+        fn publish_rewrites_locked(
+            &self,
+            configs: &[RewriteConfig],
+            reload_kind: &'static str,
+            started: Instant,
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let compiled = compile_rewrites(configs)?;
+            *self.rewrites.write().expect("rewrites lock") = compiled;
+            *self.rewrite_configs.write().expect("rewrite configs lock") = configs.to_vec();
+            self.cache.lock().expect("cache lock").clear();
+            self.policy_generation.fetch_add(1, Ordering::Relaxed);
+            self.observe_reload_latency(reload_kind, started);
             Ok(ReloadState::Published)
         }
 
