@@ -27,6 +27,8 @@ async fn listener_preserves_distinct_terminal_actions_on_udp() {
         ("nxdomain.example.", Action::Nxdomain),
         ("sink.example.", Action::Sink),
         ("honeypot.example.", Action::Honeypot),
+        ("pass.example.", Action::Pass),
+        ("observe.example.", Action::Observe),
         ("drop.example.", Action::Drop),
         ("ignore.example.", Action::Ignore),
     ];
@@ -87,7 +89,12 @@ async fn listener_preserves_distinct_terminal_actions_on_udp() {
                 received.is_err(),
                 "{action:?} unexpectedly produced a UDP response"
             ),
-            Action::Reject | Action::Nxdomain | Action::Sink | Action::Honeypot => {
+            Action::Reject
+            | Action::Nxdomain
+            | Action::Sink
+            | Action::Honeypot
+            | Action::Pass
+            | Action::Observe => {
                 let (length, _) = received.expect("terminal action response");
                 let message = parse_message(&response[..length]).expect("parse action response");
                 assert_eq!(message.header.id, index as u16 + 1);
@@ -101,6 +108,10 @@ async fn listener_preserves_distinct_terminal_actions_on_udp() {
                     Action::Honeypot => {
                         assert_eq!(message.header.flags.rcode(), 0);
                         assert_eq!(message.answers().count(), 1);
+                    }
+                    Action::Pass | Action::Observe => {
+                        assert_eq!(message.header.flags.rcode(), 0);
+                        assert_eq!(message.answers().count(), 0);
                     }
                     _ => unreachable!("response action already matched"),
                 }
@@ -118,6 +129,8 @@ async fn listener_preserves_distinct_terminal_actions_on_tcp() {
         ("nxdomain.example.", Action::Nxdomain),
         ("sink.example.", Action::Sink),
         ("honeypot.example.", Action::Honeypot),
+        ("pass.example.", Action::Pass),
+        ("observe.example.", Action::Observe),
         ("drop.example.", Action::Drop),
         ("ignore.example.", Action::Ignore),
     ];
@@ -218,7 +231,12 @@ async fn listener_preserves_distinct_terminal_actions_on_tcp() {
                 assert_eq!(message.header.id, 0x7000 + index as u16);
                 assert_eq!(message.header.flags.rcode(), 5);
             }
-            Action::Reject | Action::Nxdomain | Action::Sink | Action::Honeypot => {
+            Action::Reject
+            | Action::Nxdomain
+            | Action::Sink
+            | Action::Honeypot
+            | Action::Pass
+            | Action::Observe => {
                 let mut response_len = [0u8; 2];
                 client
                     .read_exact(&mut response_len)
@@ -242,6 +260,10 @@ async fn listener_preserves_distinct_terminal_actions_on_tcp() {
                     Action::Honeypot => {
                         assert_eq!(message.header.flags.rcode(), 0);
                         assert_eq!(message.answers().count(), 1);
+                    }
+                    Action::Pass | Action::Observe => {
+                        assert_eq!(message.header.flags.rcode(), 0);
+                        assert_eq!(message.answers().count(), 0);
                     }
                     _ => unreachable!("response action already matched"),
                 }
