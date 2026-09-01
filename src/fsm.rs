@@ -96,6 +96,15 @@ impl<'packet> DecisionState<'packet> {
         Self::Received { packet }
     }
 
+    /// Create the connection-level marker used before a subsequent framed
+    /// message is supplied. The marker carries no packet bytes.
+    #[must_use]
+    pub const fn sent() -> Self {
+        Self::Sent {
+            _marker: core::marker::PhantomData,
+        }
+    }
+
     /// Consume one state and apply one caller-supplied event.
     pub fn transition(self, event: Event<'packet>) -> Result<Self, TransitionError> {
         match (self, event) {

@@ -284,6 +284,7 @@ impl AnyProtocol for TcpProtocol {
         Box::pin(async move {
             let mut input = BytesMut::new();
             let mut scratch = [0u8; 1024];
+            let mut response_sent = false;
             loop {
                 while input.len() < 2
                     || input.len() < 2 + usize::from(u16::from_be_bytes([input[0], input[1]]))
@@ -305,7 +306,16 @@ impl AnyProtocol for TcpProtocol {
                 }
                 let length = usize::from(u16::from_be_bytes([input[0], input[1]]));
                 let frame = input.split_to(2 + length).split_off(2);
-                let state = DecisionState::received(&frame);
+                let state = if response_sent {
+                    DecisionState::sent()
+                        .transition(Event::NextMessage(&frame))
+                        .map_err(|error| {
+                            self.policy.observe_failure("fsm_transition");
+                            ProximaError::Config(error.to_string())
+                        })?
+                } else {
+                    DecisionState::received(&frame)
+                };
                 if let Some((reply, responding)) =
                     decide(&self.policy, state, &frame, peer.clone(), true).await?
                 {
@@ -330,6 +340,9 @@ impl AnyProtocol for TcpProtocol {
                         self.policy.observe_failure("fsm_transition");
                         ProximaError::Config(error.to_string())
                     })?;
+                    response_sent = true;
+                } else {
+                    response_sent = false;
                 }
             }
         })

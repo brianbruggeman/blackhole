@@ -39,7 +39,7 @@ async fn listener_forwards_allowed_query_to_loopback_upstream() {
     let upstream_socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind upstream");
     let upstream_addr = upstream_socket.local_addr().expect("upstream address");
     let upstream_thread = std::thread::spawn(move || {
-        for _ in 0..2 {
+        for _ in 0..3 {
             let mut query = [0u8; 4096];
             let (len, peer) = upstream_socket
                 .recv_from(&mut query)
@@ -174,6 +174,39 @@ async fn listener_forwards_allowed_query_to_loopback_upstream() {
     assert_eq!(message.header.id, 0x1235);
     assert_eq!(message.header.flags.rcode(), 0);
     assert_eq!(message.answers().count(), 1);
+
+    let mut second_query = Vec::new();
+    encode::encode_query(
+        0x1236,
+        true,
+        encode::EncodeQuestion {
+            name: "tcp-second.example.",
+            qtype: 1,
+            qclass: 1,
+        },
+        &mut second_query,
+    )
+    .expect("encode second TCP query");
+    let second_len = u16::try_from(second_query.len()).expect("second DNS query fits TCP frame");
+    tcp.write_all(&second_len.to_be_bytes())
+        .await
+        .expect("write second TCP frame length");
+    tcp.write_all(&second_query)
+        .await
+        .expect("write second TCP query");
+    let mut second_response_len = [0u8; 2];
+    tcp.read_exact(&mut second_response_len)
+        .await
+        .expect("read second TCP response length");
+    let second_response_len = usize::from(u16::from_be_bytes(second_response_len));
+    let mut second_response = vec![0u8; second_response_len];
+    tcp.read_exact(&mut second_response)
+        .await
+        .expect("read second TCP response");
+    let second_message = parse_message(&second_response).expect("parse second TCP response");
+    assert_eq!(second_message.header.id, 0x1236);
+    assert_eq!(second_message.header.flags.rcode(), 0);
+    assert_eq!(second_message.answers().count(), 1);
 
     server.stop();
     upstream_thread.join().expect("upstream thread");
