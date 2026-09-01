@@ -1846,7 +1846,7 @@ mod runtime {
         (asn != 0).then_some(asn)
     }
 
-    fn country_source_fingerprint(contents: &[u8]) -> u64 {
+    fn source_fingerprint(contents: &[u8]) -> u64 {
         // FNV-1a is used only as a bounded change indicator in operator
         // status; it is not an authenticity or identity mechanism.
         contents.iter().fold(0xcbf29ce484222325, |hash, byte| {
@@ -2092,7 +2092,7 @@ mod runtime {
         }
         Ok(Some(CountryPolicy {
             entries,
-            source_fingerprint: country_source_fingerprint(contents.as_bytes()),
+            source_fingerprint: source_fingerprint(contents.as_bytes()),
             deny,
             observe,
             deny_regions,
@@ -5887,20 +5887,25 @@ mod runtime {
                 .iter()
                 .map(|path| {
                     let metadata = std::fs::metadata(path);
-                    let (status, bytes, modified_age_secs) = match metadata {
+                    let (status, bytes, modified_age_secs, source_fingerprint) = match metadata {
                         Ok(metadata) if metadata.is_file() => {
                             let age = metadata
                                 .modified()
                                 .ok()
                                 .and_then(|modified| now.duration_since(modified).ok())
                                 .map(|duration| duration.as_secs());
-                            ("ok", metadata.len().min(MAX_BLOCKLIST_BYTES), age)
+                            let bytes = metadata.len().min(MAX_BLOCKLIST_BYTES);
+                            let fingerprint = (metadata.len() <= MAX_BLOCKLIST_BYTES)
+                                .then(|| std::fs::read(path).ok())
+                                .flatten()
+                                .map(|contents| format!("{:016x}", source_fingerprint(&contents)));
+                            ("ok", bytes, age, fingerprint)
                         }
-                        Ok(_) => ("unreadable", 0, None),
+                        Ok(_) => ("unreadable", 0, None, None),
                         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                            ("missing", 0, None)
+                            ("missing", 0, None, None)
                         }
-                        Err(_) => ("unreadable", 0, None),
+                        Err(_) => ("unreadable", 0, None, None),
                     };
                     let (load_status, source_rule_count) = if disabled.contains(path) {
                         ("disabled", 0)
@@ -5918,6 +5923,7 @@ mod runtime {
                         "rule_count": source_rule_count,
                         "bytes": bytes,
                         "modified_age_secs": modified_age_secs,
+                        "source_fingerprint": source_fingerprint,
                     })
                 })
                 .collect::<Vec<_>>();
@@ -7265,6 +7271,10 @@ mod runtime {
             assert_eq!(status["disabled_source_count"], 1);
             assert_eq!(status["rule_count"], 0);
             assert_eq!(status["sources"][0]["enabled"], false);
+            assert_eq!(
+                status["sources"][0]["source_fingerprint"],
+                format!("{:016x}", source_fingerprint(b"disabled.example\n"))
+            );
             std::fs::remove_file(path).expect("remove blocklist");
         }
 

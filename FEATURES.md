@@ -198,8 +198,8 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Authenticated bounded `GET /blocklists` inspects the configured source paths,
   loaded rule count, source count, reload interval, and policy generation
   without returning source contents; each source also reports bounded file
-  status, parser load status, contributed rule count, size, and modification
-  age.
+  status, parser load status, contributed rule count, size, modification age,
+  and deterministic content fingerprint.
 - Bounded authenticated `GET /policy/status` exposes effective rule, rewrite,
   blocklist-source, profile, group, and country-entry counts without source
   paths, query names, credentials, client identities, or packet payloads; its
