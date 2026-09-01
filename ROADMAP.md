@@ -15,28 +15,19 @@ below are future capabilities, grouped by the dependency layer they extend.
 
 ## Policy and operator controls
 
-- Extend the authenticated blocklist and policy administration with richer
-  policy management beyond the current bounded source inspection and health,
-  background reload, source replacement, atomic domain/regex-rule
-  append/upsert/removal, per-source activation, read-only status, and
-  complete-snapshot reload routes.
-- Extend the authenticated profile and client-group metadata views with
-  additional policy controls beyond atomic enabled/disabled profile,
-  identity, and network scope replacement/upsert/removal operations, including
-  retained enable/disable state for profiles, groups, and identity mappings.
-- Extend the current bounded operator-managed CIDR denylist and expiring DDoS
-  breakers into a richer explainable reputation lifecycle around incident
-  review, approval, and bounded import/export. Exact-client approval, durable
-  revocation, safe recovery after restart, and active/expired incident state
-  are delivered. It must remain separate from authentication and must never
-  become an unbounded permanent blacklist.
-- Add managed GeoIP/region/ASN data lifecycle and richer country policy beyond
-  the current explicit local or hosted country/CIDR/region/ASN map labels and
-  bounded background refresh; uncertainty must remain explicit.
+- Extend the authenticated policy administration with richer query rules and
+  client/group workflows beyond the bounded source, rule, profile, identity,
+  and network-scope operations in the current baseline.
+- Add a managed reputation lifecycle around DDoS incidents: bounded review
+  queues, operator approval, export/import, durable revocation, and safe
+  recovery after restart. It must remain separate from authentication and
+  must never become an unbounded permanent blacklist.
+- Add a managed GeoIP/region/ASN data lifecycle and richer country policy
+  beyond the explicit operator-supplied map labels and bounded refresh in the
+  current baseline; uncertainty must remain explicit.
 - Add incremental background updates for deployment-managed configuration
-  sources beyond the bounded TOML policy-file reload; changes to startup-only
-  listener, transport, capture, storage, and service settings still require a
-  controlled restart.
+  sources beyond the bounded TOML policy-file reload. Listener, transport,
+  capture, storage, and service changes still require a controlled restart.
 
 ## Interception and deployment
 
@@ -52,10 +43,12 @@ below are future capabilities, grouped by the dependency layer they extend.
   redaction and deletion-verification backends beyond the current metadata-only,
   byte-bounded Proxima JSONL destination and bounded startup rotation.
 - Extend the current bounded authenticated status UI into a full optional web
-  UI beyond the current bounded status, aggregate decision statistics,
-  policy-bundle, and blocklist source activation controls.
-- Add the remaining Pi-hole/AdGuard Home policy features, including richer
-  per-client identity and group-management controls.
+  UI with richer policy editing, client/group workflows, and operational
+  diagnostics while preserving the existing authentication and response
+  bounds.
+- Add the remaining Pi-hole/AdGuard Home policy features that fit Blackhole's
+  explicit-action model, including richer per-client identity and
+  group-management controls.
 - Add a separately isolated honeypot terminal with explicit retention and
   access controls.
 - Extend the measured policy/codec WASM edge experiment with additional
