@@ -24,7 +24,7 @@ jobs:
       - run: cargo test --features perf-instrument --test resolver_fixture listener_forwards_allowed_query_to_loopback_upstream -- --nocapture
       - run: cargo test --test resolver_fixture listener_retries_a_truncated_upstream_reply_over_tcp -- --nocapture
       - run: cargo test --doc
-      - run: cargo check --no-default-features --target thumbv7m-none-eabi
+      - run: cargo build --no-default-features --target thumbv7m-none-eabi
       - run: cargo check --features tokio-compat --all-targets
       - run: cargo install cargo-audit --locked
       - run: cargo audit
@@ -47,7 +47,7 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --no-default-features --target wasm32-unknown-unknown
+      - run: cargo build --no-default-features --target wasm32-unknown-unknown
       - run: cargo check --examples
 
   fuzz:
@@ -67,7 +67,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - env:
           BLACKHOLE_SOURCE_COMMIT: ${{ github.sha }}
-        run: cargo run --release --example performance_gate > performance-gate.txt
+        run: cargo run --release --example performance_gate --features perf-instrument > performance-gate.txt
       - uses: actions/upload-artifact@v4
         with:
           name: blackhole-performance-gate-${{ github.sha }}
