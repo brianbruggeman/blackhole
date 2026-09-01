@@ -34,9 +34,9 @@ below are future capabilities, grouped by the dependency layer they extend.
 - Add managed GeoIP/region/ASN data lifecycle and richer country policy beyond
   the current explicit country/CIDR/region/ASN map labels and bounded background
   refresh; uncertainty must remain explicit.
-- Add authenticated full-configuration reload and incremental background
-  updates beyond the current in-process atomic policy-bundle and live admission
-  reload APIs.
+- Add incremental background updates for the complete operator configuration
+  beyond the current atomic policy-bundle, live admission, country-map, and
+  blocklist reload APIs.
 
 ## Interception and deployment
 
