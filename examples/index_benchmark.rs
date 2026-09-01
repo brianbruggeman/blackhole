@@ -20,6 +20,7 @@ fn rules(count: usize) -> Vec<RuleConfig> {
             client: None,
             client_cidr: None,
             client_cidrs: Vec::new(),
+            client_identity: None,
         })
         .collect()
 }
@@ -35,6 +36,7 @@ fn measure(policy: &ReferencePolicy, count: usize, hit: bool, samples: usize) ->
         qtype: 1,
         qclass: 1,
         client: None,
+        client_identity: None,
     };
     let start = Instant::now();
     let mut observed = 0u32;

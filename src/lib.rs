@@ -1252,6 +1252,7 @@ mod runtime {
                 client: None,
                 client_cidr: None,
                 client_cidrs: Vec::new(),
+                client_identity: None,
             });
             rules.push(RuleConfig {
                 id: id.saturating_sub(1),
@@ -1263,6 +1264,7 @@ mod runtime {
                 client: None,
                 client_cidr: None,
                 client_cidrs: Vec::new(),
+                client_identity: None,
             });
         }
         Ok(rules)
@@ -1725,6 +1727,7 @@ mod runtime {
                         client: scope.client,
                         client_cidr: None,
                         client_cidrs: scope.client_cidrs.clone(),
+                        client_identity: None,
                     });
                 }
             }
@@ -3449,6 +3452,7 @@ mod runtime {
                     qtype: query.qtype,
                     qclass: query.qclass,
                     client,
+                    client_identity: None,
                 })
             });
             reference.or_else(|| {
@@ -3885,7 +3889,7 @@ mod runtime {
         /// request, so configured rules remain authoritative at the raw boundary.
         #[must_use]
         pub fn action_for_view(&self, query: QueryView<'_>) -> Action {
-            self.action_for_view_with_client(query, None)
+            self.action_for_view_with_client_identity(query, None, None)
         }
 
         /// Return the authoritative action while retaining the listener-owned
@@ -3896,6 +3900,19 @@ mod runtime {
             &self,
             query: QueryView<'_>,
             client: Option<std::net::IpAddr>,
+        ) -> Action {
+            self.action_for_view_with_client_identity(query, client, None)
+        }
+
+        /// Return the authoritative action with a listener-owned identity
+        /// label. The borrowed label is used only for this decision and is
+        /// never retained by policy state, telemetry, or logs.
+        #[must_use]
+        pub fn action_for_view_with_client_identity(
+            &self,
+            query: QueryView<'_>,
+            client: Option<std::net::IpAddr>,
+            client_identity: Option<&str>,
         ) -> Action {
             let _reload = self.reload_lock.read().expect("reload lock");
             let name = query.name.to_dotted();
@@ -3915,6 +3932,7 @@ mod runtime {
                     qtype: query.qtype,
                     qclass: query.qclass,
                     client,
+                    client_identity,
                 })
             });
             reference
@@ -4264,6 +4282,10 @@ mod runtime {
             let blocklist_paths = self.blocklist_paths.lock().expect("blocklist paths lock");
             let profiles = self.profiles.read().expect("profiles lock");
             let client_groups = self.client_groups.read().expect("client groups lock");
+            let identity_rules = base_rules
+                .iter()
+                .filter(|rule| rule.client_identity.is_some())
+                .count();
             let rewrites = self.rewrites.read().expect("rewrites lock");
             let country_policy = self.country_policy.read().expect("country policy lock");
             serde_json::json!({
@@ -4275,6 +4297,7 @@ mod runtime {
                 "rewrites": rewrites.len(),
                 "profiles": profiles.len(),
                 "client_groups": client_groups.len(),
+                "identity_rules": identity_rules,
                 "country_entries": country_policy.as_ref().map_or(0, |policy| policy.entries.len()),
                 "country_deny_rules": country_policy.as_ref().map_or(0, |policy| policy.deny.len()),
                 "country_observe_rules": country_policy.as_ref().map_or(0, |policy| policy.observe.len()),
@@ -4312,6 +4335,7 @@ mod runtime {
                     "client": rule.client,
                     "client_cidr": rule.client_cidr,
                     "client_cidrs": rule.client_cidrs,
+                    "client_identity": rule.client_identity,
                 })).collect::<Vec<_>>(),
                 "regex_rules": regex_rules.iter().map(|rule| serde_json::json!({
                     "id": rule.id,
@@ -5045,6 +5069,7 @@ mod runtime {
                 client: None,
                 client_cidr: None,
                 client_cidrs: Vec::new(),
+                client_identity: None,
             }];
             let policy = Policy::new(config).expect("initial policy");
             let cached_key = CacheKey {
@@ -5084,6 +5109,7 @@ mod runtime {
                     client: None,
                     client_cidr: None,
                     client_cidrs: Vec::new(),
+                    client_identity: None,
                 }]),
                 Ok(ReloadState::Published)
             );
@@ -5115,6 +5141,7 @@ mod runtime {
                     client: None,
                     client_cidr: None,
                     client_cidrs: Vec::new(),
+                    client_identity: None,
                 },
                 RuleConfig {
                     id: 3,
@@ -5126,6 +5153,7 @@ mod runtime {
                     client: None,
                     client_cidr: None,
                     client_cidrs: Vec::new(),
+                    client_identity: None,
                 },
             ];
             assert_eq!(
@@ -5251,6 +5279,7 @@ mod runtime {
                     client: None,
                     client_cidr: None,
                     client_cidrs: Vec::new(),
+                    client_identity: None,
                 }]),
                 Ok(ReloadState::Published)
             );
@@ -5383,6 +5412,7 @@ mod runtime {
                 client: None,
                 client_cidr: None,
                 client_cidrs: Vec::new(),
+                client_identity: None,
             };
             let profile = ServiceProfileConfig {
                 id: 70_002,
@@ -5457,6 +5487,7 @@ mod runtime {
                 client: None,
                 client_cidr: None,
                 client_cidrs: Vec::new(),
+                client_identity: None,
             }];
             let policy = Policy::new(config).expect("valid policy");
             let query = proxima_dns::DnsQuery {
@@ -5650,6 +5681,7 @@ mod runtime {
                 client: None,
                 client_cidr: None,
                 client_cidrs: Vec::new(),
+                client_identity: None,
             }];
             let policy = Policy::new(config).unwrap();
             let query = |name: &str| proxima_dns::DnsQuery {
@@ -5677,6 +5709,7 @@ mod runtime {
                 client: None,
                 client_cidr: None,
                 client_cidrs: Vec::new(),
+                client_identity: None,
             }];
             let policy = Policy::new(config).expect("valid policy");
             let packet = [
@@ -5701,6 +5734,7 @@ mod runtime {
                 client: Some("192.0.2.10".parse().unwrap()),
                 client_cidr: None,
                 client_cidrs: Vec::new(),
+                client_identity: None,
             }];
             let policy = Policy::new(config).expect("valid policy");
             let packet = [
@@ -5978,6 +6012,7 @@ mod runtime {
                 client: None,
                 client_cidr: None,
                 client_cidrs: Vec::new(),
+                client_identity: None,
             }];
             config.policy.regex_rules = vec![RegexRuleConfig {
                 id: 2,
@@ -6158,6 +6193,7 @@ mod runtime {
                     client: None,
                     client_cidr: None,
                     client_cidrs: Vec::new(),
+                    client_identity: None,
                 }];
                 let policy = Policy::new(config).expect("valid policy");
                 match action {
@@ -6208,6 +6244,7 @@ mod runtime {
                 client: None,
                 client_cidr: None,
                 client_cidrs: Vec::new(),
+                client_identity: None,
             }];
             let policy = Policy::new(config).expect("valid rewrites");
             let query = |name: &str, qtype: u16| proxima_dns::DnsQuery {
@@ -6899,6 +6936,7 @@ mod runtime {
                 client: None,
                 client_cidr: None,
                 client_cidrs: Vec::new(),
+                client_identity: None,
             }];
             let policy = Policy::new(config).expect("valid policy");
             let query = proxima_dns::DnsQuery {
@@ -6927,6 +6965,7 @@ mod runtime {
                 client: None,
                 client_cidr: None,
                 client_cidrs: Vec::new(),
+                client_identity: None,
             }];
             let policy = Policy::new(config).expect("valid policy");
             let query = proxima_dns::DnsQuery {
@@ -6954,6 +6993,7 @@ mod runtime {
                 client: None,
                 client_cidr: None,
                 client_cidrs: Vec::new(),
+                client_identity: None,
             }];
             let policy = Policy::new(config).expect("valid policy");
             let answer = policy
@@ -7234,6 +7274,7 @@ mod runtime {
                     client: None,
                     client_cidr: None,
                     client_cidrs: Vec::new(),
+                    client_identity: None,
                 }])
                 .expect("rules reload");
             policy

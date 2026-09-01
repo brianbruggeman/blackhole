@@ -902,6 +902,7 @@ mod tests {
             client: None,
             client_cidr: None,
             client_cidrs: Vec::new(),
+            client_identity: None,
         }];
         config.policy.regex_rules = (0..80)
             .map(|id| RegexRuleConfig {
@@ -1398,6 +1399,7 @@ mod tests {
             client: None,
             client_cidr: None,
             client_cidrs: Vec::new(),
+            client_identity: None,
         };
         assert_eq!(
             policy.reload_rules(&[conflicting_domain_rule]),
@@ -1512,6 +1514,7 @@ mod tests {
             client: None,
             client_cidr: None,
             client_cidrs: Vec::new(),
+            client_identity: None,
         }];
         let policy = Arc::new(Policy::new(config).expect("valid rewrite policy"));
         let handler = AdminHandler::new(Arc::clone(&policy));

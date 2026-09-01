@@ -39,6 +39,7 @@ impl EdgePolicy {
             qtype: query.qtype,
             qclass: query.qclass,
             client,
+            client_identity: None,
         }))
     }
 }
@@ -128,6 +129,7 @@ mod tests {
             client: None,
             client_cidr: None,
             client_cidrs: Vec::new(),
+            client_identity: None,
         }];
         let policy = EdgePolicy::new(&rules).expect("valid edge policy");
         assert_eq!(

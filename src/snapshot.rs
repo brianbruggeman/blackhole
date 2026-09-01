@@ -67,6 +67,7 @@ mod tests {
             client: None,
             client_cidr: None,
             client_cidrs: Vec::new(),
+            client_identity: None,
         }
     }
 
@@ -88,6 +89,7 @@ mod tests {
                     qtype: 1,
                     qclass: 1,
                     client: None,
+                    client_identity: None,
                 })
                 .is_some()
         }));
@@ -98,6 +100,7 @@ mod tests {
                     qtype: 1,
                     qclass: 1,
                     client: None,
+                    client_identity: None,
                 })
                 .is_none()
         }));
@@ -117,6 +120,7 @@ mod tests {
                     qtype: 1,
                     qclass: 1,
                     client: None,
+                    client_identity: None,
                 })
                 .is_some()
         }));
@@ -127,6 +131,7 @@ mod tests {
                     qtype: 1,
                     qclass: 1,
                     client: None,
+                    client_identity: None,
                 })
                 .is_none()
         }));
@@ -148,6 +153,7 @@ mod tests {
                         qtype: 1,
                         qclass: 1,
                         client: None,
+                        client_identity: None,
                     })
                     .is_some()
             }));

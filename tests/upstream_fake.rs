@@ -221,6 +221,7 @@ fn policy_with_action(mode: ReplyMode, action: Action) -> (Policy, FakeSocket) {
         client: None,
         client_cidr: None,
         client_cidrs: Vec::new(),
+        client_identity: None,
     }];
     config.upstream = Some(UpstreamConfig {
         resolver_ip: resolver_addr().ip().to_string(),

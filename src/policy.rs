@@ -8,6 +8,7 @@ use serde::Deserialize;
 pub const MAX_RULES: usize = 100_000;
 pub const MAX_DOMAIN_BYTES: usize = 253;
 pub const MAX_CLIENT_CIDRS: usize = 64;
+pub const MAX_CLIENT_IDENTITY_BYTES: usize = 128;
 
 /// Actions understood by the reference matcher. Rendering belongs to the
 /// transport edge and is deliberately not part of this module.
@@ -39,6 +40,10 @@ pub struct RuleConfig {
     pub client_cidr: Option<String>,
     #[serde(default)]
     pub client_cidrs: Vec<String>,
+    /// An opaque identity label supplied by the active transport adapter.
+    /// Labels are matched transiently and are never retained by the policy.
+    #[serde(default)]
+    pub client_identity: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,6 +52,7 @@ pub struct QueryContext<'query> {
     pub qtype: u16,
     pub qclass: u16,
     pub client: Option<IpAddr>,
+    pub client_identity: Option<&'query str>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,6 +67,7 @@ pub enum PolicyError {
     InvalidDomainName { id: u32, domain: String },
     InvalidWildcard { id: u32, domain: String },
     InvalidClientCidr { id: u32, value: String },
+    InvalidClientIdentity { id: u32, value: String },
     DuplicateRule { id: u32 },
     TooManyRules { max: usize },
     DomainTooLong { id: u32 },
@@ -91,6 +98,12 @@ impl core::fmt::Display for PolicyError {
             }
             Self::InvalidClientCidr { id, value } => {
                 write!(formatter, "rule {id} has an invalid client CIDR: {value}")
+            }
+            Self::InvalidClientIdentity { id, value } => {
+                write!(
+                    formatter,
+                    "rule {id} has an invalid client identity: {value}"
+                )
             }
             Self::DuplicateRule { id } => write!(formatter, "duplicate rule id: {id}"),
             Self::TooManyRules { max } => write!(formatter, "rule count exceeds {max}"),
@@ -132,6 +145,7 @@ struct Rule {
     qtype: Option<u16>,
     qclass: Option<u16>,
     client: Option<IpAddr>,
+    client_identity: Option<String>,
     client_networks: Vec<IpNetwork>,
     wildcard: bool,
 }
@@ -291,6 +305,23 @@ impl ReferencePolicy {
                     }
                 })?);
             }
+            let client_identity = config
+                .client_identity
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned);
+            if config.client_identity.is_some()
+                && (client_identity.is_none()
+                    || client_identity.as_ref().is_some_and(|value| {
+                        value.len() > MAX_CLIENT_IDENTITY_BYTES || !value.is_ascii()
+                    }))
+            {
+                return Err(PolicyError::InvalidClientIdentity {
+                    id: config.id,
+                    value: config.client_identity.clone().unwrap_or_default(),
+                });
+            }
             rules.push(Rule {
                 id: config.id,
                 domain,
@@ -300,6 +331,7 @@ impl ReferencePolicy {
                 qclass: config.qclass,
                 client: config.client,
                 client_networks,
+                client_identity,
                 wildcard,
             });
         }
@@ -391,6 +423,10 @@ impl Rule {
             && self
                 .client
                 .is_none_or(|client| Some(client) == query.client)
+            && self
+                .client_identity
+                .as_deref()
+                .is_none_or(|identity| Some(identity) == query.client_identity)
             && (self.client_networks.is_empty()
                 || query.client.is_some_and(|client| {
                     self.client_networks
@@ -414,7 +450,9 @@ impl Rule {
     }
 
     fn client_specificity(&self) -> u16 {
-        if self.client.is_some() {
+        if self.client_identity.is_some() {
+            130
+        } else if self.client.is_some() {
             129
         } else {
             self.client_networks
@@ -457,6 +495,7 @@ mod tests {
             client: None,
             client_cidr: None,
             client_cidrs: Vec::new(),
+            client_identity: None,
         }
     }
 
@@ -466,6 +505,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             client: None,
+            client_identity: None,
         }
     }
 
@@ -530,6 +570,51 @@ mod tests {
                 .map(|decision| decision.rule_id),
             Some(1)
         );
+    }
+
+    #[test]
+    fn client_identity_scope_matches_transient_adapter_label() {
+        let mut scoped = rule(6, "service.example", Action::Reject);
+        scoped.client_identity = Some("family".into());
+        let policy = ReferencePolicy::new(&[scoped]).expect("valid identity rule");
+        assert_eq!(
+            policy.decide(QueryContext {
+                client_identity: Some("family"),
+                ..query("service.example")
+            }),
+            Some(Decision {
+                rule_id: 6,
+                action: Action::Reject,
+            })
+        );
+        assert_eq!(
+            policy.decide(QueryContext {
+                client_identity: Some("guest"),
+                ..query("service.example")
+            }),
+            None
+        );
+        assert_eq!(
+            policy.decide(query("service.example")),
+            None,
+            "an identity-scoped rule must not match an unidentified caller"
+        );
+    }
+
+    #[test]
+    fn client_identity_configuration_is_bounded_and_ascii() {
+        let mut invalid = rule(7, "service.example", Action::Reject);
+        invalid.client_identity = Some(" ".into());
+        assert!(matches!(
+            ReferencePolicy::new(&[invalid]),
+            Err(PolicyError::InvalidClientIdentity { .. })
+        ));
+        let mut oversized = rule(8, "service.example", Action::Reject);
+        oversized.client_identity = Some("x".repeat(MAX_CLIENT_IDENTITY_BYTES + 1));
+        assert!(matches!(
+            ReferencePolicy::new(&[oversized]),
+            Err(PolicyError::InvalidClientIdentity { .. })
+        ));
     }
 
     #[test]
@@ -723,7 +808,8 @@ mod tests {
                     name: "example",
                     qtype: 28,
                     qclass: 3,
-                    client: None
+                    client: None,
+                    client_identity: None,
                 })
                 .unwrap()
                 .rule_id,
@@ -735,7 +821,8 @@ mod tests {
                     name: "example",
                     qtype: 28,
                     qclass: 1,
-                    client: None
+                    client: None,
+                    client_identity: None,
                 })
                 .unwrap()
                 .rule_id,
@@ -747,7 +834,8 @@ mod tests {
                     name: "example",
                     qtype: 1,
                     qclass: 3,
-                    client: None
+                    client: None,
+                    client_identity: None,
                 })
                 .unwrap()
                 .rule_id,
@@ -809,6 +897,74 @@ mod tests {
                 .rule_id,
             2
         );
+    }
+
+    #[test]
+    fn opaque_client_identity_is_borrowed_and_exactly_matched() {
+        let mut identity_rule = rule(1, "family.example", Action::Reject);
+        identity_rule.client_identity = Some("family-router".into());
+        let policy = ReferencePolicy::new(&[identity_rule.clone()]).unwrap();
+        let indexed = policy.compile_indexed();
+
+        let matching = QueryContext {
+            client_identity: Some("family-router"),
+            ..query("family.example")
+        };
+        let different = QueryContext {
+            client_identity: Some("guest-router"),
+            ..query("family.example")
+        };
+        assert_eq!(
+            policy.decide(matching),
+            Some(Decision {
+                rule_id: 1,
+                action: Action::Reject
+            })
+        );
+        assert_eq!(
+            indexed.decide(matching),
+            Some(Decision {
+                rule_id: 1,
+                action: Action::Reject
+            })
+        );
+        assert_eq!(policy.decide(different), None);
+        assert_eq!(policy.decide(query("family.example")), None);
+    }
+
+    #[test]
+    fn client_identity_specificity_beats_unscoped_rule() {
+        let broad = rule(1, "example", Action::Drop);
+        let mut identity = rule(2, "example", Action::Reject);
+        identity.client_identity = Some("trusted".into());
+        let policy = ReferencePolicy::new(&[broad, identity]).unwrap();
+        assert_eq!(
+            policy
+                .decide(QueryContext {
+                    client_identity: Some("trusted"),
+                    ..query("example")
+                })
+                .unwrap()
+                .rule_id,
+            2
+        );
+    }
+
+    #[test]
+    fn client_identity_is_bounded_and_ascii() {
+        let mut too_long = rule(1, "example", Action::Drop);
+        too_long.client_identity = Some("x".repeat(MAX_CLIENT_IDENTITY_BYTES + 1));
+        assert!(matches!(
+            ReferencePolicy::new(&[too_long]),
+            Err(PolicyError::InvalidClientIdentity { id: 1, .. })
+        ));
+
+        let mut non_ascii = rule(2, "example", Action::Drop);
+        non_ascii.client_identity = Some("café".into());
+        assert!(matches!(
+            ReferencePolicy::new(&[non_ascii]),
+            Err(PolicyError::InvalidClientIdentity { id: 2, .. })
+        ));
     }
 
     #[test]

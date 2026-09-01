@@ -48,6 +48,7 @@ fn rules(count: usize) -> Vec<RuleConfig> {
             client: None,
             client_cidr: None,
             client_cidrs: Vec::new(),
+            client_identity: None,
         })
         .collect()
 }
@@ -90,6 +91,7 @@ fn main() {
         qtype: 1,
         qclass: 1,
         client: None,
+        client_identity: None,
     };
     let matches_per_sample: usize = 100;
     let matching = measure(sample_count, || {
