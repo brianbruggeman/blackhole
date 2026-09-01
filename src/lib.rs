@@ -576,6 +576,8 @@ mod runtime {
         pub rewrites: Vec<RewriteConfig>,
         #[serde(default)]
         pub profiles: Vec<ServiceProfileConfig>,
+        #[serde(default)]
+        pub client_groups: Vec<ClientGroupConfig>,
         #[serde(default = "default_action")]
         pub default_action: Action,
     }
@@ -589,6 +591,7 @@ mod runtime {
                 blocklists: Vec::new(),
                 rewrites: Vec::new(),
                 profiles: Vec::new(),
+                client_groups: Vec::new(),
                 default_action: default_action(),
             }
         }
@@ -629,6 +632,8 @@ mod runtime {
         pub domains: Vec<String>,
         pub action: Action,
         #[serde(default)]
+        pub groups: Vec<String>,
+        #[serde(default)]
         pub priority: i32,
         #[serde(default)]
         pub client_cidrs: Vec<String>,
@@ -636,6 +641,12 @@ mod runtime {
         pub qtype: Option<u16>,
         #[serde(default)]
         pub qclass: Option<u16>,
+    }
+
+    #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+    pub struct ClientGroupConfig {
+        pub name: String,
+        pub client_cidrs: Vec<String>,
     }
 
     #[derive(Debug, Clone, Deserialize)]
@@ -1016,15 +1027,48 @@ mod runtime {
     const MAX_REWRITES: usize = 10_000;
 
     const MAX_PROFILES: usize = 256;
+    const MAX_CLIENT_GROUPS: usize = 256;
 
     fn compile_profiles(
         profiles: &[ServiceProfileConfig],
+        groups: &[ClientGroupConfig],
     ) -> Result<Vec<RuleConfig>, policy::PolicyError> {
         if profiles.len() > MAX_PROFILES {
             return Err(policy::PolicyError::InvalidProfile {
                 name: "<table>".into(),
                 reason: format!("profile count exceeds {MAX_PROFILES}"),
             });
+        }
+        let mut group_map = std::collections::BTreeMap::new();
+        if groups.len() > MAX_CLIENT_GROUPS {
+            return Err(policy::PolicyError::InvalidProfile {
+                name: "<groups>".into(),
+                reason: format!("client-group count exceeds {MAX_CLIENT_GROUPS}"),
+            });
+        }
+        for group in groups {
+            let name = group.name.trim();
+            if name.is_empty() || !name.is_ascii() {
+                return Err(policy::PolicyError::InvalidProfile {
+                    name: group.name.clone(),
+                    reason: "group name must be non-empty ASCII".into(),
+                });
+            }
+            if group.client_cidrs.is_empty() {
+                return Err(policy::PolicyError::InvalidProfile {
+                    name: group.name.clone(),
+                    reason: "group must contain at least one client CIDR".into(),
+                });
+            }
+            if group_map
+                .insert(name.to_ascii_lowercase(), group.client_cidrs.clone())
+                .is_some()
+            {
+                return Err(policy::PolicyError::InvalidProfile {
+                    name: group.name.clone(),
+                    reason: "group name must be unique".into(),
+                });
+            }
         }
         let mut names = BTreeSet::new();
         let mut rules = Vec::new();
@@ -1050,31 +1094,59 @@ mod runtime {
                     reason: format!("combined domain count exceeds {}", policy::MAX_RULES),
                 });
             }
-            for (offset, raw_domain) in profile.domains.iter().enumerate() {
-                let id = profile.id.checked_add(offset as u32).ok_or_else(|| {
-                    policy::PolicyError::InvalidProfile {
-                        name: profile.name.clone(),
-                        reason: "id range overflows".into(),
+            if !profile.groups.is_empty() && !profile.client_cidrs.is_empty() {
+                return Err(policy::PolicyError::InvalidProfile {
+                    name: profile.name.clone(),
+                    reason: "groups and client_cidrs are mutually exclusive".into(),
+                });
+            }
+            let group_scopes = if profile.groups.is_empty() {
+                vec![profile.client_cidrs.clone()]
+            } else {
+                profile
+                    .groups
+                    .iter()
+                    .map(|group| {
+                        group_map
+                            .get(&group.trim().to_ascii_lowercase())
+                            .cloned()
+                            .ok_or_else(|| policy::PolicyError::InvalidProfile {
+                                name: profile.name.clone(),
+                                reason: format!("unknown client group {group}"),
+                            })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+            };
+            for (group_index, client_cidrs) in group_scopes.iter().enumerate() {
+                let group_offset = (group_index * profile.domains.len()) as u32;
+                for (offset, raw_domain) in profile.domains.iter().enumerate() {
+                    let id = profile
+                        .id
+                        .checked_add(group_offset)
+                        .and_then(|id| id.checked_add(offset as u32))
+                        .ok_or_else(|| policy::PolicyError::InvalidProfile {
+                            name: profile.name.clone(),
+                            reason: "id range overflows".into(),
+                        })?;
+                    let domain = normalize(raw_domain);
+                    if domain.is_empty() || domain.len() > policy::MAX_DOMAIN_BYTES {
+                        return Err(policy::PolicyError::InvalidProfile {
+                            name: profile.name.clone(),
+                            reason: format!("invalid domain {domain}"),
+                        });
                     }
-                })?;
-                let domain = normalize(raw_domain);
-                if domain.is_empty() || domain.len() > policy::MAX_DOMAIN_BYTES {
-                    return Err(policy::PolicyError::InvalidProfile {
-                        name: profile.name.clone(),
-                        reason: format!("invalid domain {domain}"),
+                    rules.push(RuleConfig {
+                        id,
+                        domain,
+                        action: profile.action,
+                        priority: profile.priority,
+                        qtype: profile.qtype,
+                        qclass: profile.qclass,
+                        client: None,
+                        client_cidr: None,
+                        client_cidrs: client_cidrs.clone(),
                     });
                 }
-                rules.push(RuleConfig {
-                    id,
-                    domain,
-                    action: profile.action,
-                    priority: profile.priority,
-                    qtype: profile.qtype,
-                    qclass: profile.qclass,
-                    client: None,
-                    client_cidr: None,
-                    client_cidrs: profile.client_cidrs.clone(),
-                });
             }
         }
         Ok(rules)
@@ -1402,7 +1474,8 @@ mod runtime {
                     reason: "client abuse limits must be non-zero".into(),
                 });
             }
-            let profile_rules = compile_profiles(&config.policy.profiles)?;
+            let profile_rules =
+                compile_profiles(&config.policy.profiles, &config.policy.client_groups)?;
             config.policy.rules.extend(profile_rules);
             let base_rules = config.policy.rules.clone();
             let blocklist_rules = load_blocklists(&config.policy.blocklists)?;
@@ -3805,6 +3878,7 @@ mod runtime {
                 name: "Adult content".into(),
                 domains: vec!["ads.example".into(), "tracking.example".into()],
                 action: Action::Nxdomain,
+                groups: Vec::new(),
                 priority: 10,
                 client_cidrs: vec!["192.0.2.0/24".into()],
                 qtype: Some(1),
@@ -3848,6 +3922,95 @@ mod runtime {
         }
 
         #[test]
+        fn client_groups_assign_one_profile_to_multiple_networks() {
+            let mut config = Config::default();
+            config.policy.client_groups = vec![
+                ClientGroupConfig {
+                    name: "family".into(),
+                    client_cidrs: vec!["192.0.2.0/24".into(), "2001:db8:1::/64".into()],
+                },
+                ClientGroupConfig {
+                    name: "guest".into(),
+                    client_cidrs: vec!["198.51.100.0/24".into()],
+                },
+            ];
+            config.policy.profiles = vec![ServiceProfileConfig {
+                id: 50_000,
+                name: "family-blocks".into(),
+                domains: vec!["ads.example".into()],
+                action: Action::Nxdomain,
+                groups: vec!["FAMILY".into(), "guest".into()],
+                priority: 10,
+                client_cidrs: Vec::new(),
+                qtype: None,
+                qclass: None,
+            }];
+            let policy = Policy::new(config).expect("valid client groups");
+            let query = proxima_dns::DnsQuery {
+                id: 7,
+                recursion_desired: true,
+                name: "ads.example.".into(),
+                qtype: 1,
+                qclass: 1,
+            };
+            for client in ["192.0.2.53", "2001:db8:1::53", "198.51.100.53"] {
+                assert_eq!(
+                    policy
+                        .decision(&query, Some(client.parse().unwrap()))
+                        .expect("group-scoped decision")
+                        .action,
+                    Action::Nxdomain
+                );
+            }
+            assert!(
+                policy
+                    .decision(&query, Some("203.0.113.53".parse().unwrap()))
+                    .is_none()
+            );
+        }
+
+        #[test]
+        fn client_groups_reject_unknown_or_ambiguous_scopes() {
+            let mut unknown = Config::default();
+            unknown.policy.profiles = vec![ServiceProfileConfig {
+                id: 1,
+                name: "ads".into(),
+                domains: vec!["ads.example".into()],
+                action: Action::Nxdomain,
+                groups: vec!["missing".into()],
+                priority: 0,
+                client_cidrs: Vec::new(),
+                qtype: None,
+                qclass: None,
+            }];
+            assert!(matches!(
+                Policy::new(unknown),
+                Err(policy::PolicyError::InvalidProfile { .. })
+            ));
+
+            let mut ambiguous = Config::default();
+            ambiguous.policy.client_groups = vec![ClientGroupConfig {
+                name: "family".into(),
+                client_cidrs: vec!["192.0.2.0/24".into()],
+            }];
+            ambiguous.policy.profiles = vec![ServiceProfileConfig {
+                id: 2,
+                name: "ads".into(),
+                domains: vec!["ads.example".into()],
+                action: Action::Nxdomain,
+                groups: vec!["family".into()],
+                priority: 0,
+                client_cidrs: vec!["198.51.100.0/24".into()],
+                qtype: None,
+                qclass: None,
+            }];
+            assert!(matches!(
+                Policy::new(ambiguous),
+                Err(policy::PolicyError::InvalidProfile { .. })
+            ));
+        }
+
+        #[test]
         fn service_profiles_reject_duplicate_names_and_invalid_domains() {
             let mut config = Config::default();
             config.policy.profiles = vec![
@@ -3856,6 +4019,7 @@ mod runtime {
                     name: "ads".into(),
                     domains: vec!["ads.example".into()],
                     action: Action::Nxdomain,
+                    groups: Vec::new(),
                     priority: 0,
                     client_cidrs: Vec::new(),
                     qtype: None,
@@ -3866,6 +4030,7 @@ mod runtime {
                     name: "ADS".into(),
                     domains: vec!["tracking.example".into()],
                     action: Action::Nxdomain,
+                    groups: Vec::new(),
                     priority: 0,
                     client_cidrs: Vec::new(),
                     qtype: None,
@@ -3888,6 +4053,7 @@ mod runtime {
                     name: "first".into(),
                     domains: vec!["first.example".into(); per_profile],
                     action: Action::Nxdomain,
+                    groups: Vec::new(),
                     priority: 0,
                     client_cidrs: Vec::new(),
                     qtype: None,
@@ -3898,6 +4064,7 @@ mod runtime {
                     name: "second".into(),
                     domains: vec!["second.example".into(); per_profile],
                     action: Action::Nxdomain,
+                    groups: Vec::new(),
                     priority: 0,
                     client_cidrs: Vec::new(),
                     qtype: None,
