@@ -386,12 +386,16 @@ async fn listener_serves_local_rewrite_on_the_real_udp_path() {
 #[proxima::test]
 async fn listener_enforces_service_profile_on_the_real_udp_path() {
     let mut config = Config::default();
+    config.policy.client_groups = vec![blackhole::ClientGroupConfig {
+        name: "loopback".into(),
+        client_cidrs: vec!["127.0.0.0/8".into()],
+    }];
     config.policy.profiles = vec![blackhole::ServiceProfileConfig {
         id: 40_000,
         name: "telemetry".into(),
         domains: vec!["ads.example".into()],
         action: Action::Nxdomain,
-        groups: Vec::new(),
+        groups: vec!["loopback".into()],
         priority: 10,
         client_cidrs: Vec::new(),
         qtype: None,
