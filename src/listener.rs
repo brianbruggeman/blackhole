@@ -105,6 +105,13 @@ async fn decide<'a>(
         Ok(view) => view,
         Err(error) => {
             policy.observe_failure(error.telemetry_cause());
+            let client = match peer.as_ref() {
+                Some(PeerInfo::Tcp(address)) => Some(address.ip()),
+                _ => None,
+            };
+            policy
+                .record_adapter_abuse(client, error.telemetry_cause())
+                .await;
             let _ = state.transition(Event::Drop(DropReason::Malformed));
             return Ok(None);
         }
@@ -503,5 +510,34 @@ mod tests {
         assert_eq!(samples.len(), 1);
         assert!(samples[0].is_finite());
         assert!(samples[0] >= 0.0);
+    }
+
+    #[test]
+    fn identified_parser_failures_feed_the_bounded_abuse_breaker() {
+        let causes = Arc::new(Mutex::new(Vec::new()));
+        let mut config = Config::default();
+        config.admission.max_client_abuse_violations = 2;
+        let policy = Policy::new(config)
+            .expect("valid admission config")
+            .with_telemetry(Arc::new(FailureCollector(Arc::clone(&causes))));
+        let peer = Some(PeerInfo::Tcp("192.0.2.10:5353".parse().unwrap()));
+        for _ in 0..2 {
+            let result = futures::executor::block_on(decide(
+                &policy,
+                DecisionState::received(&[0; 11]),
+                &[0; 11],
+                peer.clone(),
+                false,
+            ))
+            .expect("malformed input is dropped");
+            assert!(result.is_none());
+        }
+        assert!(
+            causes
+                .lock()
+                .expect("failure labels lock")
+                .iter()
+                .any(|cause| cause == "client_abuse_breaker_open")
+        );
     }
 }

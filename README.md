@@ -72,6 +72,9 @@ failures through Proxima's `CircuitBreaker` state machine and permits stale
 answers only during its configured stale window.
 Repeated per-client rate-limit violations open a bounded temporary abuse
 breaker; unidentified callers are not assigned a shared abuse identity.
+Identified malformed-query floods also feed that same bounded client/network
+breaker using parser failure causes only; malformed wire payloads are never
+retained.
 Operators can also set `[admission].deny_client_cidrs` to a bounded list of
 IPv4/IPv6 CIDRs (use `/32` or `/128` for one address); those clients receive
 REFUSED before policy matching, rate accounting, or forwarding. The denylist

@@ -4808,6 +4808,24 @@ mod runtime {
             exact_opened || network_opened
         }
 
+        /// Feed adapter-level malformed traffic into the same bounded abuse
+        /// breaker as rate and response-budget violations. The listener owns
+        /// peer attribution, so policy receives only the address and stable
+        /// failure cause; no malformed payload is retained.
+        pub(crate) async fn record_adapter_abuse(
+            &self,
+            client: Option<IpAddr>,
+            cause: &'static str,
+        ) {
+            if self.record_client_abuse(client) {
+                self.observe_failure("client_abuse_breaker_open");
+                self.observe_failure(cause);
+                if let Some(client) = client {
+                    self.record_abuse_incident(client, cause).await;
+                }
+            }
+        }
+
         /// Restore an active persisted incident without replaying a violation
         /// window. Both the exact client and its configured network are
         /// blocked so a restart cannot silently reopen the incident's path.

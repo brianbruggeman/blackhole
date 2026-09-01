@@ -79,6 +79,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - A bounded per-client abuse breaker that temporarily sheds clients which
   repeatedly exceed the configured query-rate or encoded-response-byte budget,
   without affecting unidentified callers.
+- Identified malformed-query failures feed the same bounded client/network
+  abuse breaker using stable parser causes, without retaining malformed wire
+  payloads.
 - A bounded network abuse breaker that temporarily sheds the configured IPv4
   or IPv6 client network after repeated aggregate violations, without affecting
   unrelated networks or unidentified callers.
