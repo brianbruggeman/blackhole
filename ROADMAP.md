@@ -28,8 +28,8 @@ below are future capabilities, grouped by the dependency layer they extend.
   per-client identity and network policy controls beyond the current atomic
   profile replacement and client-group upsert/removal operations.
 - Extend adaptive amplification controls for repeated abusive patterns beyond
-  the current per-query response-ratio cap, per-client admission limits, and
-  bounded rate/response-budget abuse breaker.
+  the current per-query response-ratio cap, aggregate/per-client admission
+  limits, and bounded rate/response-budget abuse breaker.
 - Add managed GeoIP/region/ASN data lifecycle and richer country policy beyond
   the current explicit country-to-CIDR map; the current optional map freshness
   bound is the first lifecycle safeguard, and uncertainty must remain explicit.

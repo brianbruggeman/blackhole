@@ -48,6 +48,9 @@ breaker; unidentified callers are not assigned a shared abuse identity.
 Encoded responses also consume a bounded per-client byte budget per second;
 when it is exhausted, the listener sheds that client's response rather than
 amplifying the traffic pattern.
+The aggregate `admission.max_response_bytes_per_second` budget also caps all
+encoded DNS egress, including unidentified callers, before transport write;
+its default is 16 MiB per second.
 The network-scoped breaker aggregates those violations across configurable
 IPv4/IPv6 prefixes (defaults `/24` and `/64`) and sheds only the offending
 network during its cooldown. A separate bounded global queries-per-second
