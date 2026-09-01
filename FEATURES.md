@@ -28,6 +28,9 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   with bounded domains, optional IPv4/IPv6 client-network scopes, stable
   generated IDs, independent qtype/qclass filters, and duplicate-name
   rejection.
+- Named client groups assign bounded IPv4/IPv6 CIDR sets to service profiles;
+  one profile may target multiple groups, with unknown or ambiguous scopes
+  rejected before publication.
 - Synthetic IPv4/IPv6 honeypot answers with configurable TTL.
 - Configured upstream pass-through for `pass` and `observe`, after local
   rewrites; explicit `forward` remains a distinct fail-closed action.

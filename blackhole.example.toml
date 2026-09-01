@@ -44,6 +44,12 @@ ttl = 30
 # rules with a higher effective precedence still win.
 # A rule can instead use client_cidrs = ["192.0.2.0/24", "2001:db8::/32"]
 # for a bounded multi-network client scope.
+# Named groups can be reused by multiple profiles:
+# [[policy.client_groups]]
+# name = "family"
+# client_cidrs = ["192.0.2.0/24", "2001:db8::/32"]
+# Then set groups = ["family"] on a profile; do not combine groups with
+# client_cidrs on that same profile.
 [[policy.profiles]]
 id = 40000
 name = "telemetry"

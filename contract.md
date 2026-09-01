@@ -22,6 +22,12 @@ Named service profiles are configuration shorthand for bounded sets of policy
 rules. Their generated rules participate in the same domain, client, qtype,
 qclass, priority, and action precedence contract as explicit rules.
 
+Client groups are named, bounded sets of IPv4/IPv6 CIDRs. A service profile
+may name one or more groups; the compiler expands the profile into one
+authoritative rule set per group. Direct `client_cidrs` and named `groups`
+cannot be combined, and an unknown or empty group fails configuration before
+publication.
+
 Regular-expression rules are evaluated only when no explicit domain rule
 matches. They use the normalized DNS name without its trailing root dot and
 are bounded at startup by expression count, pattern bytes, and compiled

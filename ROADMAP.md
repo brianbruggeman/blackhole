@@ -23,8 +23,8 @@ below are future capabilities, grouped by the dependency layer they extend.
 - Extend the authenticated blocklist and policy administration with
   incremental background reload and richer management operations beyond the
   current read-only status and complete-snapshot reload routes.
-- Add richer per-client and network policy controls and authenticated
-  administration.
+- Extend named client groups with richer per-client identity and network
+  policy controls and authenticated administration.
 - Extend adaptive amplification controls for repeated abusive patterns beyond
   the current per-query response-ratio cap, per-client admission limits, and
   bounded rate/response-budget abuse breaker.
@@ -51,7 +51,7 @@ below are future capabilities, grouped by the dependency layer they extend.
 - Extend the authenticated admin API with an optional web UI and optional DHCP
   adapter.
 - Add the remaining Pi-hole/AdGuard Home policy features, including richer
-  client/group controls.
+  per-client identity and group-management controls.
 - Add a separately isolated honeypot terminal with explicit retention and
   access controls.
 - Add a measured policy/codec WASM edge experiment while retaining scalar
