@@ -130,6 +130,21 @@ async fn admin_http_listener_enforces_bearer_auth() {
     assert!(policy_status.contains("\"profiles\":1"));
     assert!(policy_status.contains("\"blocklist_sources\":1"));
     assert!(!policy_status.contains("initial_blocklist"));
+    let bundle = request(
+        addr,
+        "GET",
+        "/policy-bundle",
+        Some("Bearer integration-secret"),
+        None,
+    )
+    .await
+    .expect("policy bundle response");
+    let bundle = String::from_utf8_lossy(&bundle);
+    assert!(bundle.starts_with("HTTP/1.1 200"));
+    assert!(bundle.contains("\"profiles\":[{"));
+    assert!(bundle.contains("\"name\":\"family\""));
+    assert!(bundle.contains("\"blocklists\":null"));
+    assert!(!bundle.contains("initial_blocklist"));
     let profiles = request(
         addr,
         "GET",
