@@ -832,6 +832,7 @@ mod runtime {
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct CountryPolicy {
         entries: Vec<CountryEntry>,
+        source_fingerprint: u64,
         deny: BTreeSet<String>,
         observe: BTreeSet<String>,
         deny_regions: BTreeSet<String>,
@@ -1832,6 +1833,14 @@ mod runtime {
         (asn != 0).then_some(asn)
     }
 
+    fn country_source_fingerprint(contents: &[u8]) -> u64 {
+        // FNV-1a is used only as a bounded change indicator in operator
+        // status; it is not an authenticity or identity mechanism.
+        contents.iter().fold(0xcbf29ce484222325, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+        })
+    }
+
     fn load_country_policy(
         config: &CountryPolicyConfig,
     ) -> Result<Option<CountryPolicy>, policy::PolicyError> {
@@ -2070,6 +2079,7 @@ mod runtime {
         }
         Ok(Some(CountryPolicy {
             entries,
+            source_fingerprint: country_source_fingerprint(contents.as_bytes()),
             deny,
             observe,
             deny_regions,
@@ -5616,6 +5626,9 @@ mod runtime {
             serde_json::json!({
                 "map_configured": policy.is_some(),
                 "entries": policy.as_ref().map_or(0, |value| value.entries.len()),
+                "source_fingerprint": policy
+                    .as_ref()
+                    .map(|value| format!("{:016x}", value.source_fingerprint)),
                 "deny": config.deny,
                 "observe": config.observe,
                 "deny_regions": config.deny_regions,
@@ -7921,6 +7934,12 @@ mod runtime {
             );
             let unchanged_status: serde_json::Value =
                 serde_json::from_str(&policy.admin_policy_status()).expect("status");
+            let unchanged_country_status: serde_json::Value =
+                serde_json::from_str(&policy.admin_country_status()).expect("country status");
+            let unchanged_fingerprint = unchanged_country_status["source_fingerprint"]
+                .as_str()
+                .expect("country source fingerprint")
+                .to_owned();
             let unchanged_generation = unchanged_status["policy_generation"]
                 .as_u64()
                 .expect("generation");
@@ -7939,8 +7958,20 @@ mod runtime {
                 changed_status["policy_generation"].as_u64(),
                 Some(unchanged_generation + 1)
             );
+            let changed_country_status: serde_json::Value =
+                serde_json::from_str(&policy.admin_country_status()).expect("country status");
+            assert_ne!(
+                changed_country_status["source_fingerprint"].as_str(),
+                Some(unchanged_fingerprint.as_str())
+            );
             std::fs::write(&path, "not-a-country-map\n").expect("corrupt country map");
             assert!(policy.reload_country_policy().is_err());
+            let failed_reload_status: serde_json::Value =
+                serde_json::from_str(&policy.admin_country_status()).expect("country status");
+            assert_eq!(
+                failed_reload_status["source_fingerprint"].as_str(),
+                changed_country_status["source_fingerprint"].as_str()
+            );
             {
                 let country_policy = policy
                     .country_policy

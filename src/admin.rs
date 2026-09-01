@@ -1226,6 +1226,10 @@ mod tests {
             serde_json::from_slice(&country_status.payload).expect("country status JSON");
         assert_eq!(country_status["map_configured"], false);
         assert_eq!(country_status["entries"], 0);
+        assert_eq!(
+            country_status["source_fingerprint"],
+            serde_json::Value::Null
+        );
         assert_eq!(country_status["deny"], serde_json::json!([]));
         assert_eq!(country_status["observe"], serde_json::json!([]));
         assert_eq!(country_status["deny_regions"], serde_json::json!([]));
