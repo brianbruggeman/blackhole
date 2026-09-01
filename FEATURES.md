@@ -247,6 +247,8 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   atomic country-map replacement route and retains the last valid map on error.
 - The authenticated UI provides a bounded local-rewrite editor that uses the
   atomic complete rewrite replacement route.
+- The authenticated UI provides bounded domain-rule and regex-rule editors
+  backed by the existing validated stable-ID upsert routes.
 - The incident section exposes bounded revoke and explicit approval controls
   for selected exact client addresses.
 - The authenticated admin control plane includes a bounded status UI for

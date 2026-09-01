@@ -101,7 +101,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <h2>Blocklists</h2><textarea id="blocklist-sources"></textarea><button id="replace-blocklists">Replace</button><button id="add-blocklists">Add</button><button id="remove-blocklists">Remove</button><button id="reload-blocklists">Reload</button><div id="blocklist-controls"></div><pre id="blocklists"></pre>
 <h2>Country</h2><textarea id="country-editor" rows="8" cols="80"></textarea><button id="replace-country">Replace country policy</button><pre id="country-status"></pre>
 <h2>Privacy</h2><pre id="privacy-status"></pre>
-<h2>Rules</h2><pre id="rules"></pre>
+<h2>Rules</h2><textarea id="rule-editor" rows="8" cols="80"></textarea><button id="upsert-rules">Upsert domain rules</button><textarea id="regex-editor" rows="8" cols="80"></textarea><button id="upsert-regex">Upsert regex rules</button><pre id="rules"></pre>
 <h2>Profiles</h2><textarea id="profile-editor" rows="8" cols="80"></textarea><button id="upsert-profiles">Upsert profiles</button><div id="profile-controls"></div><pre id="profiles"></pre>
 <h2>Groups</h2><textarea id="group-editor" rows="8" cols="80"></textarea><button id="upsert-groups">Upsert groups</button><div id="group-controls"></div><pre id="groups"></pre>
 <h2>Identities</h2><textarea id="identity-editor" rows="8" cols="80"></textarea><button id="upsert-identities">Upsert identities</button><div id="identity-controls"></div><pre id="identities"></pre>
@@ -145,6 +145,8 @@ const load = (path, target) => fetch(path).then(response => response.json()).the
     document.querySelector('#identity-editor').value = JSON.stringify(value.client_identities || [], null, 2);
     document.querySelector('#country-editor').value = JSON.stringify(value.country_policy || {}, null, 2);
     document.querySelector('#rewrite-editor').value = JSON.stringify(value.rewrites || [], null, 2);
+    document.querySelector('#rule-editor').value = JSON.stringify(value.rules || [], null, 2);
+    document.querySelector('#regex-editor').value = JSON.stringify(value.regex_rules || [], null, 2);
   }
   if (path === '/policy-bundle') document.querySelector(target).value = JSON.stringify(value, null, 2);
   else if (path === '/abuse/denylist') document.querySelector(target).value = JSON.stringify(value, null, 2);
@@ -188,6 +190,8 @@ document.querySelector('#upsert-groups').onclick = () => edit('#group-editor', '
 document.querySelector('#upsert-identities').onclick = () => edit('#identity-editor', '/reload/client-identities/upsert', 'client_identities');
 document.querySelector('#replace-country').onclick = replaceCountry;
 document.querySelector('#replace-rewrites').onclick = replaceRewrites;
+document.querySelector('#upsert-rules').onclick = () => edit('#rule-editor', '/reload/policy/upsert', 'rules');
+document.querySelector('#upsert-regex').onclick = () => edit('#regex-editor', '/reload/regex/upsert', 'regex_rules');
 document.querySelector('#reload-blocklists').onclick = () => operate('/reload/blocklists', {method:'POST'}).then(refresh);
 document.querySelector('#reload-country').onclick = () => operate('/reload/country', {method:'POST'}).then(refresh);
 document.querySelector('#reload-admission').onclick = () => operate('/reload/admission', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#admission-config').value}).then(refresh);
@@ -1330,6 +1334,10 @@ mod tests {
             b"replace-country".as_slice(),
             b"rewrite-editor".as_slice(),
             b"replace-rewrites".as_slice(),
+            b"rule-editor".as_slice(),
+            b"regex-editor".as_slice(),
+            b"upsert-rules".as_slice(),
+            b"upsert-regex".as_slice(),
         ] {
             assert!(
                 ui.payload
