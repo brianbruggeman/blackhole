@@ -62,7 +62,8 @@ Rules may use `client_cidrs` for a bounded set of IPv4/IPv6 networks; the
 most-specific matching network wins while `client_cidr` remains supported.
 Bounded regular-expression rules are available through `policy.regex_rules`;
 invalid or oversized expressions fail configuration validation, and explicit
-domain rules take precedence when both match.
+domain rules take precedence when both match. Regex rules may also use the
+same bounded `client_cidrs` network scope as domain rules.
 
 Proxima is consumed from GitHub. Prime is the default runtime and executable
 path. Proxima's HTTP listener currently brings a small Tokio dependency into
