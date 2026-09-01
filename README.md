@@ -75,7 +75,8 @@ The optional country policy accepts an operator-supplied `COUNTRY CIDR` map;
 unchanged content is not republished and failed refreshes retain the last good
 map. Classification remains an explicit policy signal, not authentication.
 Profiles may name bounded client groups with `groups = ["family", "guest"]`;
-each group supplies IPv4/IPv6 CIDRs and a profile may target multiple groups.
+each group supplies exact IPv4/IPv6 client addresses and/or CIDRs, and a
+profile may target multiple groups.
 Direct `client_cidrs` and named groups are mutually exclusive.
 Rules may use `client_cidrs` for a bounded set of IPv4/IPv6 networks; the
 most-specific matching network wins while `client_cidr` remains supported.
