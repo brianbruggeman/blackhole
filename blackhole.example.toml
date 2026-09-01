@@ -63,6 +63,11 @@ ttl = 30
 # client_cidrs = ["192.0.2.0/24", "2001:db8::/32"]
 # Then set groups = ["family"] on a profile; do not combine groups with
 # client_cidrs on that same profile.
+# Optional exact-client identity labels for identity-scoped rules. Labels are
+# transient and are not retained in telemetry or recording.
+# [[policy.client_identities]]
+# name = "family-router"
+# clients = ["192.0.2.10"]
 [[policy.profiles]]
 id = 40000
 name = "telemetry"

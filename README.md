@@ -96,6 +96,17 @@ remains an explicit policy signal, not authentication.
 Profiles may name bounded client groups with `groups = ["family", "guest"]`;
 each group supplies exact IPv4/IPv6 client addresses and/or CIDRs, and a
 profile may target multiple groups.
+For direct identity-scoped rules, map bounded adapter-owned client addresses
+to an opaque label:
+
+```toml
+[[policy.client_identities]]
+name = "family-router"
+clients = ["192.0.2.10"]
+```
+
+Rules using `client_identity = "family-router"` match only that transient
+label; names and client identities are excluded from telemetry and recording.
 Direct `client_cidrs` and named groups are mutually exclusive.
 Rules may use `client_cidrs` for a bounded set of IPv4/IPv6 networks; the
 most-specific matching network wins while `client_cidr` remains supported.

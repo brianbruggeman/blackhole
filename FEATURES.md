@@ -24,6 +24,8 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   silently take over.
 - Client-scoped rules can match one exact address or a bounded list of IPv4
   and IPv6 CIDRs; the most specific matching network wins.
+- Bounded exact-client identity labels can be mapped to policy rules without
+  retaining client identity in telemetry, logs, or payload records.
 - Bounded Pi-hole/AdGuard-compatible blocklist ingestion from hosts/domain files
   with comments, normalization, deduplication, apex-and-subdomain blocking,
   `@@` exceptions, and fail-closed startup reloads.
