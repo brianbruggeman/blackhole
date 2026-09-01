@@ -77,7 +77,9 @@ jobs:
         run: cargo build --locked --example capture_smoke
       - name: run privileged capture smoke
         if: always()
-        run: sudo -n target/debug/examples/capture_smoke
+        run: |
+          sudo -n pfctl -E
+          sudo -n target/debug/examples/capture_smoke
       - if: always()
         uses: actions/upload-artifact@v4
         with:
