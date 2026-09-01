@@ -144,6 +144,11 @@ impl SendPipe for AdminHandler {
             ("GET", "/health") => Ok(Response::ok("{\"status\":\"ok\"}")),
             ("GET", "/status") => Ok(Response::ok(self.policy.admin_status())),
             ("GET", "/admission/status") => Ok(Response::ok(self.policy.admin_admission_status())),
+            ("GET", "/abuse/status") => Ok(Response::ok(self.policy.admin_abuse_status())),
+            ("POST", "/abuse/clear") => Ok(Response::ok(format!(
+                "{{\"status\":\"cleared\",\"entries\":{}}}",
+                self.policy.clear_abuse_state()
+            ))),
             ("POST", "/reload/admission") => {
                 if request.payload.len() > MAX_POLICY_BODY_BYTES {
                     return Ok(Response::new(413));
@@ -640,6 +645,8 @@ impl SendPipe for AdminHandler {
                 | "/health"
                 | "/status"
                 | "/admission/status"
+                | "/abuse/status"
+                | "/abuse/clear"
                 | "/reload/admission"
                 | "/country/status"
                 | "/policy/status"
@@ -823,6 +830,21 @@ mod tests {
         );
         assert_eq!(admission_status["network_abuse_ipv4_prefix"], 24);
         assert_eq!(admission_status["network_abuse_ipv6_prefix"], 64);
+        let abuse_status =
+            block_on(handler.call(request("GET", "/abuse/status"))).expect("abuse status");
+        assert_eq!(abuse_status.status, 200);
+        let abuse_status: serde_json::Value =
+            serde_json::from_slice(&abuse_status.payload).expect("abuse status JSON");
+        assert_eq!(abuse_status["client_entries"], 0);
+        assert_eq!(abuse_status["network_entries"], 0);
+        assert_eq!(abuse_status["automatic_blacklist"], "temporary_cooldown");
+        let clear_abuse =
+            block_on(handler.call(request("POST", "/abuse/clear"))).expect("abuse clear");
+        assert_eq!(clear_abuse.status, 200);
+        assert_eq!(
+            clear_abuse.payload,
+            Bytes::from_static(b"{\"status\":\"cleared\",\"entries\":0}")
+        );
         let country_status =
             block_on(handler.call(request("GET", "/country/status"))).expect("country status");
         assert_eq!(country_status.status, 200);
@@ -886,6 +908,12 @@ mod tests {
             block_on(handler.call(request("POST", "/admission/status")))
                 .expect("405 admission status response");
         assert_eq!(wrong_admission_status_method.status, 405);
+        let wrong_abuse_status_method = block_on(handler.call(request("POST", "/abuse/status")))
+            .expect("405 abuse status response");
+        assert_eq!(wrong_abuse_status_method.status, 405);
+        let wrong_abuse_clear_method =
+            block_on(handler.call(request("GET", "/abuse/clear"))).expect("405 abuse clear");
+        assert_eq!(wrong_abuse_clear_method.status, 405);
         let wrong_country_status_method =
             block_on(handler.call(request("POST", "/country/status")))
                 .expect("405 country status response");

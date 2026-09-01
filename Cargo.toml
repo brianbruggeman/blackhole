@@ -51,15 +51,15 @@ doq = [
 [dependencies]
 bytes = { version = "1", optional = true }
 futures = { version = "0.3", optional = true }
-proxima = { git = "https://github.com/brianbruggeman/proxima.git", rev = "97c34da8d6e9bee62aecc8cde02c996e31aea4e8", default-features = false, features = ["dns-listener", "http1-native", "http-prime-deps", "serve-prime", "macros"], optional = true }
-proxima-core = { git = "https://github.com/brianbruggeman/proxima.git", rev = "97c34da8d6e9bee62aecc8cde02c996e31aea4e8", default-features = false, features = ["live", "std"], version = "0.1.0", optional = true }
-proxima-dns = { git = "https://github.com/brianbruggeman/proxima.git", rev = "97c34da8d6e9bee62aecc8cde02c996e31aea4e8", default-features = false, features = ["client", "doh", "listen"], version = "0.1.0", optional = true }
-proxima-net = { git = "https://github.com/brianbruggeman/proxima.git", rev = "97c34da8d6e9bee62aecc8cde02c996e31aea4e8", default-features = false, features = ["prime"], version = "0.1.0", optional = true }
-proxima-listen = { git = "https://github.com/brianbruggeman/proxima.git", rev = "97c34da8d6e9bee62aecc8cde02c996e31aea4e8", default-features = false, features = ["framed-any"], version = "0.1.0", optional = true }
-proxima-primitives = { git = "https://github.com/brianbruggeman/proxima.git", rev = "97c34da8d6e9bee62aecc8cde02c996e31aea4e8", default-features = false, features = ["alloc", "std", "atomic-permits"], optional = true }
-proxima-tls = { git = "https://github.com/brianbruggeman/proxima.git", rev = "97c34da8d6e9bee62aecc8cde02c996e31aea4e8", default-features = false, features = ["futures-io"], optional = true }
-proxima-quic = { git = "https://github.com/brianbruggeman/proxima.git", rev = "97c34da8d6e9bee62aecc8cde02c996e31aea4e8", default-features = false, features = ["quinn-compat", "tokio-compat"], version = "0.1.0", optional = true }
-proxima-protocols = { git = "https://github.com/brianbruggeman/proxima.git", rev = "97c34da8d6e9bee62aecc8cde02c996e31aea4e8", default-features = false, features = ["dns", "dns-codec-trait", "alloc"] }
+proxima = { git = "https://github.com/brianbruggeman/proxima.git", rev = "e79f5c09", default-features = false, features = ["dns-listener", "http1-native", "http-prime-deps", "serve-prime", "macros"], optional = true }
+proxima-core = { git = "https://github.com/brianbruggeman/proxima.git", rev = "e79f5c09", default-features = false, features = ["live", "std"], version = "0.1.0", optional = true }
+proxima-dns = { git = "https://github.com/brianbruggeman/proxima.git", rev = "e79f5c09", default-features = false, features = ["client", "doh", "listen"], version = "0.1.0", optional = true }
+proxima-net = { git = "https://github.com/brianbruggeman/proxima.git", rev = "e79f5c09", default-features = false, features = ["prime"], version = "0.1.0", optional = true }
+proxima-listen = { git = "https://github.com/brianbruggeman/proxima.git", rev = "e79f5c09", default-features = false, features = ["framed-any"], version = "0.1.0", optional = true }
+proxima-primitives = { git = "https://github.com/brianbruggeman/proxima.git", rev = "e79f5c09", default-features = false, features = ["alloc", "std", "atomic-permits"], optional = true }
+proxima-tls = { git = "https://github.com/brianbruggeman/proxima.git", rev = "e79f5c09", default-features = false, features = ["futures-io"], optional = true }
+proxima-quic = { git = "https://github.com/brianbruggeman/proxima.git", rev = "e79f5c09", default-features = false, features = ["quinn-compat", "tokio-compat"], version = "0.1.0", optional = true }
+proxima-protocols = { git = "https://github.com/brianbruggeman/proxima.git", rev = "e79f5c09", default-features = false, features = ["dns", "dns-codec-trait", "alloc"] }
 regex = { version = "1", optional = true }
 serde = { version = "1", default-features = false, features = ["alloc", "derive"] }
 serde_json = { version = "1", optional = true }

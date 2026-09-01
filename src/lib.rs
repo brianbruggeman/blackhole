@@ -512,6 +512,14 @@ mod runtime {
             );
             bucket.record_abuse(epoch, window, cooldown, threshold)
         }
+
+        fn len(&self) -> usize {
+            self.buckets.len()
+        }
+
+        fn clear(&self) {
+            self.buckets.clear();
+        }
     }
 
     /// Lock-free fixed-window budget. The upper half stores elapsed seconds
@@ -4477,6 +4485,26 @@ mod runtime {
             self.query_log
                 .as_ref()
                 .map_or(0, |query_log| query_log.clear())
+        }
+
+        /// Return bounded abuse-state metadata without exposing client keys.
+        pub(crate) fn admin_abuse_status(&self) -> String {
+            serde_json::json!({
+                "client_entries": self.client_abuse.len(),
+                "network_entries": self.network_abuse.len(),
+                "client_state_capacity": MAX_CLIENT_RATE_ENTRIES,
+                "network_state_capacity": MAX_CLIENT_RATE_ENTRIES,
+                "automatic_blacklist": "temporary_cooldown",
+                "keys": "not_exposed",
+            })
+            .to_string()
+        }
+
+        pub(crate) fn clear_abuse_state(&self) -> usize {
+            let removed = self.client_abuse.len() + self.network_abuse.len();
+            self.client_abuse.clear();
+            self.network_abuse.clear();
+            removed
         }
 
         pub(crate) fn admin_status(&self) -> String {
