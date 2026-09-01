@@ -126,6 +126,28 @@ async fn admin_http_listener_enforces_bearer_auth() {
     let groups = String::from_utf8_lossy(&groups);
     assert!(groups.starts_with("HTTP/1.1 200"));
     assert!(groups.contains("\"name\":\"home\""));
+    let replacement = request(
+        addr,
+        "POST",
+        "/reload/profiles",
+        Some("Bearer integration-secret"),
+        Some(r#"{"profiles":[{"id":500,"name":"new-family","domains":["new.example"],"action":"reject","groups":[],"priority":8,"client_cidrs":[],"qtype":null,"qclass":null}],"client_groups":[]}"#),
+    )
+    .await
+    .expect("profile replacement response");
+    let replacement = String::from_utf8_lossy(&replacement);
+    assert!(replacement.starts_with("HTTP/1.1 200"));
+    let profiles = request(
+        addr,
+        "GET",
+        "/profiles",
+        Some("Bearer integration-secret"),
+        None,
+    )
+    .await
+    .expect("replacement profiles response");
+    let profiles = String::from_utf8_lossy(&profiles);
+    assert!(profiles.contains("\"name\":\"new-family\""));
     let logs = request(
         addr,
         "GET",

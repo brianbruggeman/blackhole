@@ -25,7 +25,8 @@ below are future capabilities, grouped by the dependency layer they extend.
   current bounded atomic domain-rule append/removal, read-only status, and
   complete-snapshot reload routes.
 - Extend the authenticated profile and client-group metadata views with richer
-  per-client identity and network policy controls and mutation operations.
+  per-client identity and network policy controls beyond the current atomic
+  profile/client-group replacement operation.
 - Extend adaptive amplification controls for repeated abusive patterns beyond
   the current per-query response-ratio cap, per-client admission limits, and
   bounded rate/response-budget abuse breaker.

@@ -9,9 +9,16 @@ use proxima::middlewares::auth::Auth;
 use proxima::pipe::{PipeHandle, into_handle};
 use proxima::{ProximaError, Request, Response, SendPipe};
 
-use crate::{Policy, RegexRuleConfig, RuleConfig};
+use crate::{ClientGroupConfig, Policy, RegexRuleConfig, RuleConfig, ServiceProfileConfig};
 
 const MAX_POLICY_BODY_BYTES: usize = 64 * 1024;
+
+#[derive(Debug, serde::Deserialize)]
+struct ProfileReload {
+    profiles: Vec<ServiceProfileConfig>,
+    #[serde(default)]
+    client_groups: Vec<ClientGroupConfig>,
+}
 const ADMIN_UI: &str = r#"<!doctype html>
 <meta charset="utf-8">
 <title>Blackhole DNS</title>
@@ -77,6 +84,31 @@ impl SendPipe for AdminHandler {
             ("GET", "/rules") => Ok(Response::ok(self.policy.admin_rules())),
             ("GET", "/profiles") => Ok(Response::ok(self.policy.admin_profiles())),
             ("GET", "/client-groups") => Ok(Response::ok(self.policy.admin_client_groups())),
+            ("POST", "/reload/profiles") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let update = match serde_json::from_slice::<ProfileReload>(&request.payload) {
+                    Ok(update) => update,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                match self
+                    .policy
+                    .reload_profiles(&update.profiles, &update.client_groups)
+                {
+                    Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
             ("GET", "/logs") => Ok(Response::ok(self.policy.admin_query_log())),
             ("POST", "/cache/clear") => Ok(Response::ok(format!(
                 "{{\"status\":\"cleared\",\"entries\":{}}}",
@@ -189,6 +221,7 @@ impl SendPipe for AdminHandler {
                 | "/rules"
                 | "/profiles"
                 | "/client-groups"
+                | "/reload/profiles"
                 | "/logs"
                 | "/cache/clear"
                 | "/logs/clear"
@@ -366,6 +399,42 @@ mod tests {
             serde_json::from_slice(&groups.payload).expect("client groups JSON");
         assert_eq!(groups["total"], 1);
         assert_eq!(groups["client_groups"][0]["name"], "home");
+
+        let replacement = Request::builder()
+            .method("POST")
+            .path("/reload/profiles")
+            .payload(
+                r#"{"profiles":[{"id":500,"name":"new-family","domains":["new.example"],"action":"reject","groups":[],"priority":8,"client_cidrs":[],"qtype":null,"qclass":null}],"client_groups":[]}"#,
+            )
+            .build()
+            .expect("profile replacement request");
+        let replacement = block_on(handler.call(replacement)).expect("profile reload");
+        assert_eq!(replacement.status, 200);
+        let profiles = block_on(handler.call(request("GET", "/profiles"))).expect("profiles");
+        let profiles: serde_json::Value =
+            serde_json::from_slice(&profiles.payload).expect("replacement profiles JSON");
+        assert_eq!(profiles["total"], 1);
+        assert_eq!(profiles["profiles"][0]["name"], "new-family");
+    }
+
+    #[test]
+    fn profile_reload_rejects_invalid_replacement_without_publishing() {
+        let policy = Arc::new(Policy::new(crate::Config::default()).expect("default policy"));
+        let handler = AdminHandler::new(Arc::clone(&policy));
+        let invalid = Request::builder()
+            .method("POST")
+            .path("/reload/profiles")
+            .payload(
+                r#"{"profiles":[{"id":1,"name":"bad","domains":[],"action":"drop"}],"client_groups":[]}"#,
+            )
+            .build()
+            .expect("invalid profile replacement request");
+        let response = block_on(handler.call(invalid)).expect("invalid profile response");
+        assert_eq!(response.status, 422);
+        let profiles = block_on(handler.call(request("GET", "/profiles"))).expect("profiles");
+        let profiles: serde_json::Value =
+            serde_json::from_slice(&profiles.payload).expect("profiles JSON");
+        assert_eq!(profiles["total"], 0);
     }
 
     #[test]

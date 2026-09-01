@@ -95,6 +95,9 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Authenticated bounded `GET /profiles` and `GET /client-groups` routes expose
   configured service-profile and client-network metadata without exposing
   runtime client identity.
+- Authenticated bounded `POST /reload/profiles` atomically replaces service
+  profiles and client groups, preserves explicit domain rules, and rejects
+  invalid expansions without publishing them.
 - Authenticated cache deletion clears all bounded positive and negative DNS
   answers and reports only the number of entries removed.
 - Optional bounded privacy-safe query-decision logs use Proxima's recording

@@ -1397,6 +1397,9 @@ mod runtime {
     pub struct Policy {
         config: Config,
         base_rules: Mutex<Vec<RuleConfig>>,
+        explicit_rules: Mutex<Vec<RuleConfig>>,
+        profiles: RwLock<Vec<ServiceProfileConfig>>,
+        client_groups: RwLock<Vec<ClientGroupConfig>>,
         country_policy: Arc<RwLock<Option<CountryPolicy>>>,
         rewrites: RewriteTable,
         reference: PolicyStore,
@@ -1629,6 +1632,7 @@ mod runtime {
             }
             let profile_rules =
                 compile_profiles(&config.policy.profiles, &config.policy.client_groups)?;
+            let explicit_rules = config.policy.rules.clone();
             config.policy.rules.extend(profile_rules);
             let base_rules = config.policy.rules.clone();
             let blocklist_rules = load_blocklists(&config.policy.blocklists)?;
@@ -1665,9 +1669,14 @@ mod runtime {
                 .privacy
                 .query_log_enabled
                 .then(|| Arc::new(QueryLog::new(&config.privacy)));
+            let profiles = config.policy.profiles.clone();
+            let client_groups = config.policy.client_groups.clone();
             let policy = Self {
                 config,
                 base_rules: Mutex::new(base_rules),
+                explicit_rules: Mutex::new(explicit_rules),
+                profiles: RwLock::new(profiles),
+                client_groups: RwLock::new(client_groups),
                 country_policy: Arc::new(RwLock::new(country_policy)),
                 rewrites,
                 reference,
@@ -1806,6 +1815,7 @@ mod runtime {
             }
             let published = self.reference.reload(rules)?;
             *base_rules = rules.to_vec();
+            *self.explicit_rules.lock().expect("explicit rules lock") = rules.to_vec();
             self.domain_rules_configured
                 .store(!rules.is_empty(), Ordering::Release);
             self.rules_configured.store(
@@ -1865,6 +1875,54 @@ mod runtime {
             *self.country_policy.write().expect("country policy lock") = next;
             self.observe_reload_latency("country", started);
             Ok(ReloadState::Published)
+        }
+
+        /// Atomically replace the configured service profiles and client
+        /// groups. Explicit domain rules remain intact; the generated profile
+        /// expansion is validated and published as one immutable snapshot.
+        pub fn reload_profiles(
+            &self,
+            profiles: &[ServiceProfileConfig],
+            client_groups: &[ClientGroupConfig],
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let started = Instant::now();
+            let generated = compile_profiles(profiles, client_groups)?;
+            let mut base_rules = self.base_rules.lock().expect("base rules lock");
+            let explicit = self
+                .explicit_rules
+                .lock()
+                .expect("explicit rules lock")
+                .clone();
+            let mut combined = explicit;
+            combined.extend(generated);
+            let regex_ids = self
+                .regex_rules
+                .lock()
+                .expect("regex rules lock")
+                .iter()
+                .map(|rule| rule.id)
+                .collect::<BTreeSet<_>>();
+            if let Some(rule) = combined.iter().find(|rule| regex_ids.contains(&rule.id)) {
+                return Err(policy::PolicyError::DuplicateRule { id: rule.id });
+            }
+            let published = self.reference.reload(&combined)?;
+            *base_rules = combined;
+            *self.profiles.write().expect("profiles lock") = profiles.to_vec();
+            *self.client_groups.write().expect("client groups lock") = client_groups.to_vec();
+            self.domain_rules_configured
+                .store(!base_rules.is_empty(), Ordering::Release);
+            self.rules_configured.store(
+                self.domain_rules_configured.load(Ordering::Acquire)
+                    || !self
+                        .regex_rules
+                        .lock()
+                        .expect("regex rules lock")
+                        .is_empty(),
+                Ordering::Release,
+            );
+            self.cache.lock().expect("cache lock").clear();
+            self.observe_reload_latency("profiles", started);
+            Ok(published)
         }
 
         /// Compile and atomically replace regex rules. Invalid updates leave
@@ -2653,8 +2711,8 @@ mod runtime {
             serde_json::json!({
                 "status": "ok",
                 "rules_configured": self.rules_configured.load(Ordering::Acquire),
-                "profiles_configured": self.config.policy.profiles.len(),
-                "client_groups_configured": self.config.policy.client_groups.len(),
+                "profiles_configured": self.profiles.read().expect("profiles lock").len(),
+                "client_groups_configured": self.client_groups.read().expect("client groups lock").len(),
                 "upstream_configured": self.upstream.is_some(),
                 "country_policy_configured": self
                     .country_policy
@@ -2716,7 +2774,7 @@ mod runtime {
         }
 
         pub(crate) fn admin_profiles(&self) -> String {
-            let profiles = &self.config.policy.profiles;
+            let profiles = self.profiles.read().expect("profiles lock");
             let visible = profiles
                 .iter()
                 .take(MAX_ADMIN_LOG_ENTRIES)
@@ -2743,7 +2801,7 @@ mod runtime {
         }
 
         pub(crate) fn admin_client_groups(&self) -> String {
-            let groups = &self.config.policy.client_groups;
+            let groups = self.client_groups.read().expect("client groups lock");
             let visible = groups
                 .iter()
                 .take(MAX_ADMIN_LOG_ENTRIES)
