@@ -139,6 +139,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Authenticated bounded `GET /admission/status` exposes configured query,
   response, amplification, and abuse limits without exposing counters, client
   identities, credentials, or payloads.
+- Authenticated bounded `POST /reload/admission` atomically publishes live
+  admission, rate, response-budget, and abuse-breaker limits; the startup-sized
+  global in-flight semaphore is immutable and capacity changes fail closed.
 - Authenticated bounded `GET /country/status` exposes country-policy deny/
   observe controls, entry count, freshness, and reload interval without
   exposing source paths or client addresses.

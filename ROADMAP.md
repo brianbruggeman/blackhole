@@ -35,7 +35,8 @@ below are future capabilities, grouped by the dependency layer they extend.
   the current explicit country/CIDR/region/ASN map labels and bounded background
   refresh; uncertainty must remain explicit.
 - Add authenticated full-configuration reload and incremental background
-  updates beyond the current in-process atomic policy-bundle reload API.
+  updates beyond the current in-process atomic policy-bundle and live admission
+  reload APIs.
 
 ## Interception and deployment
 
