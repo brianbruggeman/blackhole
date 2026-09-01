@@ -131,9 +131,12 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - The bounded authenticated status UI also displays configured rewrite metadata
   through the existing Proxima HTTP pipe.
 - The authenticated admin control plane includes a bounded status UI for
-  status, privacy status, rule metadata, and privacy-log inspection/clearing;
+  status, admission limits, privacy status, rule metadata, and privacy-log inspection/clearing;
   it includes an authenticated blocklist reload control and contains no
   packet payloads and uses the existing Proxima HTTP pipe.
+- Authenticated bounded `GET /admission/status` exposes configured query,
+  response, amplification, and abuse limits without exposing counters, client
+  identities, credentials, or payloads.
 - Authenticated bounded `GET /privacy/status` exposes recording enablement and
   retention ceilings without exposing recording paths, query names, clients,
   credentials, or payloads.

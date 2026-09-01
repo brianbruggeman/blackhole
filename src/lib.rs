@@ -3751,6 +3751,29 @@ mod runtime {
             .to_string()
         }
 
+        /// Return bounded admission and amplification limits without exposing
+        /// client keys, counters, or other request metadata.
+        pub(crate) fn admin_admission_status(&self) -> String {
+            let admission = &self.config.admission;
+            serde_json::json!({
+                "max_name_bytes": admission.max_name_bytes,
+                "reject_any": admission.reject_any,
+                "max_response_records": admission.max_response_records,
+                "max_response_bytes": admission.max_response_bytes,
+                "max_response_amplification": admission.max_response_amplification,
+                "max_inflight_requests": admission.max_inflight_requests,
+                "max_queries_per_second": admission.max_queries_per_second,
+                "max_inflight_per_client": admission.max_inflight_per_client,
+                "max_queries_per_client_per_second": admission.max_queries_per_client_per_second,
+                "max_response_bytes_per_client_per_second": admission.max_response_bytes_per_client_per_second,
+                "max_response_bytes_per_network_per_second": admission.max_response_bytes_per_network_per_second,
+                "max_response_bytes_per_second": admission.max_response_bytes_per_second,
+                "network_abuse_ipv4_prefix": admission.network_abuse_ipv4_prefix,
+                "network_abuse_ipv6_prefix": admission.network_abuse_ipv6_prefix,
+            })
+            .to_string()
+        }
+
         pub(crate) fn clear_query_log(&self) -> usize {
             self.query_log
                 .as_ref()

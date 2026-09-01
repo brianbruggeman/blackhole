@@ -71,6 +71,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <p>Authenticated operator control plane. DNS names and packet payloads are not shown here.</p>
 <p><button id="clear-logs">Clear privacy log</button> <button id="reload-blocklists">Reload blocklists</button></p>
 <h2>Status</h2><pre id="status">loading…</pre>
+<h2>Admission limits</h2><pre id="admission-status">loading…</pre>
 <h2>Privacy status</h2><pre id="privacy-status">loading…</pre>
 <h2>Rules</h2><pre id="rules">loading…</pre>
 <h2>Service profiles</h2><pre id="profiles">loading…</pre>
@@ -81,7 +82,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 const load = (path, target) => fetch(path).then(response => response.json()).then(value => {
   document.querySelector(target).textContent = JSON.stringify(value, null, 2);
 });
-const refresh = () => Promise.all([load('/status','#status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
+const refresh = () => Promise.all([load('/status','#status'), load('/admission/status','#admission-status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
 document.querySelector('#clear-logs').onclick = () => fetch('/logs/clear', {method:'POST'}).then(refresh);
 document.querySelector('#reload-blocklists').onclick = () => fetch('/reload/blocklists', {method:'POST'}).then(refresh);
 refresh();
@@ -128,6 +129,7 @@ impl SendPipe for AdminHandler {
             }
             ("GET", "/health") => Ok(Response::ok("{\"status\":\"ok\"}")),
             ("GET", "/status") => Ok(Response::ok(self.policy.admin_status())),
+            ("GET", "/admission/status") => Ok(Response::ok(self.policy.admin_admission_status())),
             ("GET", "/policy/status") => Ok(Response::ok(self.policy.admin_policy_status())),
             ("GET", "/privacy/status") => Ok(Response::ok(self.policy.admin_privacy_status())),
             ("GET", "/rules") => Ok(Response::ok(self.policy.admin_rules())),
@@ -524,6 +526,7 @@ impl SendPipe for AdminHandler {
                 "/"
                 | "/health"
                 | "/status"
+                | "/admission/status"
                 | "/policy/status"
                 | "/privacy/status"
                 | "/rules"
@@ -612,6 +615,11 @@ mod tests {
         );
         assert!(
             ui.payload
+                .windows(b"/admission/status".len())
+                .any(|window| window == b"/admission/status")
+        );
+        assert!(
+            ui.payload
                 .windows(b"/reload/blocklists".len())
                 .any(|window| window == b"/reload/blocklists")
         );
@@ -649,6 +657,17 @@ mod tests {
         assert_eq!(privacy_status["query_recording_enabled"], false);
         assert_eq!(privacy_status["payload_recording"], "disabled");
         assert_eq!(privacy_status["client_identity_recording"], "disabled");
+        let admission_status =
+            block_on(handler.call(request("GET", "/admission/status"))).expect("admission status");
+        assert_eq!(admission_status.status, 200);
+        let admission_status: serde_json::Value =
+            serde_json::from_slice(&admission_status.payload).expect("admission status JSON");
+        assert_eq!(
+            admission_status["max_response_bytes_per_network_per_second"],
+            4_194_304
+        );
+        assert_eq!(admission_status["network_abuse_ipv4_prefix"], 24);
+        assert_eq!(admission_status["network_abuse_ipv6_prefix"], 64);
         assert_eq!(status["profiles_configured"], 0);
         assert_eq!(status["client_groups_configured"], 0);
         assert_eq!(status["upstream_configured"], false);
@@ -688,6 +707,10 @@ mod tests {
             block_on(handler.call(request("POST", "/privacy/status")))
                 .expect("405 privacy status response");
         assert_eq!(wrong_privacy_status_method.status, 405);
+        let wrong_admission_status_method =
+            block_on(handler.call(request("POST", "/admission/status")))
+                .expect("405 admission status response");
+        assert_eq!(wrong_admission_status_method.status, 405);
         let wrong_rules_method =
             block_on(handler.call(request("POST", "/rules"))).expect("405 rules response");
         assert_eq!(wrong_rules_method.status, 405);
