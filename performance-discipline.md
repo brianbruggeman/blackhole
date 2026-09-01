@@ -187,3 +187,31 @@ the owned and response-encoding arms allocated as shown. Scalar remains the
 production arm because chunked scanning is slower and memchr has materially
 higher tail latency and variance. This row does not establish zero-copy or
 production-performance claims.
+
+## Row 8 — lock-free admission provenance run
+
+`MEASURED` on 2026-09-01, Linux `x86_64`, rustc `1.98.0`, debug build,
+source commit `3116019`, GitHub Proxima revision `97c34da8`, and load average
+`2.27`. The running harness used `N=25` samples per workload:
+
+```text
+build_ns=p50 175651034 p95 177221128 p99 177925491 cov=0.005185 allocs=250025 alloc_bytes=33722250
+match_ns=p50 179422 p95 180179 p99 180699 cov=0.002741 allocs=2500 alloc_bytes=57500
+edge_parse_match_ns=p50 162885 p95 189523 p99 190733 cov=0.048497 allocs=100 alloc_bytes=1375
+parse_short_ns=p50 525 p95 539 p99 988 cov=0.166493 allocs=0 alloc_bytes=0
+parse_long_ns=p50 2925 p95 2984 p99 3029 cov=0.009829 allocs=0 alloc_bytes=0
+parse_adversarial_ns=p50 751 p95 818 p99 1117 cov=0.094252 allocs=0 alloc_bytes=0
+parse_mixed_ns=p50 749 p95 2992 p99 3012 cov=0.764209 allocs=0 alloc_bytes=0
+name_scan_scalar_ns=p50 152 p95 164 p99 185 cov=0.045127
+name_scan_chunked_ns=p50 751 p95 787 p99 1156 cov=0.103381
+name_scan_memchr_ns=p50 332 p95 373 p99 3047 cov=1.199414
+owned_ns=p50 834 p95 911 p99 1939 cov=0.245690 allocs=50 alloc_bytes=400
+encode_response_ns=p50 1175 p95 1350 p99 2121 cov=0.153498 allocs=50 alloc_bytes=1450
+boundary_bytes=MEASURED policy_canonicalize=60600 borrowed_to_owned=300 tcp_frame_buffer=0 encode_output=0 transport_write=0 rss_kib=7488
+```
+
+The borrowed parser still measured zero allocations. Scalar remained the
+production arm for this workload; chunked scanning was slower and memchr had
+materially worse tail latency and variance. This is a debug-profile
+provenance row only and does not establish a release performance, zero-copy,
+or production-grade claim.
