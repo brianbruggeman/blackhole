@@ -6,6 +6,8 @@ Rust and the wire/runtime edge uses Proxima from
 default runtime path is Prime-backed, with the full Tokio capability set
 available through the opt-in compatibility feature. DNS over UDP and TCP share
 one bind.
+An optional bounded DHCPv4 adapter serves a configured LAN pool; it is
+disabled by default and requires an explicitly authorized bind on UDP port 67.
 
 See [FEATURES.md](FEATURES.md) for the current implemented surface and
 [ROADMAP.md](ROADMAP.md) for the intended product scope and parity targets with
@@ -27,6 +29,20 @@ optional capture rules:
 
 ```sh
 cargo run --release -- --check blackhole.example.toml
+```
+
+Enable DHCP only on a dedicated LAN-facing address after reviewing the pool:
+
+```toml
+[dhcp]
+enabled = true
+listen = "192.0.2.1:67"
+server = "192.0.2.1"
+subnet_mask = "255.255.255.0"
+pool_start = "192.0.2.100"
+pool_end = "192.0.2.199"
+lease_secs = 3600
+max_leases = 256
 ```
 
 Use port 53 only with the platform's normal low-port capability mechanism.

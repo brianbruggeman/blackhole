@@ -2,6 +2,17 @@
 # Use 53 only with the required OS capability; loopback keeps local testing scoped.
 listen = "127.0.0.1:5353"
 
+[dhcp]
+# DHCP is opt-in and requires authorization to bind UDP port 67.
+enabled = false
+listen = "0.0.0.0:67"
+server = "192.0.2.1"
+subnet_mask = "255.255.255.0"
+pool_start = "192.0.2.100"
+pool_end = "192.0.2.199"
+lease_secs = 3600
+max_leases = 256
+
 [admin]
 # Optional authenticated HTTP control plane; keep it on loopback and protect
 # this file because the bearer token is a credential.

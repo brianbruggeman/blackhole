@@ -53,7 +53,7 @@ below are future capabilities, grouped by the dependency layer they extend.
   redaction and deletion-verification backends beyond the current metadata-only,
   byte-bounded Proxima JSONL destination and bounded startup rotation.
 - Extend the current bounded authenticated status UI into a full optional web
-  UI and add an optional DHCP adapter.
+  UI beyond the current bounded status and policy-bundle controls.
 - Add the remaining Pi-hole/AdGuard Home policy features, including richer
   per-client identity and group-management controls.
 - Add a separately isolated honeypot terminal with explicit retention and

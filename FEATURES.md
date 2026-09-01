@@ -6,6 +6,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 ## Implemented
 
 - DNS service over UDP and TCP through Proxima, sharing one configured bind.
+- Optional bounded DHCPv4 service with DISCOVER/OFFER and REQUEST/ACK handling,
+  deterministic lease allocation, broadcast delivery, and loopback-tested UDP
+  adapter shutdown.
 - Loopback-only default listener at `127.0.0.1:5353`.
 - TOML configuration with bounded file size and fail-fast parsing.
 - Legacy domain matching with `ignore`, `nxdomain`, and `honeypot` modes.
