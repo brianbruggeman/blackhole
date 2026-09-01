@@ -5971,6 +5971,61 @@ mod runtime {
         }
 
         #[test]
+        fn proxima_jsonl_recording_path_persists_metadata_only() {
+            use proxima::RecordingSink;
+            use proxima::{AccumulatingSink, FormatKind, LazyFanOut, SinkSpec};
+            use std::sync::Arc;
+
+            let directory = std::env::temp_dir().join(format!(
+                "blackhole-recording-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .expect("system clock")
+                    .as_nanos()
+            ));
+            std::fs::create_dir(&directory).expect("recording directory");
+            let path = directory.join("decisions.jsonl");
+            let spigot = proxima::recording::deferred_runtime();
+            let durable = Arc::new(LazyFanOut::new(
+                vec![SinkSpec::new(
+                    path.to_string_lossy().into_owned(),
+                    FormatKind::Json,
+                )],
+                Arc::clone(&spigot),
+            ));
+            assert!(
+                spigot
+                    .set(Arc::new(
+                        proxima::runtime::PrimeRuntime::new(1).expect("recording runtime"),
+                    ))
+                    .is_ok()
+            );
+            let sink: Arc<dyn RecordingSink> = Arc::new(AccumulatingSink::new(durable, 1));
+            let policy = Policy::new(Config::default())
+                .expect("valid policy")
+                .with_recording_sink(Arc::clone(&sink));
+            let query = proxima_dns::DnsQuery {
+                id: 9,
+                recursion_desired: true,
+                name: "secret.example.".into(),
+                qtype: 1,
+                qclass: 1,
+            };
+
+            futures::executor::block_on(async {
+                policy.record_decision(Action::Nxdomain, &query).await;
+                sink.flush().await.expect("flush recording sink");
+            });
+
+            let contents = std::fs::read_to_string(path).expect("read JSONL recording");
+            assert!(contents.contains("blackhole.dns_decision"));
+            assert!(contents.contains("nxdomain"));
+            assert!(!contents.contains("secret.example"));
+            std::fs::remove_dir_all(directory).expect("remove recording directory");
+        }
+
+        #[test]
         fn bounded_query_log_retains_metadata_only_and_can_be_deleted() {
             let mut config = Config::default();
             config.privacy.query_log_enabled = true;
