@@ -185,7 +185,7 @@ impl SendPipe for AdminHandler {
                     serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
                 ))),
             },
-            ("POST", "/reload/policy" | "/reload/policy/add") => {
+            ("POST", "/reload/policy" | "/reload/policy/add" | "/reload/policy/upsert") => {
                 if request.payload.len() > MAX_POLICY_BODY_BYTES {
                     return Ok(Response::new(413));
                 }
@@ -211,6 +211,8 @@ impl SendPipe for AdminHandler {
                 }
                 let result = if path == "/reload/policy/add" {
                     self.policy.append_rules(&rules)
+                } else if path == "/reload/policy/upsert" {
+                    self.policy.upsert_rules(&rules)
                 } else {
                     self.policy.reload_rules(&rules)
                 };
@@ -284,6 +286,7 @@ impl SendPipe for AdminHandler {
                 | "/reload/country"
                 | "/reload/policy"
                 | "/reload/policy/add"
+                | "/reload/policy/upsert"
                 | "/reload/policy/remove"
                 | "/reload/regex",
             ) => Ok(Response::new(405)),
@@ -600,6 +603,35 @@ mod tests {
         assert_eq!(policy.action_for_view(added_query), crate::Action::Drop);
         assert_eq!(policy.action_for_view(query), crate::Action::Nxdomain);
 
+        let upsert = Request::builder()
+            .method("POST")
+            .path("/reload/policy/upsert")
+            .payload(
+                r#"[{"id":7,"domain":"blocked.example","action":"reject","priority":0,"qtype":null,"qclass":null,"client":null,"client_cidr":null},{"id":9,"domain":"new.example","action":"sink","priority":0,"qtype":null,"qclass":null,"client":null,"client_cidr":null}]"#,
+            )
+            .build()
+            .expect("valid policy upsert request");
+        let response = block_on(handler.call(upsert)).expect("upsert response");
+        assert_eq!(response.status, 200);
+        assert_eq!(policy.action_for_view(query), crate::Action::Reject);
+        assert_eq!(policy.action_for_view(added_query), crate::Action::Drop);
+        let mut new_wire = vec![0, 3, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0];
+        new_wire.extend_from_slice(b"\x03new\x07example\0\0\x01\0\x01");
+        let new_query = crate::query::QueryView::parse(&new_wire).expect("new query");
+        assert_eq!(policy.action_for_view(new_query), crate::Action::Sink);
+
+        let duplicate_upsert = Request::builder()
+            .method("POST")
+            .path("/reload/policy/upsert")
+            .payload(
+                r#"[{"id":9,"domain":"new.example","action":"reject"},{"id":9,"domain":"other.example","action":"drop"}]"#,
+            )
+            .build()
+            .expect("duplicate upsert request");
+        let response = block_on(handler.call(duplicate_upsert)).expect("duplicate response");
+        assert_eq!(response.status, 422);
+        assert_eq!(policy.action_for_view(new_query), crate::Action::Sink);
+
         let removal = Request::builder()
             .method("POST")
             .path("/reload/policy/remove")
@@ -609,7 +641,7 @@ mod tests {
         let response = block_on(handler.call(removal)).expect("removal response");
         assert_eq!(response.status, 200);
         assert_eq!(policy.action_for_view(added_query), crate::Action::Pass);
-        assert_eq!(policy.action_for_view(query), crate::Action::Nxdomain);
+        assert_eq!(policy.action_for_view(query), crate::Action::Reject);
 
         let unknown_removal = Request::builder()
             .method("POST")
@@ -619,7 +651,7 @@ mod tests {
             .expect("unknown removal request");
         let response = block_on(handler.call(unknown_removal)).expect("unknown removal response");
         assert_eq!(response.status, 422);
-        assert_eq!(policy.action_for_view(query), crate::Action::Nxdomain);
+        assert_eq!(policy.action_for_view(query), crate::Action::Reject);
 
         let invalid = Request::builder()
             .method("POST")

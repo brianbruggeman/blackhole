@@ -1851,6 +1851,51 @@ mod runtime {
             )
         }
 
+        /// Atomically replace or add explicit rules by stable ID. Existing
+        /// IDs are edited in place; new IDs are appended. Generated profile
+        /// and blocklist rules remain managed by their own tables.
+        pub fn upsert_rules(
+            &self,
+            updates: &[RuleConfig],
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
+            let started = Instant::now();
+            if updates.is_empty() {
+                return Err(policy::PolicyError::InvalidProfile {
+                    name: "<rule-upsert>".into(),
+                    reason: "at least one rule is required".into(),
+                });
+            }
+            let mut seen = BTreeSet::new();
+            for rule in updates {
+                if !seen.insert(rule.id) {
+                    return Err(policy::PolicyError::DuplicateRule { id: rule.id });
+                }
+            }
+            let mut explicit = self
+                .explicit_rules
+                .lock()
+                .expect("explicit rules lock")
+                .clone();
+            for update in updates {
+                if let Some(existing) = explicit.iter_mut().find(|rule| rule.id == update.id) {
+                    *existing = update.clone();
+                } else {
+                    explicit.push(update.clone());
+                }
+            }
+            let mut base_rules = self.base_rules.lock().expect("base rules lock");
+            let mut combined = explicit.clone();
+            combined.extend(self.current_profile_rules()?);
+            self.publish_rules_locked(
+                &combined,
+                &explicit,
+                &mut base_rules,
+                "rules_upsert",
+                started,
+            )
+        }
+
         /// Remove every cached answer and return the number of entries
         /// deleted. The operation is bounded by the configured cache size.
         pub fn clear_cache(&self) -> usize {
