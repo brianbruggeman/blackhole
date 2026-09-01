@@ -148,6 +148,39 @@ fn main() {
         (start.elapsed().as_nanos(), snapshot().bytes - before.bytes)
     });
 
+    // Measure the same owned response encoder used by the listener. The
+    // listener's transport adapter records the subsequent write boundary;
+    // this workload isolates encoding so a transport result cannot be
+    // mistaken for codec work.
+    let answer_name = "example.com.";
+    let answer_rdata = encode::ipv4_rdata(std::net::Ipv4Addr::new(192, 0, 2, 42));
+    let answer_record = encode::AnswerRecord {
+        name: answer_name,
+        rtype: 1,
+        rclass: 1,
+        ttl: 30,
+        rdata: &answer_rdata,
+    };
+    let encoding = measure(sample_count, || {
+        let before = snapshot();
+        let start = Instant::now();
+        let mut output = Vec::with_capacity(owned_packet.len());
+        encode::encode_response(
+            0x1234,
+            proxima_protocols::dns::Flags::for_response(true, false, true, 0),
+            encode::EncodeQuestion {
+                name: answer_name,
+                qtype: 1,
+                qclass: 1,
+            },
+            std::slice::from_ref(&answer_record),
+            &mut output,
+        )
+        .expect("benchmark response fits DNS wire limits");
+        black_box(output);
+        (start.elapsed().as_nanos(), snapshot().bytes - before.bytes)
+    });
+
     #[cfg(feature = "perf-instrument")]
     let boundary_bytes = {
         let stats = perf::snapshot();
@@ -162,6 +195,7 @@ fn main() {
     report("parse_adversarial", &parsing_adversarial, sample_count);
     report("parse_mixed", &parsing_mixed, sample_count);
     report("owned", &owning, sample_count);
+    report("encode_response", &encoding, sample_count);
     #[cfg(feature = "perf-instrument")]
     println!(
         "boundary_bytes=MEASURED policy_canonicalize={} borrowed_to_owned={} tcp_frame_buffer={} encode_output={} transport_write={}",
