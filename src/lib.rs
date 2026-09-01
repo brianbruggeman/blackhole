@@ -555,6 +555,14 @@ mod runtime {
         /// Hard upper bound for the encoded JSONL recording file.
         #[serde(default = "default_query_recording_max_bytes")]
         pub query_recording_max_bytes: u64,
+        /// Rotate the durable recording at startup when its byte ceiling is
+        /// reached. Rotation retains at most `query_recording_max_files` old
+        /// files alongside the active destination.
+        #[serde(default)]
+        pub query_recording_rotation_enabled: bool,
+        /// Number of rotated durable recording files to retain.
+        #[serde(default = "default_query_recording_max_files")]
+        pub query_recording_max_files: usize,
     }
 
     impl Default for PrivacyConfig {
@@ -565,6 +573,8 @@ mod runtime {
                 query_log_retention_secs: default_query_log_retention_secs(),
                 query_recording_path: None,
                 query_recording_max_bytes: default_query_recording_max_bytes(),
+                query_recording_rotation_enabled: false,
+                query_recording_max_files: default_query_recording_max_files(),
             }
         }
     }
@@ -942,6 +952,10 @@ mod runtime {
 
     fn default_query_recording_max_bytes() -> u64 {
         64 * 1024 * 1024
+    }
+
+    fn default_query_recording_max_files() -> usize {
+        3
     }
 
     fn default_max_cache_ttl_secs() -> u64 {
@@ -1946,6 +1960,14 @@ mod runtime {
             {
                 return Err(policy::PolicyError::InvalidAdmission {
                     reason: "query recording max bytes must be between 1 and 1073741824".into(),
+                });
+            }
+            if config.privacy.query_recording_path.is_some()
+                && (config.privacy.query_recording_max_files == 0
+                    || config.privacy.query_recording_max_files > 16)
+            {
+                return Err(policy::PolicyError::InvalidAdmission {
+                    reason: "query recording max files must be between 1 and 16".into(),
                 });
             }
             if config.policy.blocklist_reload_interval_secs > MAX_BLOCKLIST_RELOAD_INTERVAL_SECS {
@@ -3867,6 +3889,11 @@ mod runtime {
                 "query_recording_enabled": self.recording.is_some()
                     || self.config.privacy.query_recording_path.is_some(),
                 "query_recording_max_bytes": self.config.privacy.query_recording_max_bytes,
+                "query_recording_rotation_enabled": self
+                    .config
+                    .privacy
+                    .query_recording_rotation_enabled,
+                "query_recording_max_files": self.config.privacy.query_recording_max_files,
                 "payload_recording": "disabled",
                 "client_identity_recording": "disabled",
             })
@@ -6969,6 +6996,11 @@ mod runtime {
             let mut config = Config::default();
             config.privacy.query_recording_path = Some("decisions.jsonl".into());
             config.privacy.query_recording_max_bytes = 0;
+            assert!(Policy::new(config).is_err());
+
+            let mut config = Config::default();
+            config.privacy.query_recording_path = Some("decisions.jsonl".into());
+            config.privacy.query_recording_max_files = 17;
             assert!(Policy::new(config).is_err());
         }
     }

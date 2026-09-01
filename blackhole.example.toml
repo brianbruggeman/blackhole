@@ -146,11 +146,14 @@ reject_private_upstream_addresses = true
 query_log_enabled = false
 query_log_max_entries = 1024
 query_log_retention_secs = 86400
-# Optional append-only Proxima JSONL destination for the same metadata-only
-# events. Provision rotation/deletion before enabling this destination.
+# Optional Proxima JSONL destination for the same metadata-only events.
 # query_recording_path = "/var/lib/blackhole/query-decisions.jsonl"
 # Hard encoded-byte ceiling for the destination (default: 64 MiB).
 # query_recording_max_bytes = 67108864
+# Opt-in startup rotation when the active file reaches its byte ceiling.
+# Retains at most this many old files as .1, .2, ... (maximum: 16).
+# query_recording_rotation_enabled = false
+# query_recording_max_files = 3
 
 [country_policy]
 # Optional operator-supplied classification map. Each line is COUNTRY CIDR.

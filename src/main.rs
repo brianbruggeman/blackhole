@@ -39,7 +39,7 @@ use proxima_tls::{TlsClientConfig, TlsStreamUpstream};
 use std::{
     env, io,
     net::SocketAddr,
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
     task::{Context, Poll},
 };
@@ -96,9 +96,82 @@ fn validate_query_recording_path(path: &str) -> Result<(), ProximaError> {
     Ok(())
 }
 
+fn rotated_query_recording_path(path: &Path, index: usize) -> PathBuf {
+    let mut value = path.as_os_str().to_os_string();
+    value.push(format!(".{index}"));
+    PathBuf::from(value)
+}
+
+fn rotate_query_recording(
+    path: &Path,
+    max_bytes: u64,
+    max_files: usize,
+) -> Result<(), ProximaError> {
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(ProximaError::Record(format!(
+                "inspect query recording {} for rotation: {error}",
+                path.display()
+            )));
+        }
+    };
+    if metadata.len() <= max_bytes {
+        return Ok(());
+    }
+    if max_files == 0 || max_files > 16 {
+        return Err(ProximaError::Config(
+            "query recording rotation file bound is invalid".into(),
+        ));
+    }
+
+    let oldest = rotated_query_recording_path(path, max_files + 1);
+    match std::fs::remove_file(&oldest) {
+        Ok(()) => {
+            if oldest.exists() {
+                return Err(ProximaError::Record(format!(
+                    "query recording rotation could not delete {}",
+                    oldest.display()
+                )));
+            }
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(ProximaError::Record(format!(
+                "query recording rotation delete {}: {error}",
+                oldest.display()
+            )));
+        }
+    }
+
+    for index in (1..max_files).rev() {
+        let from = rotated_query_recording_path(path, index);
+        if from.exists() {
+            let to = rotated_query_recording_path(path, index + 1);
+            std::fs::rename(&from, &to).map_err(|error| {
+                ProximaError::Record(format!(
+                    "query recording rotation rename {} to {}: {error}",
+                    from.display(),
+                    to.display()
+                ))
+            })?;
+        }
+    }
+    let first = rotated_query_recording_path(path, 1);
+    std::fs::rename(path, &first).map_err(|error| {
+        ProximaError::Record(format!(
+            "query recording rotation rename {} to {}: {error}",
+            path.display(),
+            first.display()
+        ))
+    })?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::validate_query_recording_path;
+    use super::{rotate_query_recording, validate_query_recording_path};
     use std::path::PathBuf;
 
     fn temporary_path(suffix: &str) -> PathBuf {
@@ -124,6 +197,31 @@ mod tests {
         std::fs::create_dir(&path).expect("temporary directory");
         assert!(validate_query_recording_path(path.to_str().expect("UTF-8 path")).is_err());
         std::fs::remove_dir(&path).expect("remove temporary directory");
+    }
+
+    #[test]
+    fn recording_rotation_bounds_retained_files_and_verifies_oldest_deletion() {
+        let directory = temporary_path("rotation");
+        std::fs::create_dir(&directory).expect("temporary directory");
+        let path = directory.join("decisions.jsonl");
+        std::fs::write(&path, b"active").expect("active recording");
+        std::fs::write(path.with_extension("jsonl.1"), b"one").expect("first rotation");
+        std::fs::write(path.with_extension("jsonl.2"), b"two").expect("second rotation");
+        std::fs::write(path.with_extension("jsonl.3"), b"oldest").expect("oldest rotation");
+
+        rotate_query_recording(&path, 3, 2).expect("rotate recording");
+
+        assert!(!path.exists());
+        assert_eq!(
+            std::fs::read(path.with_extension("jsonl.1")).unwrap(),
+            b"active"
+        );
+        assert_eq!(
+            std::fs::read(path.with_extension("jsonl.2")).unwrap(),
+            b"one"
+        );
+        assert!(!path.with_extension("jsonl.3").exists());
+        std::fs::remove_dir_all(directory).expect("remove temporary directory");
     }
 }
 
@@ -403,8 +501,17 @@ async fn main() -> Result<(), ProximaError> {
         country_reload_interval != 0 && config.country_policy.map_path.is_some();
     let query_recording_path = config.privacy.query_recording_path.clone();
     let query_recording_max_bytes = config.privacy.query_recording_max_bytes;
+    let query_recording_rotation_enabled = config.privacy.query_recording_rotation_enabled;
+    let query_recording_max_files = config.privacy.query_recording_max_files;
     if let Some(path) = query_recording_path.as_deref() {
         validate_query_recording_path(path)?;
+        if query_recording_rotation_enabled {
+            rotate_query_recording(
+                Path::new(path),
+                query_recording_max_bytes,
+                query_recording_max_files,
+            )?;
+        }
     }
     let mut capture = install_capture(&capture_config, bind.port())?;
     let upstream = config.upstream.clone();
