@@ -34,6 +34,11 @@ struct ClientIdentityUpsert {
 }
 
 #[derive(Debug, serde::Deserialize)]
+struct FilteringUpdate {
+    enabled: bool,
+}
+
+#[derive(Debug, serde::Deserialize)]
 struct ProfileUpsert {
     profiles: Vec<ServiceProfileConfig>,
 }
@@ -83,7 +88,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <meta charset="utf-8">
 <title>Blackhole</title>
 <h1>Blackhole</h1>
-<p><button id="clear-logs">Clear log</button> <button id="clear-stats">Clear stats</button> <button id="clear-cache">Clear cache</button> <button id="clear-abuse">Clear abuse</button> <button id="reload-blocklists">Reload lists</button> <button id="reload-country">Reload country</button> <button id="reload-admission">Reload admission</button> <button id="reload-bundle">Publish config</button></p>
+<p><button id="clear-logs">Clear log</button> <button id="clear-stats">Clear stats</button> <button id="clear-cache">Clear cache</button> <button id="clear-abuse">Clear abuse</button> <button id="reload-blocklists">Reload lists</button> <button id="reload-country">Reload country</button> <button id="reload-admission">Reload admission</button> <button id="reload-bundle">Publish config</button> <button id="toggle-filtering">Toggle filtering</button></p>
 <p id="operation-status"></p>
 <h2>Status</h2><pre id="status"></pre>
 <h2>Stats</h2><pre id="stats"></pre>
@@ -118,6 +123,7 @@ const load = (path, target) => fetch(path).then(response => response.json()).the
     }
   }
   if (path === '/policy-bundle') {
+    document.querySelector('#toggle-filtering').textContent = `${value.filtering_enabled ? 'Disable' : 'Enable'} filtering`;
     const toggle = (id, items, route, field, removeRoute) => {
       const controls = document.querySelector(id);
       controls.replaceChildren();
@@ -164,6 +170,7 @@ document.querySelector('#reload-blocklists').onclick = () => operate('/reload/bl
 document.querySelector('#reload-country').onclick = () => operate('/reload/country', {method:'POST'}).then(refresh);
 document.querySelector('#reload-admission').onclick = () => operate('/reload/admission', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#admission-config').value}).then(refresh);
 document.querySelector('#reload-bundle').onclick = () => operate('/reload/config', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#policy-bundle').value}).then(refresh);
+document.querySelector('#toggle-filtering').onclick = () => fetch('/policy-bundle').then(response => response.json()).then(value => operate('/reload/filtering', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({enabled: !value.filtering_enabled})}).then(refresh));
 refresh();
 </script>
 "#;
@@ -441,6 +448,27 @@ impl SendPipe for AdminHandler {
                 }
             }
             ("GET", "/policy/status") => Ok(Response::ok(self.policy.admin_policy_status())),
+            ("POST", "/reload/filtering") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let update = match serde_json::from_slice::<FilteringUpdate>(&request.payload) {
+                    Ok(update) => update,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                let state = self.policy.set_filtering_enabled(update.enabled);
+                let status = match state {
+                    crate::snapshot::ReloadState::Published => "reloaded",
+                    crate::snapshot::ReloadState::Unchanged => "unchanged",
+                };
+                Ok(Response::ok(format!("{{\"status\":\"{status}\"}}")))
+            }
             ("GET", "/blocklists") => Ok(Response::ok(self.policy.admin_blocklists())),
             ("GET", "/policy-bundle") => Ok(Response::ok(self.policy.admin_policy_bundle())),
             ("GET", "/privacy/status") => Ok(Response::ok(self.policy.admin_privacy_status())),
@@ -1268,7 +1296,7 @@ mod tests {
             );
         }
         assert!(
-            ui.payload.len() < 8 * 1024,
+            ui.payload.len() < 12 * 1024,
             "admin UI payload is {} bytes",
             ui.payload.len()
         );
@@ -2448,6 +2476,62 @@ mod tests {
         let response = block_on(handler.call(invalid)).expect("invalid legacy response");
         assert_eq!(response.status, 422);
         assert_eq!(policy.evaluate(&query("new.example.")).unwrap().rcode, 3);
+    }
+
+    #[test]
+    fn filtering_toggle_route_is_bounded_atomic_and_reports_unchanged() {
+        let policy = Arc::new(Policy::new(crate::Config::default()).expect("default policy"));
+        let handler = AdminHandler::new(Arc::clone(&policy));
+        let disabled = Request::builder()
+            .method("POST")
+            .path("/reload/filtering")
+            .payload(r#"{"enabled":false}"#)
+            .build()
+            .expect("disable filtering request");
+        let response = block_on(handler.call(disabled)).expect("disable filtering response");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.payload.as_ref(), br#"{"status":"reloaded"}"#);
+
+        let unchanged = Request::builder()
+            .method("POST")
+            .path("/reload/filtering")
+            .payload(r#"{"enabled":false}"#)
+            .build()
+            .expect("unchanged filtering request");
+        let response = block_on(handler.call(unchanged)).expect("unchanged filtering response");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.payload.as_ref(), br#"{"status":"unchanged"}"#);
+        assert!(
+            policy
+                .admin_policy_status()
+                .contains("\"filtering_enabled\":false")
+        );
+
+        let malformed = Request::builder()
+            .method("POST")
+            .path("/reload/filtering")
+            .payload(r#"{"enabled":"false"}"#)
+            .build()
+            .expect("malformed filtering request");
+        assert_eq!(
+            block_on(handler.call(malformed))
+                .expect("malformed response")
+                .status,
+            400
+        );
+
+        let oversized = Request::builder()
+            .method("POST")
+            .path("/reload/filtering")
+            .payload("x".repeat(MAX_POLICY_BODY_BYTES + 1))
+            .build()
+            .expect("oversized filtering request");
+        assert_eq!(
+            block_on(handler.call(oversized))
+                .expect("oversized response")
+                .status,
+            413
+        );
     }
 
     #[test]

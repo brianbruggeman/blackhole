@@ -3909,6 +3909,17 @@ mod runtime {
             Ok(ReloadState::Published)
         }
 
+        /// Atomically change only the live filtering gate. The immutable
+        /// policy snapshot remains available for a later re-enable.
+        pub fn set_filtering_enabled(&self, enabled: bool) -> ReloadState {
+            if *self.filtering_enabled.snapshot() == enabled {
+                return ReloadState::Unchanged;
+            }
+            self.filtering_enabled_control.replace(enabled);
+            self.policy_generation.fetch_add(1, Ordering::Relaxed);
+            ReloadState::Published
+        }
+
         /// Reload the policy-bearing portions of a configuration file. The
         /// listener, transport, storage, capture, and process-capacity
         /// settings remain startup-only and must not change underneath the

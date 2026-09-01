@@ -61,6 +61,9 @@ DNS edge. When `policy.rules` is configured, it is authoritative and legacy
 Set `policy.filtering_enabled = false` for an atomic temporary filtering
 pause; the policy remains loaded and can be re-enabled through the full
 configuration reload without losing rules, rewrites, or forwarding settings.
+Authenticated operators can also toggle that live gate directly with
+`POST /reload/filtering` and `{"enabled":false}` (or `true`); repeated values
+return `unchanged` without rebuilding the policy snapshot.
 Pass and observe queries use the configured Proxima upstream after local
 rewrites; explicit forward rules use the same bounded upstream path and fail
 closed when it is not configured. Forwarded positive and negative answers are

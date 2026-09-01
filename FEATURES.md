@@ -25,6 +25,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Atomic operator control to temporarily disable all filtering while retaining
   the configured policy for a later re-enable; rewrites and forwarding remain
   available during the disabled interval.
+- Authenticated bounded `POST /reload/filtering` atomically toggles the live
+  filtering gate without rebuilding the policy snapshot and reports unchanged
+  values explicitly.
 - Client-scoped rules can match one exact address or a bounded list of IPv4
   and IPv6 CIDRs; the most specific matching network wins.
 - Bounded client identity labels can be mapped from exact IPv4/IPv6 addresses
