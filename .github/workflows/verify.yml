@@ -37,6 +37,20 @@ jobs:
         run: |
           sh -n deploy/systemd/install.sh
           sh -n deploy/launchd/install.sh
+          sh -n deploy/package/build.sh
+          sh -n deploy/package/build-deb.sh
+      - name: build release packages
+        run: |
+          cargo build --locked --release --features std --bin blackhole
+          mkdir -p dist
+          deploy/package/build.sh target/release/blackhole dist
+          deploy/package/build-deb.sh target/release/blackhole dist
+          tar -tzf dist/blackhole-*.tar.gz >/dev/null
+          ar t dist/blackhole_*.deb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: blackhole-linux-packages-${{ github.sha }}
+          path: dist/
       - name: build capture smoke
         run: cargo build --locked --example capture_smoke
       - name: run privileged capture smoke
@@ -52,6 +66,8 @@ jobs:
         run: |
           sh -n deploy/systemd/install.sh
           sh -n deploy/launchd/install.sh
+          sh -n deploy/package/build.sh
+          sh -n deploy/package/build-deb.sh
       - name: validate launchd service
         run: plutil -lint deploy/launchd/com.brianbruggeman.blackhole.plist
       - name: record macOS toolchain
