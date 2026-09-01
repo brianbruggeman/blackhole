@@ -29,6 +29,10 @@ jobs:
       - run: cargo install cargo-audit --locked
       - run: cargo audit
       - run: cargo audit --file fuzz/Cargo.lock
+      - name: validate deployment scripts
+        run: |
+          sh -n deploy/systemd/install.sh
+          sh -n deploy/launchd/install.sh
 
   macos:
     runs-on: macos-latest
@@ -36,6 +40,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: validate deployment scripts
+        run: |
+          sh -n deploy/systemd/install.sh
+          sh -n deploy/launchd/install.sh
       - name: validate launchd service
         run: plutil -lint deploy/launchd/com.brianbruggeman.blackhole.plist
       - name: record macOS toolchain
