@@ -3,7 +3,7 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
 use blackhole::admin::authenticated_handle;
-use blackhole::{Config, Policy};
+use blackhole::{ClientGroupConfig, Config, Policy, ServiceProfileConfig};
 use futures::io::{AsyncReadExt, AsyncWriteExt};
 use proxima::StreamUpstreamExt;
 use proxima::{Listener, ListenerBuilderEntry};
@@ -48,7 +48,23 @@ async fn request(
 
 #[proxima::test]
 async fn admin_http_listener_enforces_bearer_auth() {
-    let policy = Arc::new(Policy::new(Config::default()).expect("default policy"));
+    let mut config = Config::default();
+    config.policy.client_groups = vec![ClientGroupConfig {
+        name: "home".into(),
+        client_cidrs: vec!["192.0.2.0/24".into()],
+    }];
+    config.policy.profiles = vec![ServiceProfileConfig {
+        id: 400,
+        name: "family".into(),
+        domains: vec!["ads.example".into()],
+        action: blackhole::Action::Nxdomain,
+        groups: vec!["home".into()],
+        priority: 10,
+        client_cidrs: Vec::new(),
+        qtype: None,
+        qclass: None,
+    }];
+    let policy = Arc::new(Policy::new(config).expect("default policy"));
     let handle = authenticated_handle(Arc::clone(&policy), "integration-secret".into())
         .expect("admin handle");
     let addr = admin_addr();
@@ -86,6 +102,30 @@ async fn admin_http_listener_enforces_bearer_auth() {
     let status = String::from_utf8_lossy(&status);
     assert!(status.starts_with("HTTP/1.1 200"));
     assert!(status.contains("\"cache_entries\":0"));
+    let profiles = request(
+        addr,
+        "GET",
+        "/profiles",
+        Some("Bearer integration-secret"),
+        None,
+    )
+    .await
+    .expect("profiles response");
+    let profiles = String::from_utf8_lossy(&profiles);
+    assert!(profiles.starts_with("HTTP/1.1 200"));
+    assert!(profiles.contains("\"name\":\"family\""));
+    let groups = request(
+        addr,
+        "GET",
+        "/client-groups",
+        Some("Bearer integration-secret"),
+        None,
+    )
+    .await
+    .expect("client groups response");
+    let groups = String::from_utf8_lossy(&groups);
+    assert!(groups.starts_with("HTTP/1.1 200"));
+    assert!(groups.contains("\"name\":\"home\""));
     let logs = request(
         addr,
         "GET",
