@@ -75,8 +75,9 @@ priority = 10
 resolver_ip = "1.1.1.1"
 port = 53
 # udp uses bounded TCP fallback on TC; tcp uses framed TCP for every query;
-# tls uses DNS-over-TLS for every query; doh uses DNS-over-HTTPS and both
-# encrypted modes require tls_server_name.
+# tls uses DNS-over-TLS for every query; doh uses DNS-over-HTTPS; doq uses
+# DNS-over-QUIC. All encrypted modes require tls_server_name. DoQ additionally
+# requires building blackhole with --features doq.
 transport = "udp"
 # tls_server_name = "cloudflare-dns.com"
 query_timeout_ms = 2000

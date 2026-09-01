@@ -74,7 +74,9 @@ UDP with bounded TCP fallback, `transport = "tcp"` uses DNS-over-TCP for every
 exchange, `transport = "tls"` uses DNS-over-TLS for every exchange, and
 `transport = "doh"` uses DNS-over-HTTPS for every exchange. Encrypted modes
 require `tls_server_name` and validate the server certificate through
-Proxima's GitHub HTTP/TLS pipe adapters.
+Proxima's GitHub HTTP/TLS pipe adapters. `transport = "doq"` uses
+DNS-over-QUIC through Proxima's existing QUIC stream adapter and requires the
+opt-in `doq` feature; the default Prime build remains QUIC-free.
 
 Proxima is consumed from GitHub. Prime is the default runtime and executable
 path. Proxima's HTTP listener currently brings a small Tokio dependency into

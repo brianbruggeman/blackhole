@@ -25,6 +25,8 @@ use proxima::{Listener, ListenerBuilderEntry, ProximaError};
 use proxima_net::prime::{PrimeDatagramFactory, PrimeTcpUpstream};
 #[cfg(feature = "std")]
 use proxima_primitives::stream::{StreamConnection, StreamUpstream};
+#[cfg(feature = "doq")]
+use proxima_quic::QuicUpstream;
 #[cfg(feature = "std")]
 use proxima_tls::{TlsClientConfig, TlsStreamUpstream};
 #[cfg(feature = "std")]
@@ -35,6 +37,20 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
 };
+
+#[cfg(feature = "doq")]
+fn doq_tls_config() -> Result<rustls::ClientConfig, ProximaError> {
+    let mut roots = rustls::RootCertStore::empty();
+    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    let provider = std::sync::Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+    let mut config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(|error| ProximaError::Config(format!("invalid DoQ TLS versions: {error}")))?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    config.alpn_protocols = vec![b"doq".to_vec()];
+    Ok(config)
+}
 
 #[cfg(feature = "std")]
 struct BoxedTlsUpstream {
@@ -315,6 +331,29 @@ async fn main() -> Result<(), ProximaError> {
                             ProximaError::Config(format!("invalid TLS upstream: {error}"))
                         })?;
                         Arc::new(BoxedTlsUpstream { inner: tls })
+                    }
+                    UpstreamTransport::Doq => {
+                        #[cfg(feature = "doq")]
+                        {
+                            let server_name = upstream.tls_server_name.ok_or_else(|| {
+                                ProximaError::Config(
+                                    "tls_server_name is required for DoQ upstreams".into(),
+                                )
+                            })?;
+                            let tls = doq_tls_config()?;
+                            Arc::new(
+                                QuicUpstream::with_client_config(resolver_addr, server_name, tls)
+                                    .map_err(|error| {
+                                    ProximaError::Config(format!("invalid DoQ upstream: {error}"))
+                                })?,
+                            )
+                        }
+                        #[cfg(not(feature = "doq"))]
+                        {
+                            return Err(ProximaError::Config(
+                                "DoQ upstreams require the `doq` feature".into(),
+                            ));
+                        }
                     }
                     UpstreamTransport::Doh => unreachable!("DoH handled above"),
                 };

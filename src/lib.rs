@@ -464,6 +464,8 @@ mod runtime {
         Tcp,
         Tls,
         Doh,
+        /// DNS-over-QUIC; available when the `doq` feature is enabled.
+        Doq,
     }
 
     impl Default for UpstreamTransport {
@@ -1823,7 +1825,7 @@ mod runtime {
             }
             if matches!(
                 upstream.transport,
-                UpstreamTransport::Tls | UpstreamTransport::Doh
+                UpstreamTransport::Tls | UpstreamTransport::Doh | UpstreamTransport::Doq
             ) && upstream
                 .tls_server_name
                 .as_deref()
@@ -3199,7 +3201,11 @@ mod runtime {
                 Err(policy::PolicyError::InvalidUpstream { .. })
             ));
 
-            for transport in [UpstreamTransport::Tls, UpstreamTransport::Doh] {
+            for transport in [
+                UpstreamTransport::Tls,
+                UpstreamTransport::Doh,
+                UpstreamTransport::Doq,
+            ] {
                 let config = Config {
                     upstream: Some(UpstreamConfig {
                         transport,
@@ -3226,6 +3232,16 @@ mod runtime {
             let config = Config {
                 upstream: Some(UpstreamConfig {
                     transport: UpstreamTransport::Doh,
+                    tls_server_name: Some("resolver.example".into()),
+                    ..UpstreamConfig::default()
+                }),
+                ..Config::default()
+            };
+            assert!(Policy::new(config).is_ok());
+
+            let config = Config {
+                upstream: Some(UpstreamConfig {
+                    transport: UpstreamTransport::Doq,
                     tls_server_name: Some("resolver.example".into()),
                     ..UpstreamConfig::default()
                 }),
