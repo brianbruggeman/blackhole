@@ -76,9 +76,11 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Upstream rebinding protection for private, local, link-local, unspecified,
   multicast, and IPv6 unique-local A/AAAA answers, with fail-closed SERVFAIL.
 - Optional country deny and observe-only (“snitch”) policy from a bounded,
-  operator-supplied country-to-CIDR map; longest-prefix entries win and the
-  classification is not treated as exact identity. An optional freshness bound
-  fails closed when the map file is stale or its timestamp is unavailable.
+  operator-supplied country/CIDR map with optional region and ASN labels;
+  longest-prefix entries win and the classification is not treated as exact
+  identity. Region and ASN selectors are explicit map-label policy, not a
+  bundled or inferred GeoIP identity. An optional freshness bound fails closed
+  when the map file is stale or its timestamp is unavailable.
 - An optional bounded background country-map reload uses Proxima's interval
   and lifecycle primitives, publishes only changed valid maps, and preserves
   the last good snapshot after a failed refresh.
