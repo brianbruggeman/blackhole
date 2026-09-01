@@ -142,6 +142,9 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   support authenticated deletion; logging is disabled by default.
 - A tested policy/FSM/snapshot core that does not require privileged capture
   APIs.
+- A pure `blackhole::edge` parse-and-policy entry point that preserves the
+  existing rule/action identity and compiles in the no-std WASM edge tier;
+  the owned runtime and transport remain outside this boundary.
 - Shared capture-controller orchestration with exact ownership journaling,
   rollback on journal failure, corruption-safe restart recovery, and cleanup
   refusal for ownership mismatches.

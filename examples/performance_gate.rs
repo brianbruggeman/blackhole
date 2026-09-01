@@ -212,7 +212,9 @@ fn main() {
         rss_kib(),
         load_average()
     );
-    println!("arms=scalar-retained memchr-not-added simd-not-added wasm-not-built");
+    println!(
+        "arms=scalar-retained memchr-not-added simd-not-added wasm-edge-compile-only wasm-runtime-not-installed"
+    );
 }
 
 struct Measurements {

@@ -20,6 +20,16 @@ arms=scalar-retained memchr-not-added simd-not-added wasm-not-built
 
 This row is a baseline only. It predates boundary instrumentation.
 
+## Row 3 — pure edge-path WASM build
+
+`MEASURED` on 2026-09-01, `wasm32-unknown-unknown`, default features disabled,
+source commit `df0a437`. `cargo build --locked --no-default-features
+--target wasm32-unknown-unknown --lib` completed successfully. The compiler
+reported `/home/bix/.cache/cargo/wasm32-unknown-unknown/debug/libblackhole.rlib`.
+The edge correctness test also passed on the host. No WASM runtime is installed
+in this environment, so runtime latency, throughput, allocations, and RSS are
+not measured and no WASM performance win is claimed.
+
 ## Row 1 — scalar reference with boundary counters
 
 `MEASURED` on 2026-08-31, Linux `x86_64`, rustc 1.98.0, release build, with
