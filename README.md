@@ -104,7 +104,8 @@ token = "a-long-random-secret"
 ```
 
 It provides an authenticated bounded status UI at `GET /` that links the
-status, rule metadata, and privacy-log views. The same routes are available as
+status, privacy status, rule metadata, and privacy-log views, with a button for
+reloading configured blocklists. The same routes are available as
 authenticated `GET /health`, `GET /status`, bounded `GET /policy/status`,
 `GET /rules`, `GET /logs`,
 and `POST /logs/clear`, `POST /cache/clear`, `POST /reload/blocklists`, bounded

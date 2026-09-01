@@ -57,8 +57,9 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <style>body{font:15px system-ui,sans-serif;max-width:70rem;margin:2rem auto;padding:0 1rem}pre{background:#f3f3f3;padding:1rem;overflow:auto}button{padding:.4rem .7rem}</style>
 <h1>Blackhole DNS</h1>
 <p>Authenticated operator control plane. DNS names and packet payloads are not shown here.</p>
-<p><button id="clear-logs">Clear privacy log</button></p>
+<p><button id="clear-logs">Clear privacy log</button> <button id="reload-blocklists">Reload blocklists</button></p>
 <h2>Status</h2><pre id="status">loading…</pre>
+<h2>Privacy status</h2><pre id="privacy-status">loading…</pre>
 <h2>Rules</h2><pre id="rules">loading…</pre>
 <h2>Service profiles</h2><pre id="profiles">loading…</pre>
 <h2>Client groups</h2><pre id="groups">loading…</pre>
@@ -67,8 +68,9 @@ const ADMIN_UI: &str = r#"<!doctype html>
 const load = (path, target) => fetch(path).then(response => response.json()).then(value => {
   document.querySelector(target).textContent = JSON.stringify(value, null, 2);
 });
-const refresh = () => Promise.all([load('/status','#status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/logs','#logs')]);
+const refresh = () => Promise.all([load('/status','#status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/logs','#logs')]);
 document.querySelector('#clear-logs').onclick = () => fetch('/logs/clear', {method:'POST'}).then(refresh);
+document.querySelector('#reload-blocklists').onclick = () => fetch('/reload/blocklists', {method:'POST'}).then(refresh);
 refresh();
 </script>
 "#;
@@ -469,6 +471,16 @@ mod tests {
         assert_eq!(ui.status, 200);
         assert!(ui.payload.starts_with(b"<!doctype html>"));
         assert!(ui.payload.windows(5).any(|window| window == b"/logs"));
+        assert!(
+            ui.payload
+                .windows(b"/privacy/status".len())
+                .any(|window| window == b"/privacy/status")
+        );
+        assert!(
+            ui.payload
+                .windows(b"/reload/blocklists".len())
+                .any(|window| window == b"/reload/blocklists")
+        );
         assert!(ui.payload.len() < 4 * 1024);
         let clear =
             block_on(handler.call(request("POST", "/cache/clear"))).expect("cache clear response");
