@@ -191,7 +191,8 @@ without publication. `POST /reload/profiles/remove` removes profiles by stable
 ID and rejects unknown IDs without changing the live snapshot.
 `POST /reload/client-groups/upsert` replaces or adds named client CIDR groups
 while preserving profiles and validates the resulting profile expansion before
-publication.
+publication; each group may be disabled atomically while retaining its address
+and CIDR metadata.
 `POST /reload/client-groups/remove` removes named groups only when no profile
 references them; dependent removals fail without changing the live snapshot.
 `POST /reload/client-identities` replaces all exact/CIDR client-identity mappings,
@@ -205,8 +206,9 @@ table. Invalid and unknown updates fail without publication.
 `POST /reload/policy-bundle` replaces the domain, regex, profile, client-group,
 client-identity,
 local-rewrite, and country-policy tables as one validated snapshot while
-retaining loaded blocklists. Its optional `mode`, `domains`, and
-`default_action` fields also replace the legacy fallback settings atomically;
+retaining loaded blocklists. Its optional `mode`, `domains`, `default_action`,
+and `filtering_enabled` fields also replace the legacy fallback settings
+atomically;
 its optional `blocklists` array can replace the
 blocklist source paths in the same validated publication; omitted or `null`
 retains the current blocklist snapshot. Reloads bound source count, path
