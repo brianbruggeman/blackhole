@@ -56,7 +56,7 @@ backup_file() {
     target=$1
     backup=$2
     if [ -e "$target" ]; then
-        cp -p -- "$target" "$backup"
+        cp -p "$target" "$backup"
     else
         : > "$backup.absent"
     fi
@@ -66,9 +66,9 @@ restore_file() {
     target=$1
     backup=$2
     if [ -e "$backup" ]; then
-        cp -p -- "$backup" "$target"
+        cp -p "$backup" "$target"
     elif [ -e "$backup.absent" ]; then
-        rm -f -- "$target"
+        rm -f "$target"
     fi
 }
 
@@ -84,7 +84,7 @@ cleanup() {
             launchctl bootstrap system "/Library/LaunchDaemons/$label.plist" >/dev/null 2>&1 || true
         fi
     fi
-    rm -r -- "$backup_dir"
+    rm -r "$backup_dir"
     exit "$status"
 }
 

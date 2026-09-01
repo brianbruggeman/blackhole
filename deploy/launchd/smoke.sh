@@ -37,7 +37,10 @@ fi
 cleanup() {
     status=$?
     launchctl bootout "system/$label" >/dev/null 2>&1 || true
-    rm -f -- "$binary_target" "$config_target" "$plist_target"
+    rm -f "$binary_target" "$config_target" "$plist_target"
+    if [ -n "${failed_plist:-}" ]; then
+        rm -f "$failed_plist"
+    fi
     rmdir "$state_target" /usr/local/var/lib /usr/local/etc/blackhole \
         /usr/local/etc /Library/LaunchDaemons 2>/dev/null || true
     if [ "$created_user" -eq 1 ]; then
@@ -67,4 +70,22 @@ launchctl print "system/$label" >/dev/null
 test "$old_binary" = "$(shasum -a 256 "$binary_target")"
 test "$old_config" = "$(shasum -a 256 "$config_target")"
 test "$old_plist" = "$(shasum -a 256 "$plist_target")"
+
+# A valid plist with no executable is accepted by plutil but rejected by
+# launchd. The installer must restore the previous service and every payload
+# after this failed upgrade transaction.
+failed_plist=$(mktemp "${TMPDIR:-/tmp}/blackhole-launchd-failed.XXXXXX")
+cp -p "$plist" "$failed_plist"
+sed -i '' 's#<string>/usr/local/bin/blackhole</string>#<string></string>#' \
+    "$failed_plist"
+if BLACKHOLE_BINARY="$binary" BLACKHOLE_CONFIG="$config" \
+    BLACKHOLE_PLIST="$failed_plist" "$script_dir/install.sh"; then
+    echo "failed launchd upgrade unexpectedly succeeded" >&2
+    exit 1
+fi
+launchctl print "system/$label" >/dev/null
+test "$old_binary" = "$(shasum -a 256 "$binary_target")"
+test "$old_config" = "$(shasum -a 256 "$config_target")"
+test "$old_plist" = "$(shasum -a 256 "$plist_target")"
+rm -f "$failed_plist"
 printf '%s\n' 'launchd host install and upgrade smoke passed'

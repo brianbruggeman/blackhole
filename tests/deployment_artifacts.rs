@@ -167,6 +167,7 @@ fn launchd_smoke_covers_host_install_and_upgrade() {
         "BLACKHOLE_PLIST",
         "old_binary=$(shasum -a 256",
         "second real install exercises the host upgrade path",
+        "failed launchd upgrade unexpectedly succeeded",
         "launchd host install and upgrade smoke passed",
     ] {
         assert!(

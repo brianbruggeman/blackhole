@@ -44,10 +44,6 @@ below are future capabilities, grouped by the dependency layer they extend.
   capability; until that upstream seam exists, keep original-destination and
   reply-routing metadata inside the platform adapter and do not synthesize it
   in policy, telemetry, or recordings.
-- Add host-installed macOS launchd upgrade/rollback verification for the
-  native service; Linux package and systemd upgrade/rollback transactions are
-  already covered by the CI smoke fixtures. The archive installer and
-  disposable-root transactions remain covered as well.
 
 ## Incumbent parity and extensions
 
