@@ -48,8 +48,8 @@ below are future capabilities, grouped by the dependency layer they extend.
 ## Incumbent parity and extensions
 
 - Extend the bounded privacy-safe query-decision log with operator-selected
-  redaction and durable retention backends while preserving authenticated
-  access and deletion verification.
+  redaction, rotation, and deletion-verification backends beyond the current
+  metadata-only, byte-bounded Proxima JSONL destination.
 - Extend the current bounded authenticated status UI into a full optional web
   UI and add an optional DHCP adapter.
 - Add the remaining Pi-hole/AdGuard Home policy features, including richer
