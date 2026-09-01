@@ -83,25 +83,25 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <meta charset="utf-8">
 <title>Blackhole</title>
 <h1>Blackhole</h1>
-<p><button id="clear-logs">Clear privacy log</button> <button id="clear-stats">Clear decision statistics</button> <button id="clear-cache">Clear DNS cache</button> <button id="clear-abuse">Clear temporary abuse state</button> <button id="reload-blocklists">Reload blocklists</button> <button id="reload-country">Reload country map</button> <button id="reload-admission">Reload admission JSON</button> <button id="reload-bundle">Publish full config</button></p>
+<p><button id="clear-logs">Clear log</button> <button id="clear-stats">Clear stats</button> <button id="clear-cache">Clear cache</button> <button id="clear-abuse">Clear abuse</button> <button id="reload-blocklists">Reload lists</button> <button id="reload-country">Reload country</button> <button id="reload-admission">Reload admission</button> <button id="reload-bundle">Publish config</button></p>
 <p id="operation-status"></p>
-<h2>Status</h2><pre id="status">loading…</pre>
-<h2>Decision statistics</h2><pre id="stats">loading…</pre>
-<h2>Admission limits</h2><textarea id="admission-config" rows="16" cols="80">loading…</textarea><pre id="admission-status">loading…</pre>
-<h2>Abuse status</h2><pre id="abuse-status">loading…</pre>
-<h2>Managed client denylist</h2><textarea id="denylist-config" rows="5" cols="80">loading…</textarea><p><button id="add-denylist">Add entries</button> <button id="remove-denylist">Revoke entries</button></p>
+<h2>Status</h2><pre id="status"></pre>
+<h2>Stats</h2><pre id="stats"></pre>
+<h2>Admission</h2><textarea id="admission-config" rows="16" cols="80"></textarea><pre id="admission-status"></pre>
+<h2>Abuse</h2><pre id="abuse-status"></pre>
+<h2>Denylist</h2><textarea id="denylist-config" rows="5" cols="80"></textarea><p><button id="add-denylist">Add</button> <button id="remove-denylist">Revoke</button></p>
 <h2>Abuse</h2><textarea id="abuse-revoke"></textarea><button id="revoke-abuse">Revoke</button><button id="approve-abuse">Approve</button>
-<h2>Incident review</h2><p><button id="export-abuse">Export durable incidents</button></p><pre id="abuse-incidents">loading…</pre>
+<h2>Incidents</h2><p><button id="export-abuse">Export durable</button></p><pre id="abuse-incidents"></pre>
 <h2>Policy bundle</h2><textarea id="policy-bundle" rows="12" cols="80">loading…</textarea>
-<h2>Blocklists</h2><textarea id="blocklist-sources"></textarea><button id="replace-blocklists">Replace</button><button id="add-blocklists">Add</button><button id="remove-blocklists">Remove</button><button id="reload-blocklists">Reload</button><div id="blocklist-controls"></div><pre id="blocklists">loading…</pre>
-<h2>Country policy</h2><pre id="country-status">loading…</pre>
-<h2>Privacy status</h2><pre id="privacy-status">loading…</pre>
-<h2>Rules</h2><pre id="rules">loading…</pre>
-<h2>Service profiles</h2><div id="profile-controls"></div><pre id="profiles">loading…</pre>
-<h2>Client groups</h2><div id="group-controls"></div><pre id="groups">loading…</pre>
-<h2>Client identities</h2><div id="identity-controls"></div><pre id="identities">loading…</pre>
-<h2>Local rewrites</h2><pre id="rewrites">loading…</pre>
-<h2>Privacy log</h2><pre id="logs">loading…</pre>
+<h2>Blocklists</h2><textarea id="blocklist-sources"></textarea><button id="replace-blocklists">Replace</button><button id="add-blocklists">Add</button><button id="remove-blocklists">Remove</button><button id="reload-blocklists">Reload</button><div id="blocklist-controls"></div><pre id="blocklists"></pre>
+<h2>Country</h2><pre id="country-status"></pre>
+<h2>Privacy</h2><pre id="privacy-status"></pre>
+<h2>Rules</h2><pre id="rules"></pre>
+<h2>Profiles</h2><div id="profile-controls"></div><pre id="profiles"></pre>
+<h2>Groups</h2><div id="group-controls"></div><pre id="groups"></pre>
+<h2>Identities</h2><div id="identity-controls"></div><pre id="identities"></pre>
+<h2>Rewrites</h2><pre id="rewrites"></pre>
+<h2>Privacy log</h2><pre id="logs"></pre>
 <script>
 const load = (path, target) => fetch(path).then(response => response.json()).then(value => {
   if (path === '/blocklists') {
@@ -118,24 +118,22 @@ const load = (path, target) => fetch(path).then(response => response.json()).the
     }
   }
   if (path === '/policy-bundle') {
-    const toggle = (id, items, route, field, label) => {
+    const toggle = (id, items, route, field, removeRoute) => {
       const controls = document.querySelector(id);
       controls.replaceChildren();
       for (const item of items || []) {
         const button = document.createElement('button');
         button.textContent = `${item.enabled ? 'Disable' : 'Enable'} ${item.name || item.id}`;
-        button.onclick = () => {
-          const next = Object.assign({}, item, {enabled: !item.enabled});
-          return operate(route, {
-            method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({[field]:[next]})
-          }).then(refresh);
-        };
-        controls.append(button, document.createTextNode(` ${label} `));
+        button.onclick = () => send(route, {[field]:[Object.assign({}, item, {enabled: !item.enabled})]});
+        const remove = document.createElement('button');
+        remove.textContent = 'Remove';
+        remove.onclick = () => send(removeRoute, [item.name || item.id]);
+        controls.append(button, remove, document.createTextNode(' '));
       }
     };
-    toggle('#profile-controls', value.profiles, '/reload/profiles/upsert', 'profiles', '');
-    toggle('#group-controls', value.client_groups, '/reload/client-groups/upsert', 'client_groups', '');
-    toggle('#identity-controls', value.client_identities, '/reload/client-identities/upsert', 'client_identities', '');
+    toggle('#profile-controls', value.profiles, '/reload/profiles/upsert', 'profiles', '/reload/profiles/remove');
+    toggle('#group-controls', value.client_groups, '/reload/client-groups/upsert', 'client_groups', '/reload/client-groups/remove');
+    toggle('#identity-controls', value.client_identities, '/reload/client-identities/upsert', 'client_identities', '/reload/client-identities/remove');
   }
   if (path === '/policy-bundle') document.querySelector(target).value = JSON.stringify(value, null, 2);
   else if (path === '/abuse/denylist') document.querySelector(target).value = JSON.stringify(value, null, 2);
@@ -148,6 +146,7 @@ const operate = (path, options) => fetch(path, options).then(async response => {
   document.querySelector('#operation-status').textContent = `${path}: ${value.status || 'ok'}`;
   return value;
 }).catch(error => { document.querySelector('#operation-status').textContent = `${path}: ${error.message}`; throw error; });
+const send = (path, body) => operate(path, {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body)}).then(refresh);
 const refresh = () => Promise.all([load('/status','#status'), load('/stats','#stats'), load('/admission/status','#admission-status'), load('/abuse/status','#abuse-status'), load('/abuse/incidents','#abuse-incidents'), load('/abuse/denylist','#denylist-config'), load('/policy-bundle','#policy-bundle'), load('/blocklists','#blocklists'), load('/country/status','#country-status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/client-identities','#identities'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
 document.querySelector('#clear-logs').onclick = () => operate('/logs/clear', {method:'POST'}).then(refresh);
 document.querySelector('#clear-stats').onclick = () => operate('/stats/clear', {method:'POST'}).then(refresh);
@@ -1245,8 +1244,11 @@ mod tests {
         );
         for route in [
             b"/reload/profiles/upsert".as_slice(),
+            b"/reload/profiles/remove".as_slice(),
             b"/reload/client-groups/upsert".as_slice(),
+            b"/reload/client-groups/remove".as_slice(),
             b"/reload/client-identities/upsert".as_slice(),
+            b"/reload/client-identities/remove".as_slice(),
         ] {
             assert!(
                 ui.payload
