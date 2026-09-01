@@ -1247,6 +1247,9 @@ mod runtime {
         pub action: Action,
         #[serde(default)]
         pub groups: Vec<String>,
+        /// Optional adapter-owned identity label targeted by this profile.
+        #[serde(default)]
+        pub client_identity: Option<String>,
         #[serde(default)]
         pub priority: i32,
         #[serde(default)]
@@ -1902,6 +1905,7 @@ mod runtime {
     struct ClientScope {
         client: Option<IpAddr>,
         client_cidrs: Vec<String>,
+        client_identity: Option<String>,
     }
 
     fn compile_profiles(
@@ -1959,12 +1963,14 @@ mod runtime {
                 .map(|client| ClientScope {
                     client: Some(client),
                     client_cidrs: Vec::new(),
+                    client_identity: None,
                 })
                 .collect::<Vec<_>>();
             if !group.client_cidrs.is_empty() {
                 scopes.push(ClientScope {
                     client: None,
                     client_cidrs: group.client_cidrs.clone(),
+                    client_identity: None,
                 });
             }
             if group_map
@@ -2001,16 +2007,32 @@ mod runtime {
                     reason: format!("combined domain count exceeds {}", policy::MAX_RULES),
                 });
             }
-            if !profile.groups.is_empty() && !profile.client_cidrs.is_empty() {
+            if (!profile.groups.is_empty() && !profile.client_cidrs.is_empty())
+                || profile.client_identity.is_some()
+                    && (!profile.groups.is_empty() || !profile.client_cidrs.is_empty())
+            {
                 return Err(policy::PolicyError::InvalidProfile {
                     name: profile.name.clone(),
-                    reason: "groups and client_cidrs are mutually exclusive".into(),
+                    reason: "groups, client_cidrs, and client_identity are mutually exclusive"
+                        .into(),
                 });
+            }
+            if let Some(identity) = profile.client_identity.as_deref() {
+                if identity.trim().is_empty()
+                    || !identity.is_ascii()
+                    || identity.len() > policy::MAX_CLIENT_IDENTITY_BYTES
+                {
+                    return Err(policy::PolicyError::InvalidProfile {
+                        name: profile.name.clone(),
+                        reason: "client_identity must be bounded non-empty ASCII".into(),
+                    });
+                }
             }
             let group_scopes = if profile.groups.is_empty() {
                 vec![ClientScope {
                     client: None,
                     client_cidrs: profile.client_cidrs.clone(),
+                    client_identity: profile.client_identity.clone(),
                 }]
             } else {
                 profile
@@ -2072,7 +2094,7 @@ mod runtime {
                         client: scope.client,
                         client_cidr: None,
                         client_cidrs: scope.client_cidrs.clone(),
-                        client_identity: None,
+                        client_identity: scope.client_identity.clone(),
                     });
                 }
             }
@@ -6207,6 +6229,7 @@ mod runtime {
                 domains: vec!["profile.example".into()],
                 action: Action::Nxdomain,
                 groups: Vec::new(),
+                client_identity: None,
                 priority: 0,
                 client_cidrs: Vec::new(),
                 qtype: None,
@@ -6617,6 +6640,69 @@ mod runtime {
                 policy.action_for_view_with_client(view, Some("192.0.2.11".parse().unwrap())),
                 Action::Pass
             );
+        }
+
+        #[test]
+        fn service_profile_can_target_an_adapter_owned_identity() {
+            let mut config = Config::default();
+            config.policy.client_identities = vec![ClientIdentityConfig {
+                name: "family-router".into(),
+                clients: vec!["192.0.2.10".parse().expect("client")],
+                client_cidrs: Vec::new(),
+            }];
+            config.policy.profiles = vec![ServiceProfileConfig {
+                id: 6_000,
+                name: "family-policy".into(),
+                domains: vec!["identity.example".into()],
+                action: Action::Reject,
+                groups: Vec::new(),
+                client_identity: Some("family-router".into()),
+                priority: 3,
+                client_cidrs: Vec::new(),
+                qtype: None,
+                qclass: None,
+            }];
+            let policy = Policy::new(config).expect("valid identity profile");
+            let query = proxima_dns::DnsQuery {
+                id: 4,
+                recursion_desired: true,
+                name: "identity.example.".into(),
+                qtype: 1,
+                qclass: 1,
+            };
+            assert_eq!(
+                policy
+                    .decision(&query, Some("192.0.2.10".parse().unwrap()))
+                    .expect("identity profile decision")
+                    .action,
+                Action::Reject
+            );
+            assert!(
+                policy
+                    .decision(&query, Some("192.0.2.11".parse().unwrap()))
+                    .is_none()
+            );
+        }
+
+        #[test]
+        fn service_profile_rejects_mixed_identity_and_network_scope() {
+            let mut config = Config::default();
+            config.policy.profiles = vec![ServiceProfileConfig {
+                id: 6_001,
+                name: "ambiguous-profile".into(),
+                domains: vec!["identity.example".into()],
+                action: Action::Reject,
+                groups: Vec::new(),
+                client_identity: Some("family-router".into()),
+                priority: 0,
+                client_cidrs: vec!["192.0.2.0/24".into()],
+                qtype: None,
+                qclass: None,
+            }];
+            assert!(matches!(
+                Policy::new(config),
+                Err(policy::PolicyError::InvalidProfile { .. })
+            ));
         }
 
         #[test]
@@ -7406,6 +7492,7 @@ mod runtime {
                 domains: vec!["ads.example".into(), "tracking.example".into()],
                 action: Action::Nxdomain,
                 groups: Vec::new(),
+                client_identity: None,
                 priority: 10,
                 client_cidrs: vec!["192.0.2.0/24".into()],
                 qtype: Some(1),
@@ -7469,6 +7556,7 @@ mod runtime {
                 domains: vec!["ads.example".into()],
                 action: Action::Nxdomain,
                 groups: vec!["FAMILY".into(), "guest".into()],
+                client_identity: None,
                 priority: 10,
                 client_cidrs: Vec::new(),
                 qtype: None,
@@ -7512,6 +7600,7 @@ mod runtime {
                 domains: vec!["ads.example".into()],
                 action: Action::Reject,
                 groups: vec!["named-clients".into()],
+                client_identity: None,
                 priority: 0,
                 client_cidrs: Vec::new(),
                 qtype: None,
@@ -7555,6 +7644,7 @@ mod runtime {
                 domains: vec!["ads.example".into()],
                 action: Action::Nxdomain,
                 groups: vec!["missing".into()],
+                client_identity: None,
                 priority: 0,
                 client_cidrs: Vec::new(),
                 qtype: None,
@@ -7577,6 +7667,7 @@ mod runtime {
                 domains: vec!["ads.example".into()],
                 action: Action::Nxdomain,
                 groups: vec!["family".into()],
+                client_identity: None,
                 priority: 0,
                 client_cidrs: vec!["198.51.100.0/24".into()],
                 qtype: None,
@@ -7612,6 +7703,7 @@ mod runtime {
                     domains: vec!["ads.example".into()],
                     action: Action::Nxdomain,
                     groups: Vec::new(),
+                    client_identity: None,
                     priority: 0,
                     client_cidrs: Vec::new(),
                     qtype: None,
@@ -7623,6 +7715,7 @@ mod runtime {
                     domains: vec!["tracking.example".into()],
                     action: Action::Nxdomain,
                     groups: Vec::new(),
+                    client_identity: None,
                     priority: 0,
                     client_cidrs: Vec::new(),
                     qtype: None,
@@ -7646,6 +7739,7 @@ mod runtime {
                     domains: vec!["first.example".into(); per_profile],
                     action: Action::Nxdomain,
                     groups: Vec::new(),
+                    client_identity: None,
                     priority: 0,
                     client_cidrs: Vec::new(),
                     qtype: None,
@@ -7657,6 +7751,7 @@ mod runtime {
                     domains: vec!["second.example".into(); per_profile],
                     action: Action::Nxdomain,
                     groups: Vec::new(),
+                    client_identity: None,
                     priority: 0,
                     client_cidrs: Vec::new(),
                     qtype: None,

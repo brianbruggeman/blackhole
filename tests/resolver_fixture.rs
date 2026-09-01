@@ -431,6 +431,7 @@ async fn listener_enforces_service_profile_on_the_real_udp_path() {
         domains: vec!["ads.example".into()],
         action: Action::Nxdomain,
         groups: vec!["loopback".into()],
+        client_identity: None,
         priority: 10,
         client_cidrs: Vec::new(),
         qtype: None,

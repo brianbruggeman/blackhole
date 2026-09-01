@@ -73,6 +73,7 @@ async fn admin_http_listener_enforces_bearer_auth() {
         domains: vec!["ads.example".into()],
         action: blackhole::Action::Nxdomain,
         groups: vec!["home".into()],
+        client_identity: None,
         priority: 10,
         client_cidrs: Vec::new(),
         qtype: None,
