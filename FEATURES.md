@@ -56,8 +56,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   protocol TTL, a bounded stale-serving window for upstream outages, plus
   Proxima-native hit/miss/stale/eviction counters and effective positive/
   negative TTL histograms.
-- A bounded upstream circuit breaker with configurable failure threshold and
-  cooldown; open circuits fail closed unless a stale cached answer is usable.
+- A bounded upstream circuit breaker using Proxima's `CircuitBreaker` state
+  machine, with configurable failure threshold and cooldown; open circuits
+  fail closed unless a stale cached answer is usable.
 - Bounded admission controls that reject malformed/overlong owned queries,
   response/reserved DNS query flags, optionally reject `ANY`, cap emitted answer records and approximate wire
   size, reject zero-valued question type/class fields, cap response amplification relative to the query, and shed excess

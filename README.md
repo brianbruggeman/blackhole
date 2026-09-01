@@ -58,7 +58,8 @@ cached within configured bounds. A truncated UDP answer is retried over the
 same upstream's bounded DNS-over-TCP path after validating its response ID,
 question, QR bit, and opcode. Timeout is bounded to 60 seconds and retries to
 eight attempts per exchange, while an upstream circuit breaker limits repeated
-failures and permits stale answers only during its configured stale window.
+failures through Proxima's `CircuitBreaker` state machine and permits stale
+answers only during its configured stale window.
 Repeated per-client rate-limit violations open a bounded temporary abuse
 breaker; unidentified callers are not assigned a shared abuse identity.
 Encoded responses also consume a bounded per-client byte budget per second;

@@ -102,6 +102,7 @@ mod runtime {
         DnsAnswer, DnsAnswerRecord, DnsAnswerWithMetadata, DnsClientUpstream, DnsPipeReply,
         DnsPipeRequest,
     };
+    use proxima_primitives::pipe::CircuitBreaker as ProximaCircuitBreaker;
     use proxima_primitives::pipe::SendPipe;
     use proxima_primitives::pipe::endpoint::PeerInfo;
     use proxima_primitives::stream::DatagramFactory;
@@ -264,49 +265,6 @@ mod runtime {
                 },
             );
             evicted
-        }
-    }
-
-    #[derive(Debug, Clone)]
-    struct CircuitBreaker {
-        threshold: u32,
-        cooldown: Duration,
-        failures: u32,
-        open_until: Option<Instant>,
-    }
-
-    impl CircuitBreaker {
-        fn new(threshold: u32, cooldown_secs: u64) -> Self {
-            Self {
-                threshold: threshold.max(1),
-                cooldown: Duration::from_secs(cooldown_secs.max(1)),
-                failures: 0,
-                open_until: None,
-            }
-        }
-
-        fn allows(&mut self, now: Instant) -> bool {
-            match self.open_until {
-                Some(until) if now < until => false,
-                Some(_) => {
-                    self.open_until = None;
-                    self.failures = 0;
-                    true
-                }
-                None => true,
-            }
-        }
-
-        fn success(&mut self) {
-            self.failures = 0;
-            self.open_until = None;
-        }
-
-        fn failure(&mut self, now: Instant) {
-            self.failures = self.failures.saturating_add(1);
-            if self.failures >= self.threshold {
-                self.open_until = Some(now + self.cooldown);
-            }
         }
     }
 
@@ -1945,7 +1903,8 @@ mod runtime {
         upstream: Option<DnsClientUpstream>,
         upstream_slots: Option<Arc<Semaphore>>,
         cache: Arc<Mutex<DnsCache>>,
-        breaker: Arc<Mutex<CircuitBreaker>>,
+        breaker: Arc<Mutex<ProximaCircuitBreaker>>,
+        breaker_epoch: Instant,
         request_slots: Arc<Semaphore>,
         client_admission: Arc<Mutex<HashMap<IpAddr, usize>>>,
         client_rates: Arc<Mutex<HashMap<IpAddr, ClientRate>>>,
@@ -2247,19 +2206,22 @@ mod runtime {
             let reference = PolicyStore::new(&config.policy.rules)?;
             let cache = Arc::new(Mutex::new(DnsCache::new(&config.cache)));
             let max_inflight_requests = config.admission.max_inflight_requests;
-            let breaker = Arc::new(Mutex::new(CircuitBreaker::new(
+            let breaker = Arc::new(Mutex::new(ProximaCircuitBreaker::new(
                 config
                     .upstream
                     .as_ref()
                     .map_or(default_breaker_failures(), |upstream| {
                         upstream.breaker_failures
                     }),
-                config
-                    .upstream
-                    .as_ref()
-                    .map_or(default_breaker_cooldown_secs(), |upstream| {
-                        upstream.breaker_cooldown_secs
-                    }),
+                Duration::from_secs(
+                    config
+                        .upstream
+                        .as_ref()
+                        .map_or(default_breaker_cooldown_secs(), |upstream| {
+                            upstream.breaker_cooldown_secs
+                        }),
+                ),
+                1,
             )));
             let rules_configured =
                 !config.policy.rules.is_empty() || !config.policy.regex_rules.is_empty();
@@ -2308,6 +2270,7 @@ mod runtime {
                 upstream_slots: None,
                 cache,
                 breaker,
+                breaker_epoch: Instant::now(),
                 request_slots: Arc::new(Semaphore::new(max_inflight_requests)),
                 client_admission: Arc::new(Mutex::new(HashMap::new())),
                 client_rates: Arc::new(Mutex::new(HashMap::new())),
@@ -3569,6 +3532,13 @@ mod runtime {
                 Some(PeerInfo::Tcp(address)) => Some(address.ip()),
                 _ => None,
             }
+        }
+
+        fn breaker_now_nanos(&self) -> u64 {
+            self.breaker_epoch
+                .elapsed()
+                .as_nanos()
+                .min(u64::MAX as u128) as u64
         }
 
         fn client_identity_for(&self, client: Option<std::net::IpAddr>) -> Option<String> {
@@ -4915,7 +4885,7 @@ mod runtime {
                     .breaker
                     .lock()
                     .expect("breaker lock")
-                    .allows(Instant::now())
+                    .allow(self.breaker_now_nanos())
                 {
                     if let Some(answer) = self.cache.lock().expect("cache lock").stale(&key) {
                         self.observe_cache("stale_hit");
@@ -4938,12 +4908,12 @@ mod runtime {
                             self.breaker
                                 .lock()
                                 .expect("breaker lock")
-                                .failure(Instant::now());
+                                .on_failure(self.breaker_now_nanos());
                             self.observe_failure(cause);
                             self.observe(forwarding_action);
                             return Ok(DnsPipeReply::typed(200, server_failure_answer()));
                         }
-                        self.breaker.lock().expect("breaker lock").success();
+                        self.breaker.lock().expect("breaker lock").on_success();
                         let answer = response.answer;
                         if matches!(answer.rcode, 0 | 3) {
                             self.observe_cache_ttl(&answer);
@@ -4962,7 +4932,7 @@ mod runtime {
                         self.breaker
                             .lock()
                             .expect("breaker lock")
-                            .failure(Instant::now());
+                            .on_failure(self.breaker_now_nanos());
                         if let Some(answer) = self.cache.lock().expect("cache lock").stale(&key) {
                             self.observe_cache("stale_hit");
                             self.observe(forwarding_action);
@@ -6471,15 +6441,15 @@ mod runtime {
 
         #[test]
         fn upstream_breaker_opens_after_bounded_failures_and_recovers() {
-            let mut breaker = CircuitBreaker::new(2, 30);
-            let now = Instant::now();
-            assert!(breaker.allows(now));
-            breaker.failure(now);
-            assert!(breaker.allows(now));
-            breaker.failure(now);
-            assert!(!breaker.allows(now));
-            breaker.success();
-            assert!(breaker.allows(now));
+            let mut breaker = ProximaCircuitBreaker::new(2, Duration::from_secs(30), 1);
+            assert!(breaker.allow(0));
+            breaker.on_failure(0);
+            assert!(breaker.allow(0));
+            breaker.on_failure(0);
+            assert!(!breaker.allow(1));
+            assert!(breaker.allow(30_000_000_000));
+            breaker.on_success();
+            assert!(breaker.allow(30_000_000_001));
         }
 
         #[test]
