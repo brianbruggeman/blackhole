@@ -48,8 +48,8 @@ below are future capabilities, grouped by the dependency layer they extend.
 - Extend the bounded privacy-safe query-decision log with operator-selected
   redaction and durable retention backends while preserving authenticated
   access and deletion verification.
-- Extend the current bounded authenticated status page into a full optional
-  web UI and add an optional DHCP adapter.
+- Extend the current bounded authenticated status UI into a full optional web
+  UI and add an optional DHCP adapter.
 - Add the remaining Pi-hole/AdGuard Home policy features, including richer
   per-client identity and group-management controls.
 - Add a separately isolated honeypot terminal with explicit retention and

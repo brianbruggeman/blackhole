@@ -89,8 +89,9 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   reloads from JSON, and an atomic bounded domain-rule append operation.
 - The authenticated control plane can also remove domain rules by stable ID;
   unknown IDs fail without changing the published snapshot.
-- The authenticated admin control plane includes a bounded static status page;
-  it contains no query data and uses the existing Proxima HTTP pipe.
+- The authenticated admin control plane includes a bounded status UI for
+  status, rule metadata, and privacy-log inspection/clearing; it contains no
+  packet payloads and uses the existing Proxima HTTP pipe.
 - Authenticated cache deletion clears all bounded positive and negative DNS
   answers and reports only the number of entries removed.
 - Optional bounded privacy-safe query-decision logs use Proxima's recording

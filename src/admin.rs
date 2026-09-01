@@ -15,14 +15,20 @@ const MAX_POLICY_BODY_BYTES: usize = 64 * 1024;
 const ADMIN_UI: &str = r#"<!doctype html>
 <meta charset="utf-8">
 <title>Blackhole DNS</title>
+<style>body{font:15px system-ui,sans-serif;max-width:70rem;margin:2rem auto;padding:0 1rem}pre{background:#f3f3f3;padding:1rem;overflow:auto}button{padding:.4rem .7rem}</style>
 <h1>Blackhole DNS</h1>
-<p>Authenticated operator control plane.</p>
-<pre id="status">loading status…</pre>
-<p><a href="/rules">View rule metadata</a></p>
+<p>Authenticated operator control plane. DNS names and packet payloads are not shown here.</p>
+<p><button id="clear-logs">Clear privacy log</button></p>
+<h2>Status</h2><pre id="status">loading…</pre>
+<h2>Rules</h2><pre id="rules">loading…</pre>
+<h2>Privacy log</h2><pre id="logs">loading…</pre>
 <script>
-fetch('/status').then(response => response.json()).then(value => {
-  document.querySelector('#status').textContent = JSON.stringify(value, null, 2);
+const load = (path, target) => fetch(path).then(response => response.json()).then(value => {
+  document.querySelector(target).textContent = JSON.stringify(value, null, 2);
 });
+const refresh = () => Promise.all([load('/status','#status'), load('/rules','#rules'), load('/logs','#logs')]);
+document.querySelector('#clear-logs').onclick = () => fetch('/logs/clear', {method:'POST'}).then(refresh);
+refresh();
 </script>
 "#;
 
@@ -238,6 +244,7 @@ mod tests {
         let ui = block_on(handler.call(request("GET", "/"))).expect("UI response");
         assert_eq!(ui.status, 200);
         assert!(ui.payload.starts_with(b"<!doctype html>"));
+        assert!(ui.payload.windows(5).any(|window| window == b"/logs"));
         assert!(ui.payload.len() < 4 * 1024);
         let clear =
             block_on(handler.call(request("POST", "/cache/clear"))).expect("cache clear response");
