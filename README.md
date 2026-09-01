@@ -299,8 +299,8 @@ For an unprivileged macOS deployment, install
 `deploy/launchd/com.brianbruggeman.blackhole.plist` as
 `/Library/LaunchDaemons/com.brianbruggeman.blackhole.plist`. The launch daemon
 runs directly as the dedicated `_blackhole` user and reads
-`/usr/local/etc/blackhole/blackhole.toml`; create
-`/usr/local/var/lib/blackhole` owned by that account before loading it. Keep the
+`/usr/local/etc/blackhole/blackhole.toml`; the checked-in installer creates the
+account and state directory with bounded ownership. Keep the
 example high-port listener unless a separately authorized PF redirect is
 installed: macOS does not provide Linux-style per-binary low-port capabilities.
 Validate the installed configuration with
@@ -329,5 +329,7 @@ deploy/package/build.sh target/release/blackhole dist
 ```
 
 The resulting archive contains the binary, example configuration, systemd and
-launchd assets, `PROVENANCE.txt`, and `SHA256SUMS`. Native package-manager
-artifacts and host upgrade automation are not implied by this bundle.
+launchd assets, the launchd host install/upgrade smoke harness,
+`PROVENANCE.txt`, and `SHA256SUMS`. Native package-manager artifacts are not
+implied by this archive; the Debian builder and its disposable install/upgrade
+smoke are separate checked-in paths.
