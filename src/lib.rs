@@ -107,7 +107,7 @@ mod runtime {
     use proxima_primitives::pipe::bucket_table::BucketTable;
     use proxima_primitives::pipe::endpoint::PeerInfo;
     use proxima_primitives::stream::DatagramFactory;
-    use proxima_primitives::sync::Semaphore;
+    use proxima_primitives::sync::AtomicPermitPool;
     use serde::Deserialize;
     use std::collections::{BTreeSet, HashMap, VecDeque};
     use std::hash::Hash;
@@ -2208,12 +2208,12 @@ mod runtime {
         admission: Live<AdmissionConfig>,
         admission_control: LiveControl<AdmissionConfig>,
         upstream: Option<DnsClientUpstream>,
-        upstream_slots: Option<Arc<Semaphore>>,
+        upstream_slots: Option<Arc<AtomicPermitPool>>,
         cache: Live<DnsCache>,
         cache_control: LiveControl<DnsCache>,
         breaker: Arc<ProximaCircuitBreaker>,
         breaker_epoch: Instant,
-        request_slots: Arc<Semaphore>,
+        request_slots: Arc<AtomicPermitPool>,
         client_admission: ClientAdmissionTable,
         client_rates: KeyedWindowBudgetTable,
         global_rate: AtomicWindowBudget,
@@ -2538,7 +2538,7 @@ mod runtime {
                 cache_control,
                 breaker,
                 breaker_epoch: Instant::now(),
-                request_slots: Arc::new(Semaphore::new(max_inflight_requests)),
+                request_slots: Arc::new(AtomicPermitPool::new(max_inflight_requests)),
                 client_admission: ClientAdmissionTable::new(),
                 client_rates: KeyedWindowBudgetTable::new(),
                 global_rate: AtomicWindowBudget::new(),
@@ -3648,7 +3648,7 @@ mod runtime {
             max_outstanding: usize,
         ) -> Self {
             self.upstream = Some(DnsClientUpstream::new(factory, config));
-            self.upstream_slots = Some(Arc::new(Semaphore::new(
+            self.upstream_slots = Some(Arc::new(AtomicPermitPool::new(
                 max_outstanding.clamp(1, MAX_UPSTREAM_OUTSTANDING),
             )));
             self
@@ -4896,7 +4896,7 @@ mod runtime {
             request: DnsPipeRequest,
             selected_action: Option<Action>,
         ) -> Result<DnsPipeReply, ProximaError> {
-            let Ok(_request_slot) = self.request_slots.try_acquire() else {
+            let Some(_request_slot) = self.request_slots.try_acquire() else {
                 self.observe_failure("admission_overflow");
                 self.observe(Action::Reject);
                 return Ok(DnsPipeReply::typed(200, server_failure_answer()));
@@ -4995,7 +4995,7 @@ mod runtime {
                     self.observe(forwarding_action);
                     return Ok(DnsPipeReply::typed(204, DnsAnswer::ok(Vec::new())));
                 };
-                let Ok(_slot) = slots.try_acquire() else {
+                let Some(_slot) = slots.try_acquire() else {
                     self.observe_failure("upstream_overflow");
                     self.observe(forwarding_action);
                     return Ok(DnsPipeReply::typed(204, DnsAnswer::ok(Vec::new())));
