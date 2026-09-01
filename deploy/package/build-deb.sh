@@ -86,7 +86,8 @@ install -d -o blackhole -g blackhole -m 0750 /var/lib/blackhole
 if command -v systemd-tmpfiles >/dev/null 2>&1; then
     systemd-tmpfiles --create /etc/tmpfiles.d/blackhole.conf
 fi
-if command -v systemctl >/dev/null 2>&1; then
+init=$(ps -p 1 -o comm= 2>/dev/null || true)
+if [ "$init" = systemd ] && command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload
     systemctl enable --now blackhole.service
 fi
@@ -95,7 +96,9 @@ cat > "$staging/control/prerm" <<'EOF'
 #!/bin/sh
 set -eu
 
-if [ "${1:-}" = remove ] && command -v systemctl >/dev/null 2>&1; then
+init=$(ps -p 1 -o comm= 2>/dev/null || true)
+if [ "${1:-}" = remove ] && [ "$init" = systemd ] \
+    && command -v systemctl >/dev/null 2>&1; then
     systemctl disable --now blackhole.service || true
     systemctl daemon-reload || true
 fi

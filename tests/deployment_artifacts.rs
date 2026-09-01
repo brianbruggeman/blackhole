@@ -179,6 +179,8 @@ fn deb_builder_contains_native_package_contract() {
         "cat > \"$staging/control/prerm\"",
         "systemctl enable --now blackhole.service",
         "systemctl disable --now blackhole.service",
+        "ps -p 1 -o comm=",
+        "[ \"$init\" = systemd ]",
         "ar r",
         ".deb",
     ] {
