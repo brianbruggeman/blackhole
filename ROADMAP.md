@@ -44,7 +44,8 @@ below are future capabilities, grouped by the dependency layer they extend.
 
 ## Incumbent parity and extensions
 
-- Add encrypted upstreams and optional DoH, DoT, and DoQ server endpoints.
+- Add optional DoH and DoQ upstream/server endpoints; DNS-over-TLS upstream
+  transport is implemented in the current baseline.
 - Add bounded query logs and privacy controls for retention, redaction, access,
   and deletion.
 - Extend the authenticated admin API with an optional web UI and optional DHCP
