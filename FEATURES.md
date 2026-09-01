@@ -112,6 +112,9 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Authenticated bounded `POST /reload/client-groups/upsert` atomically replaces
   existing named CIDR groups or adds new groups while preserving profiles and
   rejecting invalid expansions without publication.
+- Authenticated bounded `POST /reload/client-groups/remove` removes unused
+  named groups and rejects removal when a configured profile still references
+  the group.
 - Authenticated bounded `POST /reload/profiles` atomically replaces service
   profiles and client groups, preserves explicit domain rules, and rejects
   invalid expansions without publishing them.

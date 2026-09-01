@@ -113,6 +113,8 @@ tables from a bounded JSON object with `profiles` and `client_groups` arrays.
 `POST /reload/client-groups/upsert` replaces or adds named client CIDR groups
 while preserving profiles and validates the resulting profile expansion before
 publication.
+`POST /reload/client-groups/remove` removes named groups only when no profile
+references them; dependent removals fail without changing the live snapshot.
 `POST /reload/policy-bundle` replaces the domain, regex, profile, client-group,
 local-rewrite, and country-policy tables as one validated snapshot while
 retaining loaded blocklists. Its optional `blocklists` array can replace the
