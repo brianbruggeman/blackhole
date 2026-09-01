@@ -1572,6 +1572,32 @@ mod runtime {
             rules: &[RuleConfig],
         ) -> Result<ReloadState, policy::PolicyError> {
             let started = Instant::now();
+            let mut base_rules = self.base_rules.lock().expect("base rules lock");
+            self.publish_rules_locked(rules, &mut base_rules, "rules", started)
+        }
+
+        /// Append validated rules to the current authoritative table and
+        /// publish the combined snapshot atomically. The base-table lock is
+        /// held through validation and publication so concurrent appenders do
+        /// not lose one another's updates.
+        pub fn append_rules(
+            &self,
+            additions: &[RuleConfig],
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let started = Instant::now();
+            let mut base_rules = self.base_rules.lock().expect("base rules lock");
+            let mut combined = base_rules.clone();
+            combined.extend_from_slice(additions);
+            self.publish_rules_locked(&combined, &mut base_rules, "rules_append", started)
+        }
+
+        fn publish_rules_locked(
+            &self,
+            rules: &[RuleConfig],
+            base_rules: &mut Vec<RuleConfig>,
+            reload_kind: &'static str,
+            started: Instant,
+        ) -> Result<ReloadState, policy::PolicyError> {
             let regex_ids = self
                 .regex_rules
                 .lock()
@@ -1583,7 +1609,7 @@ mod runtime {
                 return Err(policy::PolicyError::DuplicateRule { id: rule.id });
             }
             let published = self.reference.reload(rules)?;
-            *self.base_rules.lock().expect("base rules lock") = rules.to_vec();
+            *base_rules = rules.to_vec();
             self.domain_rules_configured
                 .store(!rules.is_empty(), Ordering::Release);
             self.rules_configured.store(
@@ -1596,7 +1622,7 @@ mod runtime {
                 Ordering::Release,
             );
             self.cache.lock().expect("cache lock").clear();
-            self.observe_reload_latency("rules", started);
+            self.observe_reload_latency(reload_kind, started);
             Ok(published)
         }
 

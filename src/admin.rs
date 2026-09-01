@@ -65,7 +65,7 @@ impl SendPipe for AdminHandler {
                     serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
                 ))),
             },
-            ("POST", "/reload/policy") => {
+            ("POST", "/reload/policy" | "/reload/policy/add") => {
                 if request.payload.len() > MAX_POLICY_BODY_BYTES {
                     return Ok(Response::new(413));
                 }
@@ -84,7 +84,17 @@ impl SendPipe for AdminHandler {
                         "{\"status\":\"error\",\"message\":\"policy must contain at least one rule\"}",
                     ));
                 }
-                match self.policy.reload_rules(&rules) {
+                if path == "/reload/policy/add" && rules.is_empty() {
+                    return Ok(Response::new(422).with_body(
+                        "{\"status\":\"error\",\"message\":\"policy additions must contain at least one rule\"}",
+                    ));
+                }
+                let result = if path == "/reload/policy/add" {
+                    self.policy.append_rules(&rules)
+                } else {
+                    self.policy.reload_rules(&rules)
+                };
+                match result {
                     Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
                     Err(error) => Ok(Response::new(422).with_body(format!(
                         "{{\"status\":\"error\",\"message\":{}}}",
@@ -117,7 +127,7 @@ impl SendPipe for AdminHandler {
             (
                 _,
                 "/health" | "/status" | "/rules" | "/reload/blocklists" | "/reload/country"
-                | "/reload/policy" | "/reload/regex",
+                | "/reload/policy" | "/reload/policy/add" | "/reload/regex",
             ) => Ok(Response::new(405)),
             _ => Ok(Response::not_found()),
         }
@@ -254,6 +264,22 @@ mod tests {
         let mut query_wire = vec![0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0];
         query_wire.extend_from_slice(b"\x07blocked\x07example\0\0\x01\0\x01");
         let query = crate::query::QueryView::parse(&query_wire).expect("query");
+        assert_eq!(policy.action_for_view(query), crate::Action::Nxdomain);
+
+        let addition = Request::builder()
+            .method("POST")
+            .path("/reload/policy/add")
+            .payload(
+                r#"[{"id":8,"domain":"added.example","action":"drop","priority":0,"qtype":null,"qclass":null,"client":null,"client_cidr":null}]"#,
+            )
+            .build()
+            .expect("valid policy addition request");
+        let response = block_on(handler.call(addition)).expect("addition response");
+        assert_eq!(response.status, 200);
+        let mut added_wire = vec![0, 2, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0];
+        added_wire.extend_from_slice(b"\x05added\x07example\0\0\x01\0\x01");
+        let added_query = crate::query::QueryView::parse(&added_wire).expect("added query");
+        assert_eq!(policy.action_for_view(added_query), crate::Action::Drop);
         assert_eq!(policy.action_for_view(query), crate::Action::Nxdomain);
 
         let invalid = Request::builder()
