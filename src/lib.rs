@@ -2208,6 +2208,106 @@ mod runtime {
             Ok(published)
         }
 
+        /// Atomically replace or add service profiles by stable ID while
+        /// preserving unspecified profiles and the current client groups.
+        pub fn upsert_profiles(
+            &self,
+            updates: &[ServiceProfileConfig],
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
+            let started = Instant::now();
+            if updates.is_empty() {
+                return Err(policy::PolicyError::InvalidProfile {
+                    name: "<profiles>".into(),
+                    reason: "at least one profile is required".into(),
+                });
+            }
+            let mut seen = BTreeSet::new();
+            for profile in updates {
+                if !seen.insert(profile.id) {
+                    return Err(policy::PolicyError::DuplicateRule { id: profile.id });
+                }
+            }
+            let mut profiles = self.profiles.read().expect("profiles lock").clone();
+            for update in updates {
+                if let Some(existing) = profiles.iter_mut().find(|profile| profile.id == update.id)
+                {
+                    *existing = update.clone();
+                } else {
+                    profiles.push(update.clone());
+                }
+            }
+            let groups = self
+                .client_groups
+                .read()
+                .expect("client groups lock")
+                .clone();
+            let generated = compile_profiles(&profiles, &groups)?;
+            let explicit = self
+                .explicit_rules
+                .lock()
+                .expect("explicit rules lock")
+                .clone();
+            let mut combined = explicit.clone();
+            combined.extend(generated);
+            let mut base_rules = self.base_rules.lock().expect("base rules lock");
+            let published = self.publish_rules_locked(
+                &combined,
+                &explicit,
+                &mut base_rules,
+                "profiles_upsert",
+                started,
+            )?;
+            *self.profiles.write().expect("profiles lock") = profiles;
+            Ok(published)
+        }
+
+        /// Remove service profiles by stable ID and atomically republish the
+        /// remaining profile expansion. Unknown IDs fail without mutation.
+        pub fn remove_profiles(&self, ids: &[u32]) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
+            let started = Instant::now();
+            if ids.is_empty() {
+                return Err(policy::PolicyError::InvalidProfile {
+                    name: "<profiles>".into(),
+                    reason: "at least one profile ID is required".into(),
+                });
+            }
+            let requested = ids.iter().copied().collect::<BTreeSet<_>>();
+            let current = self.profiles.read().expect("profiles lock").clone();
+            let mut profiles = current.clone();
+            profiles.retain(|profile| !requested.contains(&profile.id));
+            if profiles.len() == current.len() {
+                return Err(policy::PolicyError::InvalidProfile {
+                    name: "<profiles>".into(),
+                    reason: "no requested profile ID exists".into(),
+                });
+            }
+            let groups = self
+                .client_groups
+                .read()
+                .expect("client groups lock")
+                .clone();
+            let generated = compile_profiles(&profiles, &groups)?;
+            let explicit = self
+                .explicit_rules
+                .lock()
+                .expect("explicit rules lock")
+                .clone();
+            let mut combined = explicit.clone();
+            combined.extend(generated);
+            let mut base_rules = self.base_rules.lock().expect("base rules lock");
+            let published = self.publish_rules_locked(
+                &combined,
+                &explicit,
+                &mut base_rules,
+                "profiles_remove",
+                started,
+            )?;
+            *self.profiles.write().expect("profiles lock") = profiles;
+            Ok(published)
+        }
+
         /// Remove named client groups only when no configured profile depends
         /// on them. Dependency validation and policy publication are atomic.
         pub fn remove_client_groups(

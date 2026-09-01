@@ -29,6 +29,11 @@ struct ClientGroupUpsert {
 }
 
 #[derive(Debug, serde::Deserialize)]
+struct ProfileUpsert {
+    profiles: Vec<ServiceProfileConfig>,
+}
+
+#[derive(Debug, serde::Deserialize)]
 struct PolicyBundle {
     #[serde(default)]
     rules: Vec<RuleConfig>,
@@ -161,6 +166,50 @@ impl SendPipe for AdminHandler {
                     .reload_profiles(&update.profiles, &update.client_groups)
                 {
                     Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
+            ("POST", "/reload/profiles/upsert") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let update = match serde_json::from_slice::<ProfileUpsert>(&request.payload) {
+                    Ok(update) => update,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                match self.policy.upsert_profiles(&update.profiles) {
+                    Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
+            ("POST", "/reload/profiles/remove") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let ids = match serde_json::from_slice::<Vec<u32>>(&request.payload) {
+                    Ok(ids) => ids,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                match self.policy.remove_profiles(&ids) {
+                    Ok(_) => Ok(Response::ok("{\"status\":\"removed\"}")),
                     Err(error) => Ok(Response::new(422).with_body(format!(
                         "{{\"status\":\"error\",\"message\":{}}}",
                         serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
@@ -327,6 +376,8 @@ impl SendPipe for AdminHandler {
                 | "/profiles"
                 | "/client-groups"
                 | "/reload/profiles"
+                | "/reload/profiles/upsert"
+                | "/reload/profiles/remove"
                 | "/reload/client-groups/upsert"
                 | "/reload/client-groups/remove"
                 | "/reload/policy-bundle"
@@ -643,6 +694,74 @@ mod tests {
             serde_json::from_slice(&groups.payload).expect("retained groups JSON");
         assert_eq!(groups["total"], 1);
         assert_eq!(groups["client_groups"][0]["name"], "HOME");
+    }
+
+    #[test]
+    fn profile_upsert_and_removal_are_atomic_by_stable_id() {
+        let mut config = crate::Config::default();
+        config.policy.profiles = vec![crate::ServiceProfileConfig {
+            id: 800,
+            name: "family".into(),
+            domains: vec!["ads.example".into()],
+            action: crate::Action::Nxdomain,
+            groups: Vec::new(),
+            priority: 0,
+            client_cidrs: Vec::new(),
+            qtype: None,
+            qclass: None,
+        }];
+        let policy = Arc::new(Policy::new(config).expect("valid profile policy"));
+        let handler = AdminHandler::new(Arc::clone(&policy));
+        let update = Request::builder()
+            .method("POST")
+            .path("/reload/profiles/upsert")
+            .payload(
+                r#"{"profiles":[{"id":800,"name":"family-edited","domains":["new.example"],"action":"reject"},{"id":801,"name":"guest","domains":["guest.example"],"action":"drop"}]}"#,
+            )
+            .build()
+            .expect("profile upsert request");
+        let response = block_on(handler.call(update)).expect("profile upsert response");
+        assert_eq!(response.status, 200);
+        let profiles =
+            block_on(handler.call(request("GET", "/profiles"))).expect("profile listing");
+        let profiles: serde_json::Value =
+            serde_json::from_slice(&profiles.payload).expect("profile JSON");
+        assert_eq!(profiles["total"], 2);
+        assert_eq!(profiles["profiles"][0]["name"], "family-edited");
+
+        let duplicate = Request::builder()
+            .method("POST")
+            .path("/reload/profiles/upsert")
+            .payload(
+                r#"{"profiles":[{"id":801,"name":"one","domains":["one.example"],"action":"drop"},{"id":801,"name":"two","domains":["two.example"],"action":"reject"}]}"#,
+            )
+            .build()
+            .expect("duplicate profile upsert request");
+        let response = block_on(handler.call(duplicate)).expect("duplicate profile response");
+        assert_eq!(response.status, 422);
+        let remove = Request::builder()
+            .method("POST")
+            .path("/reload/profiles/remove")
+            .payload("[800]")
+            .build()
+            .expect("profile removal request");
+        let response = block_on(handler.call(remove)).expect("profile removal response");
+        assert_eq!(response.status, 200);
+        let profiles =
+            block_on(handler.call(request("GET", "/profiles"))).expect("remaining profiles");
+        let profiles: serde_json::Value =
+            serde_json::from_slice(&profiles.payload).expect("remaining profile JSON");
+        assert_eq!(profiles["total"], 1);
+        assert_eq!(profiles["profiles"][0]["name"], "guest");
+
+        let unknown = Request::builder()
+            .method("POST")
+            .path("/reload/profiles/remove")
+            .payload("[999]")
+            .build()
+            .expect("unknown profile removal request");
+        let response = block_on(handler.call(unknown)).expect("unknown removal response");
+        assert_eq!(response.status, 422);
     }
 
     #[test]
