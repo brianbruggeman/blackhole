@@ -37,7 +37,8 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   with bounded domains, optional IPv4/IPv6 client-network scopes, stable
   generated IDs, independent qtype/qclass filters, optional adapter-owned
   client-identity targeting, and duplicate-name rejection. Identity and
-  network scopes are mutually exclusive and fail closed when combined.
+  network scopes compose as an AND constraint; ambiguous group/direct-CIDR
+  scopes fail closed.
 - Named client groups assign bounded exact IPv4/IPv6 client addresses and CIDR
   sets to service profiles; one profile may target multiple groups, with
   duplicate, unknown, or ambiguous scopes rejected before publication.
