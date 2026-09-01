@@ -65,6 +65,15 @@ jobs:
           test -f package-check/data/etc/blackhole/blackhole.toml
           test -f package-check/data/etc/systemd/system/blackhole.service
           sh -n package-check/control/postinst package-check/control/prerm
+          {
+            echo "source_commit=$GITHUB_SHA"
+            rustc -vV
+            cargo -vV
+            uname -a
+            sha256sum Cargo.lock
+            echo "fuzz_corpus_files=$(find fuzz/corpus/query_view -type f | wc -l)"
+            find fuzz/corpus/query_view -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum
+          } > dist/verification-metadata.txt
       - uses: actions/upload-artifact@v4
         with:
           name: blackhole-linux-packages-${{ github.sha }}
@@ -109,6 +118,8 @@ jobs:
             rustc -vV
             cargo -vV
             cc --version
+            shasum -a 256 Cargo.lock
+            echo "fuzz_corpus_files=$(find fuzz/corpus/query_view -type f | wc -l)"
           } > macos-toolchain.txt 2>&1
       - name: check all targets
         id: macos-check
