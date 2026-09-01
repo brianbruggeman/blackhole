@@ -81,8 +81,22 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --no-default-features --target wasm32-unknown-unknown
+      - run: cargo build --locked --no-default-features --target wasm32-unknown-unknown --lib
       - run: cargo check --examples
+      - name: record WASM provenance
+        run: |
+          {
+            echo "source_commit=$GITHUB_SHA"
+            rustc -vV
+            cargo -vV
+            uname -a
+            sha256sum Cargo.lock
+            stat -c "artifact_bytes=%s artifact=%n" target/wasm32-unknown-unknown/debug/libblackhole.rlib
+          } > wasm-metadata.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: blackhole-wasm-gate-${{ github.sha }}
+          path: wasm-metadata.txt
 
   fuzz:
     runs-on: ubuntu-latest
