@@ -1,6 +1,10 @@
 #!/bin/sh
 set -eu
 
+if [ "${BLACKHOLE_SMOKE_TRACE:-0}" = 1 ]; then
+    set -x
+fi
+
 if [ "$(id -u)" -ne 0 ]; then
     echo "launchd smoke.sh must run as root" >&2
     exit 1
