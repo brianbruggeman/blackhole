@@ -34,8 +34,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   configured address and network scope.
 - Bounded Pi-hole/AdGuard-compatible blocklist ingestion from hosts/domain files
   with comments, normalization, deduplication, apex-and-subdomain blocking,
-  `@@` exceptions, fail-closed startup reloads, and retained per-source
-  enable/disable state.
+  `@@` exceptions, `$important` priority, order-independent `$badfilter`
+  cancellation, fail-closed startup reloads, and retained per-source
+  enable/disable state; unknown filter modifiers are rejected.
 - Bounded local A/AAAA rewrites with explicit policy precedence and fail-closed
   validation for malformed, duplicate, or oversized configuration.
 - Named service-blocking profiles compile into the authoritative rule table,

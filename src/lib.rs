@@ -1558,6 +1558,8 @@ mod runtime {
         }
         let mut domains = BTreeSet::new();
         let mut exceptions = BTreeSet::new();
+        let mut important_domains = BTreeSet::new();
+        let mut badfilter_domains = BTreeSet::new();
         let mut total_bytes = 0_u64;
         for path in paths {
             if path.len() > MAX_BLOCKLIST_PATH_BYTES {
@@ -1613,13 +1615,42 @@ mod runtime {
                 };
                 for raw_domain in fields.iter().skip(start) {
                     let raw_domain = raw_domain.trim_end_matches('.').to_ascii_lowercase();
+                    let (raw_domain, modifiers) = raw_domain
+                        .split_once('$')
+                        .map_or((raw_domain.as_str(), None), |(domain, modifiers)| {
+                            (domain, Some(modifiers))
+                        });
+                    let mut important = false;
+                    let mut badfilter = false;
+                    if let Some(modifiers) = modifiers {
+                        for modifier in modifiers.split(',') {
+                            match modifier {
+                                "important" => important = true,
+                                "badfilter" => badfilter = true,
+                                "" => {
+                                    return Err(policy::PolicyError::InvalidBlocklist {
+                                        path: path.clone(),
+                                        reason: "empty AdGuard filter modifier".into(),
+                                    });
+                                }
+                                _ => {
+                                    return Err(policy::PolicyError::InvalidBlocklist {
+                                        path: path.clone(),
+                                        reason: format!(
+                                            "unsupported AdGuard filter modifier {modifier}"
+                                        ),
+                                    });
+                                }
+                            }
+                        }
+                    }
                     let (exception, domain) =
                         if let Some(stripped) = raw_domain.strip_prefix("@@||") {
                             (true, stripped.trim_end_matches('^').to_owned())
                         } else if let Some(stripped) = raw_domain.strip_prefix("||") {
                             (false, stripped.trim_end_matches('^').to_owned())
                         } else {
-                            (false, raw_domain.clone())
+                            (false, raw_domain.to_owned())
                         };
                     if !valid_blocklist_domain(&domain) {
                         return Err(policy::PolicyError::InvalidBlocklist {
@@ -1629,7 +1660,12 @@ mod runtime {
                     }
                     domains.insert(domain.clone());
                     if exception {
-                        exceptions.insert(domain);
+                        exceptions.insert(domain.clone());
+                    } else if important {
+                        important_domains.insert(domain.clone());
+                    }
+                    if badfilter {
+                        badfilter_domains.insert(domain);
                     }
                     if domains.len() > policy::MAX_RULES / 2 {
                         return Err(policy::PolicyError::InvalidBlocklist {
@@ -1640,6 +1676,11 @@ mod runtime {
                 }
             }
         }
+        for domain in &badfilter_domains {
+            domains.remove(domain);
+            exceptions.remove(domain);
+            important_domains.remove(domain);
+        }
         let mut rules = Vec::with_capacity(domains.len().saturating_mul(2));
         for (index, domain) in domains.into_iter().enumerate() {
             let exception = exceptions.contains(&domain);
@@ -1648,7 +1689,13 @@ mod runtime {
             } else {
                 Action::Nxdomain
             };
-            let priority = if exception { i32::MAX } else { i32::MAX - 1 };
+            let priority = if exception {
+                i32::MAX
+            } else if important_domains.contains(&domain) {
+                i32::MAX - 1
+            } else {
+                i32::MAX - 2
+            };
             let id = u32::MAX.saturating_sub((index.saturating_mul(2)) as u32);
             rules.push(RuleConfig {
                 id,
@@ -6439,6 +6486,51 @@ mod runtime {
             );
             assert_eq!(policy.evaluate(&query("clear.example.")).unwrap().rcode, 0);
             std::fs::remove_file(path).expect("remove blocklist");
+        }
+
+        #[test]
+        fn blocklists_apply_safe_adguard_modifiers_order_independently() {
+            let path = std::env::temp_dir().join(format!(
+                "blackhole-blocklist-modifiers-{}-{}.txt",
+                std::process::id(),
+                1
+            ));
+            std::fs::write(
+                &path,
+                "||cancel.example^$badfilter\n||important.example^$important\n||cancel.example^\n",
+            )
+            .expect("write blocklist");
+            let mut config = Config::default();
+            config.policy.blocklists = vec![path.to_string_lossy().into_owned()];
+            let policy = Policy::new(config).expect("valid modifier blocklist");
+            let query = |name: &str| proxima_dns::DnsQuery {
+                id: 1,
+                recursion_desired: true,
+                name: name.into(),
+                qtype: 1,
+                qclass: 1,
+            };
+            assert_eq!(policy.evaluate(&query("cancel.example.")).unwrap().rcode, 0);
+            assert_eq!(
+                policy.evaluate(&query("important.example.")).unwrap().rcode,
+                3
+            );
+            std::fs::remove_file(path).expect("remove blocklist");
+
+            let unsupported = std::env::temp_dir().join(format!(
+                "blackhole-blocklist-unsupported-{}-{}.txt",
+                std::process::id(),
+                1
+            ));
+            std::fs::write(&unsupported, "||example^$third-party\n").expect("write blocklist");
+            let mut config = Config::default();
+            config.policy.blocklists = vec![unsupported.to_string_lossy().into_owned()];
+            assert!(matches!(
+                Policy::new(config),
+                Err(policy::PolicyError::InvalidBlocklist { reason, .. })
+                    if reason.contains("unsupported AdGuard filter modifier")
+            ));
+            std::fs::remove_file(unsupported).expect("remove blocklist");
         }
 
         #[test]
