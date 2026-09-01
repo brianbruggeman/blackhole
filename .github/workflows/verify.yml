@@ -216,7 +216,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - env:
           BLACKHOLE_SOURCE_COMMIT: ${{ github.sha }}
-        run: cargo run --release --example performance_gate --features perf-instrument > performance-gate.txt
+        run: cargo run --release --locked --example performance_gate --features perf-instrument > performance-gate.txt
       - name: run real listener boundary gate
         env:
           BLACKHOLE_SOURCE_COMMIT: ${{ github.sha }}
