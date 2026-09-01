@@ -6,6 +6,7 @@
 use blackhole::perf;
 use blackhole::policy::{Action, QueryContext, ReferencePolicy, RuleConfig};
 use blackhole::query::QueryView;
+use proxima_protocols::dns::encode;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::hint::black_box;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -70,7 +71,7 @@ fn main() {
         .trim()
     );
     let configs = rules(10_000);
-    let sample_count = 5;
+    let sample_count = 25;
     assert!(sample_count > 0);
     let build = measure(sample_count, || {
         let before = snapshot();
@@ -105,12 +106,31 @@ fn main() {
     // validates wire input and exposes borrowed names without materializing a
     // dotted String. Encoding remains in the owned listener facade and is not
     // duplicated here.
-    let packet = [0u8; 12];
-    let parsing = measure(sample_count, || {
+    let short_packet = wire_query("example.com.");
+    let long_name = (0..24)
+        .map(|index| format!("label{index:02}"))
+        .collect::<Vec<_>>()
+        .join(".");
+    let long_packet = wire_query(&format!("{long_name}."));
+    let adversarial_packet = {
+        let mut packet = vec![
+            0x12, 0x34, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc0, 0x0c,
+            0x00, 0x01, 0x00, 0x01,
+        ];
+        packet.shrink_to_fit();
+        packet
+    };
+    let parsing_short = parse_measure(sample_count, &short_packet);
+    let parsing_long = parse_measure(sample_count, &long_packet);
+    let parsing_adversarial = parse_measure(sample_count, &adversarial_packet);
+    let mixed_packets = [&short_packet, &long_packet, &adversarial_packet];
+    let mut mixed_index = 0usize;
+    let parsing_mixed = measure(sample_count, || {
         let before = snapshot();
         let start = Instant::now();
-        let result = QueryView::parse(&packet);
-        black_box(&result);
+        let packet = mixed_packets[mixed_index % mixed_packets.len()];
+        mixed_index += 1;
+        let _ = black_box(QueryView::parse(packet));
         (start.elapsed().as_nanos(), snapshot().bytes - before.bytes)
     });
 
@@ -137,7 +157,10 @@ fn main() {
     println!("gate=b14 implementation=scalar-reference rules=10000 samples={sample_count}");
     report("build", &build, configs.len());
     report("match", &matching, sample_count * matches_per_sample);
-    report("parse", &parsing, sample_count);
+    report("parse_short", &parsing_short, sample_count);
+    report("parse_long", &parsing_long, sample_count);
+    report("parse_adversarial", &parsing_adversarial, sample_count);
+    report("parse_mixed", &parsing_mixed, sample_count);
     report("owned", &owning, sample_count);
     #[cfg(feature = "perf-instrument")]
     println!(
@@ -224,6 +247,31 @@ fn report(label: &str, measurements: &Measurements, operations: usize) {
 fn percentile(sorted: &[u128], percentile: usize) -> u128 {
     let index = ((sorted.len() - 1) * percentile).div_ceil(100);
     sorted[index]
+}
+
+fn parse_measure(sample_count: usize, packet: &[u8]) -> Measurements {
+    measure(sample_count, || {
+        let before = snapshot();
+        let start = Instant::now();
+        let _ = black_box(QueryView::parse(packet));
+        (start.elapsed().as_nanos(), snapshot().bytes - before.bytes)
+    })
+}
+
+fn wire_query(name: &str) -> Vec<u8> {
+    let mut packet = Vec::new();
+    encode::encode_query(
+        0x1234,
+        true,
+        encode::EncodeQuestion {
+            name,
+            qtype: 1,
+            qclass: 1,
+        },
+        &mut packet,
+    )
+    .expect("benchmark query name fits DNS wire limits");
+    packet
 }
 
 fn rss_kib() -> Option<u64> {
