@@ -5227,6 +5227,12 @@ mod runtime {
 
         fn cap_answer(&self, query: &proxima_dns::DnsQuery, mut answer: DnsAnswer) -> DnsAnswer {
             let admission = self.admission_config();
+            let max_ttl = self
+                .cache
+                .read(|cache| cache.config.max_ttl_secs.min(u64::from(u32::MAX)) as u32);
+            for record in &mut answer.records {
+                record.ttl = record.ttl.min(max_ttl);
+            }
             answer.records.truncate(admission.max_response_records);
             let mut bytes = 12usize
                 .saturating_add(wire_name_bytes(&query.name))
@@ -8766,6 +8772,31 @@ mod runtime {
             let entry = cache.entries.get(&key).expect("cache entry");
             assert!(entry.expires_at <= now + Duration::from_secs(60));
             assert!(entry.expires_at > now + Duration::from_secs(59));
+        }
+
+        #[test]
+        fn emitted_answers_clamp_ttl_to_the_configured_bound() {
+            let mut config = Config::default();
+            config.cache.max_ttl_secs = 60;
+            let policy = Policy::new(config).expect("valid cache config");
+            let query = proxima_dns::DnsQuery {
+                id: 1,
+                recursion_desired: true,
+                name: "ttl.example".into(),
+                qtype: 1,
+                qclass: 1,
+            };
+            let answer = policy.cap_answer(
+                &query,
+                DnsAnswer::ok(vec![DnsAnswerRecord {
+                    name: "ttl.example".into(),
+                    rtype: 1,
+                    rclass: 1,
+                    ttl: u32::MAX,
+                    rdata: vec![192, 0, 2, 1],
+                }]),
+            );
+            assert_eq!(answer.records[0].ttl, 60);
         }
 
         #[test]
