@@ -1591,6 +1591,15 @@ mod runtime {
             self.publish_rules_locked(&combined, &mut base_rules, "rules_append", started)
         }
 
+        /// Remove every cached answer and return the number of entries
+        /// deleted. The operation is bounded by the configured cache size.
+        pub fn clear_cache(&self) -> usize {
+            let mut cache = self.cache.lock().expect("cache lock");
+            let removed = cache.entries.len();
+            cache.clear();
+            removed
+        }
+
         /// Remove rules by stable ID and publish the resulting authoritative
         /// table atomically. Unknown IDs are rejected so an operator cannot
         /// mistake a no-op for a successful destructive update.

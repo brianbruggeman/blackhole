@@ -67,6 +67,10 @@ impl SendPipe for AdminHandler {
             ("GET", "/health") => Ok(Response::ok("{\"status\":\"ok\"}")),
             ("GET", "/status") => Ok(Response::ok(self.policy.admin_status())),
             ("GET", "/rules") => Ok(Response::ok(self.policy.admin_rules())),
+            ("POST", "/cache/clear") => Ok(Response::ok(format!(
+                "{{\"status\":\"cleared\",\"entries\":{}}}",
+                self.policy.clear_cache()
+            ))),
             ("POST", "/reload/blocklists") => match self.policy.reload_blocklists() {
                 Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
                 Err(error) => Ok(Response::new(500).with_body(format!(
@@ -168,6 +172,7 @@ impl SendPipe for AdminHandler {
                 | "/health"
                 | "/status"
                 | "/rules"
+                | "/cache/clear"
                 | "/reload/blocklists"
                 | "/reload/country"
                 | "/reload/policy"
@@ -227,6 +232,13 @@ mod tests {
         assert_eq!(ui.status, 200);
         assert!(ui.payload.starts_with(b"<!doctype html>"));
         assert!(ui.payload.len() < 4 * 1024);
+        let clear =
+            block_on(handler.call(request("POST", "/cache/clear"))).expect("cache clear response");
+        assert_eq!(clear.status, 200);
+        assert_eq!(
+            clear.payload,
+            Bytes::from_static(b"{\"status\":\"cleared\",\"entries\":0}")
+        );
         let status = block_on(handler.call(request("GET", "/status"))).expect("status response");
         assert_eq!(status.status, 200);
         let status: serde_json::Value =
