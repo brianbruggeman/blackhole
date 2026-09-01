@@ -1964,10 +1964,12 @@ mod runtime {
             profiles: &[ServiceProfileConfig],
             client_groups: &[ClientGroupConfig],
             rewrite_configs: &[RewriteConfig],
+            country_config: &CountryPolicyConfig,
         ) -> Result<ReloadState, policy::PolicyError> {
             let started = Instant::now();
             let generated = compile_profiles(profiles, client_groups)?;
             let rewrites = compile_rewrites(rewrite_configs)?;
+            let country_policy = load_country_policy(country_config)?;
             let mut base = rules.to_vec();
             base.extend(generated);
             let mut published = base.clone();
@@ -1990,6 +1992,7 @@ mod runtime {
             *self.profiles.write().expect("profiles lock") = profiles.to_vec();
             *self.client_groups.write().expect("client groups lock") = client_groups.to_vec();
             *self.rewrites.write().expect("rewrites lock") = rewrites;
+            *self.country_policy.write().expect("country policy lock") = country_policy;
             self.domain_rules_configured
                 .store(!published.is_empty(), Ordering::Release);
             self.rules_configured.store(

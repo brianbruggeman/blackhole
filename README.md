@@ -104,8 +104,8 @@ query-decision inspection at `GET /logs` and deletion at `POST /logs/clear` when
 enabled. `POST /reload/profiles` atomically replaces the profile and client-group
 tables from a bounded JSON object with `profiles` and `client_groups` arrays.
 `POST /reload/policy-bundle` replaces the domain, regex, profile, client-group,
-and local-rewrite tables as one validated snapshot while retaining loaded
-blocklists.
+local-rewrite, and country-policy tables as one validated snapshot while
+retaining loaded blocklists.
 Send the token
 as a Bearer credential; `/rules` returns only bounded policy metadata and no
 query payloads. Query logs are disabled by default and retain only timestamp,

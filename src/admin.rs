@@ -10,7 +10,8 @@ use proxima::pipe::{PipeHandle, into_handle};
 use proxima::{ProximaError, Request, Response, SendPipe};
 
 use crate::{
-    ClientGroupConfig, Policy, RegexRuleConfig, RewriteConfig, RuleConfig, ServiceProfileConfig,
+    ClientGroupConfig, CountryPolicyConfig, Policy, RegexRuleConfig, RewriteConfig, RuleConfig,
+    ServiceProfileConfig,
 };
 
 const MAX_POLICY_BODY_BYTES: usize = 64 * 1024;
@@ -34,6 +35,8 @@ struct PolicyBundle {
     client_groups: Vec<ClientGroupConfig>,
     #[serde(default)]
     rewrites: Vec<RewriteConfig>,
+    #[serde(default)]
+    country_policy: CountryPolicyConfig,
 }
 const ADMIN_UI: &str = r#"<!doctype html>
 <meta charset="utf-8">
@@ -120,6 +123,7 @@ impl SendPipe for AdminHandler {
                     &bundle.profiles,
                     &bundle.client_groups,
                     &bundle.rewrites,
+                    &bundle.country_policy,
                 ) {
                     Ok(_) => Ok(Response::ok(r#"{"status":"reloaded"}"#)),
                     Err(error) => Ok(Response::new(422).with_body(format!(
