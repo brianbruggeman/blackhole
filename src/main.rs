@@ -523,7 +523,7 @@ async fn restore_persisted_denylist(
             })
             .collect::<Result<Vec<_>, ProximaError>>()?;
         match operation {
-            "add" => {
+            "add" | "approve" => {
                 for value in values {
                     if !cidrs.contains(&value) {
                         cidrs.push(value);
@@ -768,7 +768,7 @@ mod tests {
         let events = [
             ("add", serde_json::json!(["192.0.2.10/32", "2001:db8::/48"])),
             ("remove", serde_json::json!(["192.0.2.10/32"])),
-            ("add", serde_json::json!(["198.51.100.0/24"])),
+            ("approve", serde_json::json!(["198.51.100.0/24"])),
         ];
         let mut recording = Vec::new();
         for (operation, cidrs) in events {

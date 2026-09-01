@@ -315,7 +315,7 @@ impl SendPipe for AdminHandler {
                         serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
                     )));
                 }
-                if let Err(error) = self.policy.persist_denylist_change("add", &cidrs).await {
+                if let Err(error) = self.policy.persist_denylist_change("approve", &cidrs).await {
                     let _ = self.policy.reload_admission(&previous);
                     return Ok(Response::new(503).with_body(format!(
                         "{{\"status\":\"error\",\"message\":{}}}",

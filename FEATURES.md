@@ -115,7 +115,8 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   enabled.
 - Authenticated bounded incident approval promotes selected exact incident
   clients to the managed `/32` or `/128` denylist, using the same atomic and
-  durable operator-control path.
+  durable operator-control path; durable records preserve `approve` as the
+  operation identity for audit and replay it as an additive denylist change.
 - Authenticated bounded `GET /abuse/incidents` provides a redacted review
   projection of retained incident causes, actions, expiry timestamps, and
   active/expired state; client addresses remain available only to the durable
