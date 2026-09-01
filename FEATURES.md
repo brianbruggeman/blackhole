@@ -121,6 +121,11 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Authenticated bounded `POST /reload/profiles` atomically replaces service
   profiles and client groups, preserves explicit domain rules, and rejects
   invalid expansions without publishing them.
+- Authenticated bounded `POST /reload/profiles/upsert` replaces or adds service
+  profiles by stable ID while preserving unspecified profiles; duplicate IDs
+  and invalid expansions fail without publication.
+- Authenticated bounded `POST /reload/profiles/remove` removes service profiles
+  by stable ID and rejects unknown IDs without changing the live snapshot.
 - Authenticated bounded `POST /reload/policy-bundle` validates and replaces
   domain, regex, profile, client-group, local-rewrite, and country-policy
   tables as one snapshot while retaining the loaded blocklist snapshot; an

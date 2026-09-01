@@ -26,7 +26,8 @@ below are future capabilities, grouped by the dependency layer they extend.
   complete-snapshot reload routes.
 - Extend the authenticated profile and client-group metadata views with richer
   per-client identity and network policy controls beyond the current atomic
-  profile replacement and client-group upsert/removal operations.
+  profile replacement/upsert/removal and client-group upsert/removal
+  operations.
 - Extend adaptive amplification controls for repeated abusive patterns beyond
   the current per-query response-ratio cap, aggregate/per-client admission
   limits, and bounded rate/response-budget abuse breaker.
