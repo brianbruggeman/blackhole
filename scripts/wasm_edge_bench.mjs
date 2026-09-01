@@ -44,6 +44,8 @@ console.log(`memory_bytes=${memory.buffer.byteLength}`);
 console.log(`valid_result=${blackhole_edge_probe(pointer, packet.length)}`);
 blackhole_edge_reset();
 console.log(`short_result=${blackhole_edge_probe(pointer, 11)}`);
+console.log(`null_result=${blackhole_edge_probe(0, packet.length)}`);
+console.log(`oversized_result=${blackhole_edge_probe(pointer, 4097)}`);
 console.log(`iterations=${iterations}`);
 console.log(`elapsed_ns=${elapsedNs}`);
 console.log(`ns_per_call=${elapsedNs / iterations}`);
