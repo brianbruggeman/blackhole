@@ -75,6 +75,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   rate or encoded-response-budget violations; entries use bounded lock-free
   keyed state, expire after a configured cooldown, and fail closed while
   open. This is adaptive mitigation, not a permanent reputation database.
+- Optional conflaguration-backed DDoS incident persistence records the
+  threshold crossing through the existing bounded Proxima JSONL sink so the
+  incident survives process death; DNS names and wire payloads remain absent.
 - A bounded per-client encoded-response-byte budget that sheds identified
   clients after their configured one-second egress budget is exhausted,
   without applying a shared identity to unidentified callers.

@@ -14,6 +14,8 @@ use blackhole::{BoundedQueryRecordingSink, Config, Policy, UpstreamTransport};
 #[cfg(feature = "std")]
 use bytes::Bytes;
 #[cfg(feature = "std")]
+use conflaguration::builder as config_builder;
+#[cfg(feature = "std")]
 use proxima::pipe::into_handle;
 #[cfg(feature = "std")]
 use proxima::recording::{AccumulatingSink, FormatKind, LazyFanOut, SinkSpec, deferred_runtime};
@@ -468,12 +470,19 @@ async fn main() -> Result<(), ProximaError> {
             ));
         }
     };
-    let config = if let Some(config_path) = explicit_config_path {
+    let mut config = if let Some(config_path) = explicit_config_path {
         Config::from_file(Path::new(&config_path))
             .map_err(|error| ProximaError::Config(format!("cannot load {config_path}: {error}")))?
     } else {
         Config::default()
     };
+    config.admission.ddos = config_builder()
+        .value(config.admission.ddos.clone())
+        .env_with_prefix("BLACKHOLE_DDOS")
+        .build()
+        .map_err(|error| {
+            ProximaError::Config(format!("invalid BLACKHOLE_DDOS settings: {error}"))
+        })?;
     let bind: SocketAddr = config
         .server
         .listen

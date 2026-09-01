@@ -144,6 +144,11 @@ network_abuse_window_secs = 10
 network_abuse_cooldown_secs = 30
 network_abuse_ipv4_prefix = 24
 network_abuse_ipv6_prefix = 64
+
+# Persist threshold crossings through the bounded Proxima JSONL recording
+# sink. Requires privacy.query_recording_path to be configured.
+[admission.ddos]
+persist_incidents = false
 # Bound encoded DNS response bytes sent to one identified client per second.
 max_response_bytes_per_client_per_second = 1048576
 # Bound encoded DNS response bytes sent to one identified /24 or /64 network

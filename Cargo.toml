@@ -18,6 +18,7 @@ crate-type = ["rlib", "cdylib"]
 default = ["std"]
 std = [
     "dep:bytes",
+    "dep:conflaguration",
     "dep:futures",
     "dep:proxima",
     "dep:proxima-core",
@@ -66,6 +67,7 @@ serde_json = { version = "1", optional = true }
 toml = { version = "0.8", optional = true }
 rustls = { version = "0.23.40", default-features = false, features = ["std", "aws_lc_rs", "tls12"], optional = true }
 webpki-roots = { version = "0.26", optional = true }
+conflaguration = { git = "https://github.com/brianbruggeman/conflaguration.git", rev = "3eb325d84fc291df35528e6781b5b814884e2d28", features = ["derive"], optional = true }
 
 [dev-dependencies]
 memchr = "2"

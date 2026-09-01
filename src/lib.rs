@@ -648,6 +648,24 @@ mod runtime {
         }
     }
 
+    #[derive(Debug, Clone, Deserialize, serde::Serialize, conflaguration::Settings)]
+    #[settings(prefix = "BLACKHOLE_DDOS")]
+    pub struct DdosConfig {
+        /// Persist abuse-open incidents through the configured Proxima
+        /// metadata recording sink so they survive process death.
+        #[setting(default = false)]
+        #[serde(default)]
+        pub persist_incidents: bool,
+    }
+
+    impl Default for DdosConfig {
+        fn default() -> Self {
+            Self {
+                persist_incidents: false,
+            }
+        }
+    }
+
     #[derive(Debug, Clone, Deserialize, serde::Serialize)]
     pub struct AdmissionConfig {
         #[serde(default = "default_max_name_bytes")]
@@ -690,6 +708,8 @@ mod runtime {
         pub network_abuse_ipv4_prefix: u8,
         #[serde(default = "default_network_abuse_ipv6_prefix")]
         pub network_abuse_ipv6_prefix: u8,
+        #[serde(default)]
+        pub ddos: DdosConfig,
     }
 
     impl Default for AdmissionConfig {
@@ -717,6 +737,7 @@ mod runtime {
                 network_abuse_cooldown_secs: default_network_abuse_cooldown_secs(),
                 network_abuse_ipv4_prefix: default_network_abuse_ipv4_prefix(),
                 network_abuse_ipv6_prefix: default_network_abuse_ipv6_prefix(),
+                ddos: DdosConfig::default(),
             }
         }
     }
@@ -2429,6 +2450,14 @@ mod runtime {
             {
                 return Err(policy::PolicyError::InvalidAdmission {
                     reason: "query recording max files must be between 1 and 16".into(),
+                });
+            }
+            if config.admission.ddos.persist_incidents
+                && config.privacy.query_recording_path.is_none()
+            {
+                return Err(policy::PolicyError::InvalidAdmission {
+                    reason: "ddos incident persistence requires privacy.query_recording_path"
+                        .into(),
                 });
             }
             if config.policy.blocklist_reload_interval_secs > MAX_BLOCKLIST_RELOAD_INTERVAL_SECS {
@@ -4386,6 +4415,40 @@ mod runtime {
             }
         }
 
+        /// Persist a bounded incident marker through the existing Proxima
+        /// recording sink. No DNS name, payload, identity label, or wire data
+        /// enters the event; the client address is retained only because it is
+        /// the operator's temporary blacklist key.
+        pub(crate) async fn record_abuse_incident(&self, client: IpAddr, cause: &'static str) {
+            if !self.config.admission.ddos.persist_incidents {
+                return;
+            }
+            let Some(recording) = self.recording.as_ref() else {
+                self.observe_failure("ddos_incident_recording_unconfigured");
+                return;
+            };
+            let event = RecordingEvent {
+                id: InteractionId::new(),
+                ts_ms: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |duration| {
+                        duration.as_millis().min(u128::from(u64::MAX)) as u64
+                    }),
+                parent: None,
+                event: ProtocolEvent::Custom {
+                    kind: "blackhole.ddos_incident".into(),
+                    payload: serde_json::json!({
+                        "client": client.to_string(),
+                        "cause": cause,
+                        "response": "temporary_blacklist",
+                    }),
+                },
+            };
+            if recording.append(event).await.is_err() {
+                self.observe_failure("ddos_incident_recording");
+            }
+        }
+
         pub(crate) fn admin_query_log(&self) -> String {
             let Some(query_log) = self.query_log.as_ref() else {
                 return "{\"enabled\":false,\"entries\":[]}".into();
@@ -4946,6 +5009,10 @@ mod runtime {
                 self.observe_failure("client_rate_overflow");
                 if self.record_client_abuse(client) {
                     self.observe_failure("client_abuse_breaker_open");
+                    if let Some(client) = client {
+                        self.record_abuse_incident(client, "client_rate_overflow")
+                            .await;
+                    }
                 }
                 self.observe(Action::Reject);
                 return Ok(DnsPipeReply::typed(200, server_failure_answer()));
@@ -7844,7 +7911,10 @@ mod runtime {
             let bounded = BoundedQueryRecordingSink::new(buffered, &path, 4_096)
                 .expect("bounded recording sink");
             let sink: Arc<dyn RecordingSink> = Arc::new(bounded);
-            let policy = Policy::new(Config::default())
+            let mut config = Config::default();
+            config.admission.ddos.persist_incidents = true;
+            config.privacy.query_recording_path = Some(path.to_string_lossy().into_owned());
+            let policy = Policy::new(config)
                 .expect("valid policy")
                 .with_recording_sink(Arc::clone(&sink));
             let query = proxima_dns::DnsQuery {
@@ -7857,11 +7927,20 @@ mod runtime {
 
             futures::executor::block_on(async {
                 policy.record_decision(Action::Nxdomain, &query).await;
+                policy
+                    .record_abuse_incident(
+                        "192.0.2.10".parse().expect("incident client"),
+                        "client_rate_overflow",
+                    )
+                    .await;
                 sink.flush().await.expect("flush recording sink");
             });
 
             let contents = std::fs::read_to_string(&path).expect("read JSONL recording");
             assert!(contents.contains("blackhole.dns_decision"));
+            assert!(contents.contains("blackhole.ddos_incident"));
+            assert!(contents.contains("client_rate_overflow"));
+            assert!(contents.contains("192.0.2.10"));
             assert!(contents.contains("nxdomain"));
             assert!(!contents.contains("secret.example"));
             assert!(std::fs::metadata(&path).expect("recording metadata").len() <= 4_096);
@@ -7948,6 +8027,17 @@ mod runtime {
             config.privacy.query_recording_path = Some("decisions.jsonl".into());
             config.privacy.query_recording_max_files = 17;
             assert!(Policy::new(config).is_err());
+        }
+
+        #[test]
+        fn ddos_incident_persistence_requires_the_bounded_recording_sink() {
+            let mut config = Config::default();
+            config.admission.ddos.persist_incidents = true;
+            assert!(matches!(
+                Policy::new(config),
+                Err(policy::PolicyError::InvalidAdmission { reason })
+                    if reason.contains("query_recording_path")
+            ));
         }
     }
 }

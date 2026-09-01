@@ -192,6 +192,11 @@ async fn decide<'a>(
         policy.observe_failure("client_response_budget");
         if policy.record_client_abuse(client_ip) {
             policy.observe_failure("client_abuse_breaker_open");
+            if let Some(client) = client_ip {
+                policy
+                    .record_abuse_incident(client, "client_response_budget")
+                    .await;
+            }
         }
         let _ = state.transition(Event::Drop(DropReason::PolicyFailure));
         return Ok(None);
@@ -200,6 +205,11 @@ async fn decide<'a>(
         policy.observe_failure("network_response_budget");
         if policy.record_client_abuse(client_ip) {
             policy.observe_failure("client_abuse_breaker_open");
+            if let Some(client) = client_ip {
+                policy
+                    .record_abuse_incident(client, "network_response_budget")
+                    .await;
+            }
         }
         let _ = state.transition(Event::Drop(DropReason::PolicyFailure));
         return Ok(None);
