@@ -281,12 +281,12 @@ mod runtime {
         client: IpAddr,
     }
 
-    struct ClientRateBucket {
+    struct AtomicWindowBucket {
         state: AtomicU64,
         last_access_micros: AtomicU64,
     }
 
-    impl ClientRateBucket {
+    impl AtomicWindowBucket {
         fn new() -> Self {
             Self {
                 state: AtomicU64::new(0),
@@ -294,22 +294,26 @@ mod runtime {
             }
         }
 
-        fn allow(&self, epoch: Instant, limit: usize) -> bool {
-            if limit == 0 {
+        fn allow(&self, epoch: Instant, limit: usize, amount: usize) -> bool {
+            if limit == 0 || amount > limit {
                 return false;
             }
             let window = epoch.elapsed().as_secs() & u32::MAX as u64;
             let limit = limit.min(u32::MAX as usize) as u64;
+            let amount = amount.min(u32::MAX as usize) as u64;
+            if amount > limit {
+                return false;
+            }
             loop {
                 let current = self.state.load(Ordering::Acquire);
                 let current_window = current >> 32;
                 let current_count = current & u32::MAX as u64;
                 let next = if current_window != window {
-                    (window << 32) | 1
-                } else if current_count >= limit {
+                    (window << 32) | amount
+                } else if current_count.saturating_add(amount) > limit {
                     return false;
                 } else {
-                    current + 1
+                    current + amount
                 };
                 if self
                     .state
@@ -322,39 +326,28 @@ mod runtime {
         }
     }
 
-    struct ClientRateTable {
-        buckets: BucketTable<ClientRateBucket>,
+    struct KeyedWindowBudgetTable {
+        buckets: BucketTable<AtomicWindowBucket>,
     }
 
-    impl ClientRateTable {
+    impl KeyedWindowBudgetTable {
         fn new() -> Self {
             Self {
                 buckets: BucketTable::with_max_keys(MAX_CLIENT_RATE_ENTRIES),
             }
         }
 
-        fn allow(&self, client: IpAddr, epoch: Instant, limit: usize) -> bool {
-            let mut key = [0u8; 17];
-            match client {
-                IpAddr::V4(address) => {
-                    key[0] = 4;
-                    key[1..5].copy_from_slice(&address.octets());
-                }
-                IpAddr::V6(address) => {
-                    key[0] = 6;
-                    key[1..].copy_from_slice(&address.octets());
-                }
-            }
+        fn allow(&self, key: &[u8], epoch: Instant, limit: usize, amount: usize) -> bool {
             if self.buckets.len() >= MAX_CLIENT_RATE_ENTRIES {
                 self.buckets
                     .evict_one_lru(|bucket| bucket.last_access_micros.load(Ordering::Relaxed));
             }
-            let bucket = self.buckets.get_or_insert(&key, ClientRateBucket::new);
+            let bucket = self.buckets.get_or_insert(key, AtomicWindowBucket::new);
             bucket.last_access_micros.store(
                 epoch.elapsed().as_micros().min(u64::MAX as u128) as u64,
                 Ordering::Relaxed,
             );
-            bucket.allow(epoch, limit)
+            bucket.allow(epoch, limit, amount)
         }
     }
 
@@ -401,11 +394,6 @@ mod runtime {
         }
     }
 
-    struct ClientResponseBudget {
-        window_started: Instant,
-        bytes: usize,
-    }
-
     #[derive(Debug, Clone, Copy)]
     struct ClientAbuse {
         window_started: Instant,
@@ -444,6 +432,42 @@ mod runtime {
                 AbuseNetworkKey::V6(octets, prefix)
             }
         }
+    }
+
+    fn ip_key(client: IpAddr) -> ([u8; 17], usize) {
+        let mut key = [0u8; 17];
+        let length = match client {
+            IpAddr::V4(address) => {
+                key[0] = 4;
+                key[1..5].copy_from_slice(&address.octets());
+                5
+            }
+            IpAddr::V6(address) => {
+                key[0] = 6;
+                key[1..].copy_from_slice(&address.octets());
+                17
+            }
+        };
+        (key, length)
+    }
+
+    fn abuse_network_bytes(key: AbuseNetworkKey) -> ([u8; 18], usize) {
+        let mut bytes = [0u8; 18];
+        let length = match key {
+            AbuseNetworkKey::V4(address, prefix) => {
+                bytes[0] = 4;
+                bytes[1..5].copy_from_slice(&address.to_be_bytes());
+                bytes[5] = prefix;
+                6
+            }
+            AbuseNetworkKey::V6(address, prefix) => {
+                bytes[0] = 6;
+                bytes[1..17].copy_from_slice(&address);
+                bytes[17] = prefix;
+                18
+            }
+        };
+        (bytes, length)
     }
 
     const MAX_CLIENT_RATE_ENTRIES: usize = 4096;
@@ -2042,10 +2066,10 @@ mod runtime {
         breaker_epoch: Instant,
         request_slots: Arc<Semaphore>,
         client_admission: Arc<Mutex<HashMap<IpAddr, usize>>>,
-        client_rates: ClientRateTable,
+        client_rates: KeyedWindowBudgetTable,
         global_rate: AtomicWindowBudget,
-        client_response_budgets: Arc<Mutex<HashMap<IpAddr, ClientResponseBudget>>>,
-        network_response_budgets: Arc<Mutex<HashMap<AbuseNetworkKey, ClientResponseBudget>>>,
+        client_response_budgets: KeyedWindowBudgetTable,
+        network_response_budgets: KeyedWindowBudgetTable,
         global_response_budget: AtomicWindowBudget,
         client_abuse: Arc<Mutex<HashMap<IpAddr, ClientAbuse>>>,
         network_abuse: Arc<Mutex<HashMap<AbuseNetworkKey, ClientAbuse>>>,
@@ -2411,10 +2435,10 @@ mod runtime {
                 breaker_epoch: Instant::now(),
                 request_slots: Arc::new(Semaphore::new(max_inflight_requests)),
                 client_admission: Arc::new(Mutex::new(HashMap::new())),
-                client_rates: ClientRateTable::new(),
+                client_rates: KeyedWindowBudgetTable::new(),
                 global_rate: AtomicWindowBudget::new(),
-                client_response_budgets: Arc::new(Mutex::new(HashMap::new())),
-                network_response_budgets: Arc::new(Mutex::new(HashMap::new())),
+                client_response_budgets: KeyedWindowBudgetTable::new(),
+                network_response_budgets: KeyedWindowBudgetTable::new(),
                 global_response_budget: AtomicWindowBudget::new(),
                 client_abuse: Arc::new(Mutex::new(HashMap::new())),
                 network_abuse: Arc::new(Mutex::new(HashMap::new())),
@@ -3751,10 +3775,12 @@ mod runtime {
                 return true;
             };
             let admission = self.admission_config();
+            let (key, length) = ip_key(client);
             self.client_rates.allow(
-                client,
+                &key[..length],
                 self.breaker_epoch,
                 admission.max_queries_per_client_per_second,
+                1,
             )
         }
 
@@ -3776,45 +3802,14 @@ mod runtime {
             let Some(client) = client else {
                 return true;
             };
-            let now = Instant::now();
             let admission = self.admission_config();
             let limit = admission.max_response_bytes_per_client_per_second;
             if bytes > limit {
                 return false;
             }
-            let mut budgets = self
-                .client_response_budgets
-                .lock()
-                .expect("client response budget lock");
-            if let Some(budget) = budgets.get_mut(&client) {
-                if now.duration_since(budget.window_started) >= Duration::from_secs(1) {
-                    budget.window_started = now;
-                    budget.bytes = bytes;
-                    return true;
-                }
-                if budget.bytes.saturating_add(bytes) > limit {
-                    return false;
-                }
-                budget.bytes = budget.bytes.saturating_add(bytes);
-                return true;
-            }
-            if budgets.len() >= MAX_CLIENT_RATE_ENTRIES {
-                if let Some(oldest) = budgets
-                    .iter()
-                    .min_by_key(|(_, budget)| budget.window_started)
-                    .map(|(client, _)| *client)
-                {
-                    budgets.remove(&oldest);
-                }
-            }
-            budgets.insert(
-                client,
-                ClientResponseBudget {
-                    window_started: now,
-                    bytes,
-                },
-            );
-            true
+            let (key, length) = ip_key(client);
+            self.client_response_budgets
+                .allow(&key[..length], self.breaker_epoch, limit, bytes)
         }
 
         /// Bound total encoded DNS egress over a one-second window. Unlike
@@ -3839,7 +3834,6 @@ mod runtime {
             let Some(client) = client else {
                 return true;
             };
-            let now = Instant::now();
             let admission = self.admission_config();
             let limit = admission.max_response_bytes_per_network_per_second;
             if bytes > limit {
@@ -3850,39 +3844,9 @@ mod runtime {
                 admission.network_abuse_ipv4_prefix,
                 admission.network_abuse_ipv6_prefix,
             );
-            let mut budgets = self
-                .network_response_budgets
-                .lock()
-                .expect("network response budget lock");
-            if let Some(budget) = budgets.get_mut(&key) {
-                if now.duration_since(budget.window_started) >= Duration::from_secs(1) {
-                    budget.window_started = now;
-                    budget.bytes = bytes;
-                    return true;
-                }
-                if budget.bytes.saturating_add(bytes) > limit {
-                    return false;
-                }
-                budget.bytes = budget.bytes.saturating_add(bytes);
-                return true;
-            }
-            if budgets.len() >= MAX_CLIENT_RATE_ENTRIES {
-                if let Some(oldest) = budgets
-                    .iter()
-                    .min_by_key(|(_, budget)| budget.window_started)
-                    .map(|(key, _)| *key)
-                {
-                    budgets.remove(&oldest);
-                }
-            }
-            budgets.insert(
-                key,
-                ClientResponseBudget {
-                    window_started: now,
-                    bytes,
-                },
-            );
-            true
+            let (key, length) = abuse_network_bytes(key);
+            self.network_response_budgets
+                .allow(&key[..length], self.breaker_epoch, limit, bytes)
         }
 
         fn allow_client_abuse(&self, client: Option<IpAddr>) -> bool {
