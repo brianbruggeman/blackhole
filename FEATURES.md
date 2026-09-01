@@ -134,9 +134,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   through the existing Proxima HTTP pipe.
 - The authenticated admin control plane includes a bounded status UI for
   status, admission limits, privacy status, rule metadata, and privacy-log inspection/clearing;
-  it includes authenticated blocklist reload and complete policy-bundle
-  publication controls, contains no packet payloads, and uses the existing
-  Proxima HTTP pipe.
+  it loads the live policy bundle and provides authenticated blocklist reload
+  and complete policy-bundle publication controls, contains no packet
+  payloads, and uses the existing Proxima HTTP pipe.
 - Authenticated bounded `GET /admission/status` exposes configured query,
   response, amplification, and abuse limits without exposing counters, client
   identities, credentials, or payloads.
