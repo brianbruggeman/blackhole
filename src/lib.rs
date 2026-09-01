@@ -93,9 +93,11 @@ pub mod snapshot;
 
 #[cfg(feature = "std")]
 mod runtime {
+    use futures::StreamExt;
+    use proxima::runtime::PrimeRuntime;
     use proxima::{
         BoundedRecordingSink, DynRecordingSink, FailMode, InteractionId, Labels, ProtocolEvent,
-        RecordingAppendFuture, RecordingEvent, RecordingSink, TelemetryHandle,
+        RecordingAppendFuture, RecordingEvent, RecordingSink, RecordingSource, TelemetryHandle,
     };
     use proxima_core::ProximaError;
     use proxima_core::live::{Live, LiveControl, live};
@@ -132,6 +134,8 @@ mod runtime {
     const MAX_REGEX_PROGRAM_BYTES: usize = 1 << 20;
     const MAX_ADMIN_RULES_BODY_BYTES: usize = 64 * 1024;
     const MAX_ADMIN_LOG_ENTRIES: usize = 1_024;
+    const MAX_ABUSE_EXPORT_BYTES: u64 = 8 * 1024 * 1024;
+    const MAX_ABUSE_EXPORT_EVENTS: usize = 1_000_000;
     const MAX_BLOCKLIST_RELOAD_INTERVAL_SECS: u64 = 86_400;
     const MAX_BLOCKLIST_DENYALLOW_DOMAINS: usize = 256;
 
@@ -5627,6 +5631,78 @@ mod runtime {
             .to_string()
         }
 
+        /// Export the bounded durable incident stream through Proxima's
+        /// existing JSONL source. This authenticated operator export includes
+        /// client keys needed for recovery; the in-memory review stays redacted.
+        pub(crate) async fn admin_abuse_incident_export(&self) -> Result<String, ProximaError> {
+            let Some(path) = self.config.privacy.query_recording_path.as_deref() else {
+                return Ok("{\"enabled\":false,\"events\":[]}".into());
+            };
+            let metadata = match std::fs::metadata(path) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    return Ok("{\"enabled\":true,\"events\":[]}".into());
+                }
+                Err(error) => {
+                    return Err(ProximaError::Record(format!(
+                        "inspect abuse recording: {error}"
+                    )));
+                }
+            };
+            if !metadata.is_file() {
+                return Err(ProximaError::Record(
+                    "abuse recording is not a regular file".into(),
+                ));
+            }
+            let max_bytes = self
+                .config
+                .privacy
+                .query_recording_max_bytes
+                .min(MAX_ABUSE_EXPORT_BYTES);
+            if metadata.len() > max_bytes {
+                return Err(ProximaError::Record(format!(
+                    "abuse recording exceeds the {max_bytes} byte export bound"
+                )));
+            }
+            let runtime = Arc::new(PrimeRuntime::new(1)?);
+            let source = proxima::JsonlSource::new(path, runtime);
+            let mut stream = source.events();
+            let mut events = Vec::new();
+            let mut seen = 0usize;
+            while let Some(event) = stream.next().await {
+                seen = seen.checked_add(1).ok_or_else(|| {
+                    ProximaError::Record("abuse export event count overflow".into())
+                })?;
+                if seen > MAX_ABUSE_EXPORT_EVENTS {
+                    return Err(ProximaError::Record(
+                        "abuse recording exceeds the event export bound".into(),
+                    ));
+                }
+                let event = event?;
+                let proxima::ProtocolEvent::Custom { kind, payload } = event.event else {
+                    continue;
+                };
+                if kind != "blackhole.ddos_incident" && kind != "blackhole.ddos_revoke" {
+                    continue;
+                }
+                events.push(serde_json::json!({
+                    "ts_ms": event.ts_ms,
+                    "kind": kind,
+                    "payload": payload,
+                }));
+                if events.len() > MAX_ADMIN_LOG_ENTRIES {
+                    events.remove(0);
+                }
+            }
+            Ok(serde_json::json!({
+                "enabled": true,
+                "events": events,
+                "truncated": seen > MAX_ADMIN_LOG_ENTRIES,
+                "client_addresses": "included_for_authenticated_operator_recovery",
+            })
+            .to_string())
+        }
+
         pub(crate) fn admin_query_log(&self) -> String {
             let Some(query_log) = self.query_log.as_ref() else {
                 return "{\"enabled\":false,\"entries\":[]}".into();
@@ -10201,6 +10277,51 @@ mod runtime {
             assert_eq!(review["incidents"].as_array().unwrap().len(), 1);
             assert_eq!(review["client_addresses"], "redacted");
             assert!(!policy.admin_abuse_incidents().contains("192.0.2.10"));
+        }
+
+        #[test]
+        fn durable_abuse_export_uses_proxima_jsonl_and_keeps_only_bounded_events() {
+            let directory = std::env::temp_dir().join(format!(
+                "blackhole-abuse-export-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .expect("system clock")
+                    .as_nanos()
+            ));
+            std::fs::create_dir(&directory).expect("export directory");
+            let path = directory.join("incidents.jsonl");
+            let event = proxima::RecordingEvent {
+                id: proxima::InteractionId::new(),
+                ts_ms: 42,
+                parent: None,
+                event: proxima::ProtocolEvent::Custom {
+                    kind: "blackhole.ddos_incident".into(),
+                    payload: serde_json::json!({
+                        "client": "192.0.2.10",
+                        "cause": "client_rate_overflow",
+                        "expires_at_ms": 60_000,
+                    }),
+                },
+            };
+            let mut line = proxima::recording::jsonl::encode_jsonl_line(event)
+                .expect("encode durable incident");
+            line.push(b'\n');
+            std::fs::write(&path, line).expect("write durable incident");
+            let mut config = Config::default();
+            config.privacy.query_recording_path = Some(path.to_string_lossy().into_owned());
+            let policy = Policy::new(config).expect("valid export config");
+            let export = futures::executor::block_on(policy.admin_abuse_incident_export())
+                .expect("export durable incident");
+            let export: serde_json::Value = serde_json::from_str(&export).expect("export JSON");
+            assert_eq!(export["enabled"], true);
+            assert_eq!(export["events"].as_array().unwrap().len(), 1);
+            assert_eq!(export["events"][0]["payload"]["client"], "192.0.2.10");
+            assert_eq!(
+                export["client_addresses"],
+                "included_for_authenticated_operator_recovery"
+            );
+            std::fs::remove_dir_all(directory).expect("remove export directory");
         }
 
         #[test]

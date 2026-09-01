@@ -114,6 +114,10 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   projection of retained incident causes, actions, and expiry timestamps;
   client addresses remain available only to the durable operator-controlled
   recovery stream.
+- Authenticated bounded `GET /abuse/incidents/export` reads the durable
+  incident and revocation events through Proxima's JSONL source, retaining
+  only the newest bounded event window and identifying that client keys are
+  included for operator recovery.
 - When incident persistence is enabled, authenticated operator denylist
   additions and revocations are appended to that same bounded Proxima JSONL
   sink and replayed in order during startup; a failed durable append rolls the

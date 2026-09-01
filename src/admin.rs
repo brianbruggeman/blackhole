@@ -93,7 +93,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <h2>Adaptive abuse controls</h2><pre id="abuse-status">loading…</pre>
 <h2>Managed client denylist</h2><textarea id="denylist-config" rows="5" cols="80">loading…</textarea><p><button id="add-denylist">Add entries</button> <button id="remove-denylist">Revoke entries</button></p>
 <h2>Temporary incident revocation</h2><textarea id="abuse-revoke" rows="3" cols="80" placeholder='["192.0.2.10"]'></textarea><p><button id="revoke-abuse">Revoke temporary blocks</button></p>
-<h2>Incident review</h2><pre id="abuse-incidents">loading…</pre>
+<h2>Incident review</h2><p><button id="export-abuse">Export durable incidents</button></p><pre id="abuse-incidents">loading…</pre>
 <h2>Policy bundle</h2><textarea id="policy-bundle" rows="12" cols="80">loading…</textarea>
 <h2>Blocklists</h2><div id="blocklist-controls"></div><pre id="blocklists">loading…</pre>
 <h2>Country policy</h2><pre id="country-status">loading…</pre>
@@ -158,6 +158,7 @@ const updateDenylist = path => operate(path, {method:'POST', headers:{'content-t
 document.querySelector('#add-denylist').onclick = () => updateDenylist('/abuse/denylist/add');
 document.querySelector('#remove-denylist').onclick = () => updateDenylist('/abuse/denylist/remove');
 document.querySelector('#revoke-abuse').onclick = () => operate('/abuse/revoke', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#abuse-revoke').value}).then(refresh);
+document.querySelector('#export-abuse').onclick = () => fetch('/abuse/incidents/export').then(response => response.json()).then(value => { document.querySelector('#abuse-incidents').textContent = JSON.stringify(value, null, 2); });
 document.querySelector('#reload-blocklists').onclick = () => operate('/reload/blocklists', {method:'POST'}).then(refresh);
 document.querySelector('#reload-country').onclick = () => operate('/reload/country', {method:'POST'}).then(refresh);
 document.querySelector('#reload-admission').onclick = () => operate('/reload/admission', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#admission-config').value}).then(refresh);
@@ -214,6 +215,15 @@ impl SendPipe for AdminHandler {
             ("GET", "/admission/status") => Ok(Response::ok(self.policy.admin_admission_status())),
             ("GET", "/abuse/status") => Ok(Response::ok(self.policy.admin_abuse_status())),
             ("GET", "/abuse/incidents") => Ok(Response::ok(self.policy.admin_abuse_incidents())),
+            ("GET", "/abuse/incidents/export") => {
+                match self.policy.admin_abuse_incident_export().await {
+                    Ok(export) => Ok(Response::ok(export)),
+                    Err(error) => Ok(Response::new(503).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
             ("GET", "/abuse/denylist") => Ok(Response::ok(self.policy.admin_abuse_denylist())),
             ("POST", "/abuse/clear") => Ok(Response::ok(format!(
                 "{{\"status\":\"cleared\",\"entries\":{}}}",
@@ -960,6 +970,7 @@ impl SendPipe for AdminHandler {
                 | "/admission/status"
                 | "/abuse/status"
                 | "/abuse/incidents"
+                | "/abuse/incidents/export"
                 | "/abuse/denylist"
                 | "/abuse/clear"
                 | "/abuse/revoke"
@@ -1100,6 +1111,11 @@ mod tests {
             ui.payload
                 .windows(b"/abuse/incidents".len())
                 .any(|window| window == b"/abuse/incidents")
+        );
+        assert!(
+            ui.payload
+                .windows(b"/abuse/incidents/export".len())
+                .any(|window| window == b"/abuse/incidents/export")
         );
         assert!(
             ui.payload
@@ -1287,6 +1303,13 @@ mod tests {
             serde_json::from_slice(&incidents.payload).expect("incidents JSON");
         assert_eq!(incidents["enabled"], false);
         assert_eq!(incidents["incidents"], serde_json::json!([]));
+        let export = block_on(handler.call(request("GET", "/abuse/incidents/export")))
+            .expect("incident export");
+        assert_eq!(export.status, 200);
+        let export: serde_json::Value =
+            serde_json::from_slice(&export.payload).expect("incident export JSON");
+        assert_eq!(export["enabled"], false);
+        assert_eq!(export["events"], serde_json::json!([]));
         let clear_abuse =
             block_on(handler.call(request("POST", "/abuse/clear"))).expect("abuse clear");
         assert_eq!(clear_abuse.status, 200);
