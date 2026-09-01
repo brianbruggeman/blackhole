@@ -194,6 +194,20 @@ async fn decide<'a>(
     Ok(Some((output, state)))
 }
 
+fn advance_partial_tcp_state(policy: &Policy, input: &[u8]) -> Result<(), ProximaError> {
+    let state = DecisionState::received(input)
+        .transition(Event::BeginParse)
+        .and_then(|state| state.transition(Event::NeedMore(input)))
+        .map_err(|error| {
+            policy.observe_failure("fsm_transition");
+            ProximaError::Config(error.to_string())
+        })?;
+    // The state borrows the bounded input only for this transition. The
+    // adapter drops it before the next read can grow the buffer.
+    let _ = state;
+    Ok(())
+}
+
 fn probe_udp(prefix: &[u8]) -> ProbeVerdict {
     if prefix.len() < UDP_HEADER {
         ProbeVerdict::NeedMore {
@@ -308,6 +322,11 @@ impl AnyProtocol for TcpProtocol {
                     #[cfg(feature = "perf-instrument")]
                     crate::perf::record_copy(crate::perf::Boundary::TcpFrameBuffer, read);
                     input.extend_from_slice(&scratch[..read]);
+                    if input.len() < 2
+                        || input.len() < 2 + usize::from(u16::from_be_bytes([input[0], input[1]]))
+                    {
+                        advance_partial_tcp_state(&self.policy, &input)?;
+                    }
                 }
                 let length = usize::from(u16::from_be_bytes([input[0], input[1]]));
                 let frame = input.split_to(2 + length).split_off(2);
