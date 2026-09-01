@@ -2715,6 +2715,53 @@ mod runtime {
             }
         }
 
+        pub(crate) fn admin_profiles(&self) -> String {
+            let profiles = &self.config.policy.profiles;
+            let visible = profiles
+                .iter()
+                .take(MAX_ADMIN_LOG_ENTRIES)
+                .map(|profile| {
+                    serde_json::json!({
+                        "id": profile.id,
+                        "name": profile.name,
+                        "domains": profile.domains,
+                        "action": action_label(profile.action),
+                        "groups": profile.groups,
+                        "client_cidrs": profile.client_cidrs,
+                        "priority": profile.priority,
+                        "qtype": profile.qtype,
+                        "qclass": profile.qclass,
+                    })
+                })
+                .collect::<Vec<_>>();
+            serde_json::json!({
+                "profiles": visible,
+                "total": profiles.len(),
+                "truncated": profiles.len() > MAX_ADMIN_LOG_ENTRIES,
+            })
+            .to_string()
+        }
+
+        pub(crate) fn admin_client_groups(&self) -> String {
+            let groups = &self.config.policy.client_groups;
+            let visible = groups
+                .iter()
+                .take(MAX_ADMIN_LOG_ENTRIES)
+                .map(|group| {
+                    serde_json::json!({
+                        "name": group.name,
+                        "client_cidrs": group.client_cidrs,
+                    })
+                })
+                .collect::<Vec<_>>();
+            serde_json::json!({
+                "client_groups": visible,
+                "total": groups.len(),
+                "truncated": groups.len() > MAX_ADMIN_LOG_ENTRIES,
+            })
+            .to_string()
+        }
+
         fn observe_latency(&self, elapsed: Duration) {
             let Some(telemetry) = self.telemetry.as_ref() else {
                 return;
