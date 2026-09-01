@@ -105,6 +105,19 @@ pub struct CaptureOwnership {
     pub mark: u32,
 }
 
+impl CaptureOwnership {
+    fn is_valid(&self) -> bool {
+        !self.table.is_empty()
+            && self.table.len() <= MAX_CHAIN_BYTES
+            && self.table.is_ascii()
+            && !self.chain.is_empty()
+            && self.chain.len() <= MAX_CHAIN_BYTES
+            && self.chain.is_ascii()
+            && self.inbound_port != 0
+            && self.redirect_port != 0
+    }
+}
+
 pub trait CapturePlan {
     fn render(&self) -> String;
     fn ownership(&self) -> CaptureOwnership;
@@ -179,13 +192,17 @@ impl FileOwnershipStore {
 
     fn decode(value: &str) -> Option<CaptureOwnership> {
         let mut lines = value.lines();
-        Some(CaptureOwnership {
+        let ownership = CaptureOwnership {
             table: lines.next()?.to_owned(),
             chain: lines.next()?.to_owned(),
             inbound_port: lines.next()?.parse().ok()?,
             redirect_port: lines.next()?.parse().ok()?,
             mark: lines.next()?.parse().ok()?,
-        })
+        };
+        if lines.next().is_some() || !ownership.is_valid() {
+            return None;
+        }
+        Some(ownership)
     }
 
     fn validate_path(path: &Path) -> Result<(), String> {
@@ -576,6 +593,25 @@ mod tests {
         std::fs::write(&path, "partial\nrecord\n").expect("corrupt journal");
         assert_eq!(store.load().expect("corrupt journal is safe"), None);
         store.clear().expect("journal cleanup");
+    }
+
+    #[test]
+    fn file_ownership_store_rejects_unusable_records() {
+        let path = std::env::temp_dir().join(format!(
+            "blackhole-capture-invalid-ownership-{}.state",
+            std::process::id()
+        ));
+        let store = FileOwnershipStore::new(&path);
+        for record in [
+            "blackhole\ncapture\n0\n5353\n42\n",
+            "blackhole\ncapture\n53\n0\n42\n",
+            "blackhole\nthis-chain-name-is-way-too-long-for-recovery\n53\n5353\n42\n",
+            "blackhole\ncapture\n53\n5353\n42\ntrailing\n",
+        ] {
+            std::fs::write(&path, record).expect("write invalid journal");
+            assert_eq!(store.load().expect("invalid journal is safe"), None);
+        }
+        std::fs::remove_file(path).expect("remove invalid journal");
     }
 
     #[test]
