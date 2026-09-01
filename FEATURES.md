@@ -90,6 +90,10 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - A bounded aggregate encoded-response-byte budget that sheds total DNS
   egress, including responses with no identified client, before transport
   write.
+- Responses that reach the configured amplification ceiling emit a bounded
+  failure cause and count toward the existing per-client and per-network
+  temporary abuse breakers; repeated capped responses can therefore trigger
+  the same expiring blacklist and optional durable incident path.
 - Upstream rebinding protection for private, local, link-local, unspecified,
   multicast, and IPv6 unique-local A/AAAA answers, with fail-closed SERVFAIL.
 - Optional country deny and observe-only (“snitch”) policy from a bounded,

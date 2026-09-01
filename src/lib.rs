@@ -3977,6 +3977,19 @@ mod runtime {
                 .allow(self.breaker_epoch, limit, bytes)
         }
 
+        /// Treat a response that reaches the configured ratio ceiling as an
+        /// amplification violation. The listener calls this after encoding,
+        /// so the signal is based on actual wire bytes and feeds the existing
+        /// bounded client/network abuse breaker.
+        pub(crate) fn response_amplification_capped(
+            &self,
+            query_wire_bytes: usize,
+            response_wire_bytes: usize,
+        ) -> bool {
+            let ratio = self.admission_config().max_response_amplification;
+            query_wire_bytes != 0 && response_wire_bytes >= query_wire_bytes.saturating_mul(ratio)
+        }
+
         /// Bound encoded DNS egress for an identified client network over a
         /// one-second window. The network key uses the same configured prefix
         /// as the abuse breaker and the table is bounded like other admission
@@ -7672,6 +7685,16 @@ mod runtime {
             };
             let answer = policy.evaluate(&query).expect("wire answer");
             assert!(answer.records.is_empty());
+        }
+
+        #[test]
+        fn response_amplification_boundary_is_reported_from_wire_sizes() {
+            let mut config = Config::default();
+            config.admission.max_response_amplification = 2;
+            let policy = Policy::new(config).expect("valid policy");
+            assert!(!policy.response_amplification_capped(50, 99));
+            assert!(policy.response_amplification_capped(50, 100));
+            assert!(!policy.response_amplification_capped(0, 100));
         }
 
         #[test]

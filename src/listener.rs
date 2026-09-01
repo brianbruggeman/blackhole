@@ -183,6 +183,17 @@ async fn decide<'a>(
         Some(PeerInfo::Tcp(address)) => Some(address.ip()),
         _ => None,
     };
+    if policy.response_amplification_capped(packet.len(), output.len()) {
+        policy.observe_failure("response_amplification_cap");
+        if policy.record_client_abuse(client_ip) {
+            policy.observe_failure("client_abuse_breaker_open");
+            if let Some(client) = client_ip {
+                policy
+                    .record_abuse_incident(client, "response_amplification_cap")
+                    .await;
+            }
+        }
+    }
     if !policy.allow_global_response_bytes(output.len()) {
         policy.observe_failure("global_response_budget");
         let _ = state.transition(Event::Drop(DropReason::PolicyFailure));

@@ -80,6 +80,10 @@ The network-scoped breaker aggregates those violations across configurable
 IPv4/IPv6 prefixes (defaults `/24` and `/64`) and sheds only the offending
 network during its cooldown. A separate bounded global queries-per-second
 ceiling also applies to unidentified callers as a DDoS stopgap.
+Responses that reach the configured amplification ceiling are also counted as
+abuse violations for identified TCP clients and their configured networks;
+repeated violations open the same bounded, expiring blacklist and can be
+persisted when DDoS incident persistence is enabled.
 Blocklist files accept hosts/domain entries and basic AdGuard `||domain^`
 filters; `@@||domain^` exceptions override the generated apex and subdomain
 blocks. Local A/AAAA rewrites are bounded and apply to `pass`/`observe` queries;
