@@ -65,6 +65,9 @@ jobs:
       - name: test library
         if: always()
         run: cargo test --lib
+      - name: test loopback resolver fixture
+        if: always()
+        run: cargo test --test resolver_fixture -- --nocapture
       - if: always()
         uses: actions/upload-artifact@v4
         with:
