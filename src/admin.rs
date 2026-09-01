@@ -78,6 +78,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <h2>Rules</h2><pre id="rules">loading…</pre>
 <h2>Service profiles</h2><pre id="profiles">loading…</pre>
 <h2>Client groups</h2><pre id="groups">loading…</pre>
+<h2>Client identities</h2><pre id="identities">loading…</pre>
 <h2>Local rewrites</h2><pre id="rewrites">loading…</pre>
 <h2>Privacy log</h2><pre id="logs">loading…</pre>
 <script>
@@ -86,7 +87,7 @@ const load = (path, target) => fetch(path).then(response => response.json()).the
   else document.querySelector(target).textContent = JSON.stringify(value, null, 2);
   if (path === '/admission/status') document.querySelector('#admission-config').value = JSON.stringify(value, null, 2);
 });
-const refresh = () => Promise.all([load('/status','#status'), load('/admission/status','#admission-status'), load('/policy-bundle','#policy-bundle'), load('/country/status','#country-status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
+const refresh = () => Promise.all([load('/status','#status'), load('/admission/status','#admission-status'), load('/policy-bundle','#policy-bundle'), load('/country/status','#country-status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/client-identities','#identities'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
 document.querySelector('#clear-logs').onclick = () => fetch('/logs/clear', {method:'POST'}).then(refresh);
 document.querySelector('#reload-blocklists').onclick = () => fetch('/reload/blocklists', {method:'POST'}).then(refresh);
 document.querySelector('#reload-admission').onclick = () => fetch('/reload/admission', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#admission-config').value}).then(refresh);
@@ -165,6 +166,9 @@ impl SendPipe for AdminHandler {
             ("GET", "/rules") => Ok(Response::ok(self.policy.admin_rules())),
             ("GET", "/profiles") => Ok(Response::ok(self.policy.admin_profiles())),
             ("GET", "/client-groups") => Ok(Response::ok(self.policy.admin_client_groups())),
+            ("GET", "/client-identities") => {
+                Ok(Response::ok(self.policy.admin_client_identities()))
+            }
             ("GET", "/rewrites") => Ok(Response::ok(self.policy.admin_rewrites())),
             ("POST", "/reload/policy-bundle") => {
                 if request.payload.len() > MAX_POLICY_BODY_BYTES {
@@ -565,6 +569,7 @@ impl SendPipe for AdminHandler {
                 | "/rules"
                 | "/profiles"
                 | "/client-groups"
+                | "/client-identities"
                 | "/rewrites"
                 | "/reload/profiles"
                 | "/reload/profiles/upsert"
@@ -655,6 +660,11 @@ mod tests {
             ui.payload
                 .windows(b"/country/status".len())
                 .any(|window| window == b"/country/status")
+        );
+        assert!(
+            ui.payload
+                .windows(b"/client-identities".len())
+                .any(|window| window == b"/client-identities")
         );
         assert!(
             ui.payload
@@ -750,6 +760,13 @@ mod tests {
         assert_eq!(status["country_policy_configured"], false);
         assert_eq!(status["country_reload_interval_secs"], 0);
         assert_eq!(status["cache_entries"], 0);
+        let identities = block_on(handler.call(request("GET", "/client-identities")))
+            .expect("client identities response");
+        assert_eq!(identities.status, 200);
+        let identities: serde_json::Value =
+            serde_json::from_slice(&identities.payload).expect("client identities JSON");
+        assert_eq!(identities["total"], 0);
+        assert_eq!(identities["client_identities"], serde_json::json!([]));
         let rules = block_on(handler.call(request("GET", "/rules"))).expect("rules response");
         assert_eq!(rules.status, 200);
         let rules: serde_json::Value = serde_json::from_slice(&rules.payload).expect("rules JSON");

@@ -4506,6 +4506,27 @@ mod runtime {
             .to_string()
         }
 
+        pub(crate) fn admin_client_identities(&self) -> String {
+            let _reload = self.reload_lock.read().expect("reload lock");
+            let identities = self
+                .client_identities
+                .iter()
+                .take(MAX_ADMIN_LOG_ENTRIES)
+                .map(|identity| {
+                    serde_json::json!({
+                        "name": identity.name,
+                        "clients": identity.clients.len(),
+                    })
+                })
+                .collect::<Vec<_>>();
+            serde_json::json!({
+                "client_identities": identities,
+                "total": self.client_identities.len(),
+                "truncated": self.client_identities.len() > MAX_ADMIN_LOG_ENTRIES,
+            })
+            .to_string()
+        }
+
         pub(crate) fn admin_rewrites(&self) -> String {
             let _reload = self.reload_lock.read().expect("reload lock");
             let rewrites = self.rewrite_configs.read().expect("rewrite configs lock");
