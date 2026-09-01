@@ -842,11 +842,27 @@ mod runtime {
     }
     const MAX_BLOCKLIST_BYTES: u64 = 16 * 1024 * 1024;
     const MAX_BLOCKLIST_LINE_BYTES: usize = 4096;
+    const MAX_BLOCKLIST_PATHS: usize = 4096;
+    const MAX_BLOCKLIST_PATH_BYTES: usize = 4096;
+    const MAX_BLOCKLIST_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
 
     fn load_blocklists(paths: &[String]) -> Result<Vec<RuleConfig>, policy::PolicyError> {
+        if paths.len() > MAX_BLOCKLIST_PATHS {
+            return Err(policy::PolicyError::InvalidBlocklist {
+                path: "<table>".into(),
+                reason: format!("source count exceeds {MAX_BLOCKLIST_PATHS}"),
+            });
+        }
         let mut domains = BTreeSet::new();
         let mut exceptions = BTreeSet::new();
+        let mut total_bytes = 0_u64;
         for path in paths {
+            if path.len() > MAX_BLOCKLIST_PATH_BYTES {
+                return Err(policy::PolicyError::InvalidBlocklist {
+                    path: path.clone(),
+                    reason: format!("path exceeds {MAX_BLOCKLIST_PATH_BYTES} bytes"),
+                });
+            }
             let metadata =
                 std::fs::metadata(path).map_err(|error| policy::PolicyError::InvalidBlocklist {
                     path: path.clone(),
@@ -856,6 +872,13 @@ mod runtime {
                 return Err(policy::PolicyError::InvalidBlocklist {
                     path: path.clone(),
                     reason: format!("file exceeds {MAX_BLOCKLIST_BYTES} bytes"),
+                });
+            }
+            total_bytes = total_bytes.saturating_add(metadata.len());
+            if total_bytes > MAX_BLOCKLIST_TOTAL_BYTES {
+                return Err(policy::PolicyError::InvalidBlocklist {
+                    path: "<table>".into(),
+                    reason: format!("aggregate files exceed {MAX_BLOCKLIST_TOTAL_BYTES} bytes"),
                 });
             }
             let contents = std::fs::read_to_string(path).map_err(|error| {
@@ -3540,6 +3563,24 @@ mod runtime {
             );
             assert_eq!(policy.evaluate(&query("clear.example.")).unwrap().rcode, 0);
             std::fs::remove_file(path).expect("remove blocklist");
+        }
+
+        #[test]
+        fn blocklist_source_count_and_path_length_are_bounded() {
+            let mut too_many = Config::default();
+            too_many.policy.blocklists = vec!["missing".into(); MAX_BLOCKLIST_PATHS + 1];
+            assert!(matches!(
+                Policy::new(too_many),
+                Err(policy::PolicyError::InvalidBlocklist { path, .. }) if path == "<table>"
+            ));
+
+            let mut too_long = Config::default();
+            too_long.policy.blocklists = vec!["x".repeat(MAX_BLOCKLIST_PATH_BYTES + 1)];
+            assert!(matches!(
+                Policy::new(too_long),
+                Err(policy::PolicyError::InvalidBlocklist { reason, .. })
+                    if reason.contains("path exceeds")
+            ));
         }
 
         #[test]
