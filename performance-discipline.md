@@ -52,6 +52,30 @@ remain zero because this example does not run the listener; listener coverage
 must be measured through the resolver fixture before those values are used.
 No optimization decision is justified by this row.
 
+## Row 4 — current scalar reference with full sample distribution
+
+`MEASURED` on 2026-09-01, Linux `x86_64`, rustc `1.98.0`, release build,
+source commit `c824c38`, GitHub Proxima revision `afca73c`, and load average
+`1.02`. The running harness used `N=25` samples per workload:
+
+```text
+build p50_ns=47019616 p95_ns=48097121 p99_ns=50590651 cov=0.016225 allocs=250025 alloc_bytes=27722250
+match p50_ns=41540 p95_ns=42618 p99_ns=43008 cov=0.012390 allocs=2500 alloc_bytes=57500
+parse_short p50_ns=47 p95_ns=69 p99_ns=491 cov=1.315419 allocs=0 alloc_bytes=0
+parse_long p50_ns=228 p95_ns=271 p99_ns=279 cov=0.057121 allocs=0 alloc_bytes=0
+parse_adversarial p50_ns=79 p95_ns=87 p99_ns=123 cov=0.107679 allocs=0 alloc_bytes=0
+parse_mixed p50_ns=80 p95_ns=243 p99_ns=253 cov=0.639077 allocs=0 alloc_bytes=0
+owned p50_ns=119 p95_ns=149 p99_ns=471 cov=0.506894 allocs=50 alloc_bytes=400
+encode_response p50_ns=99 p95_ns=272 p99_ns=503 cov=0.691849 allocs=50 alloc_bytes=1450
+boundary_bytes=MEASURED policy_canonicalize=60000 borrowed_to_owned=300 tcp_frame_buffer=0 encode_output=0 transport_write=0 rss_kib=5436
+arms=scalar-retained memchr-not-added simd-not-added wasm-edge-compile-only wasm-runtime-not-installed
+```
+
+Throughput values printed by the harness are `DERIVED` from the measured
+durations and operation counts. The zero transport counters are a property of
+this pure harness; the listener fixture remains the authority for transport
+boundaries. No optimization or zero-copy claim follows from this row.
+
 The actual listener fixture was then run with the same feature and
 `--nocapture`. `MEASURED` boundary totals were:
 
