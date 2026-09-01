@@ -502,7 +502,6 @@ mod tests {
             serde_json::from_slice(&profiles.payload).expect("profiles JSON");
         assert_eq!(profiles["total"], 1);
         let mut wire = vec![0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0];
-        wire.extend_from_slice(b"familyexample   ");
         wire.extend_from_slice(&[6, b'f', b'a', b'm', b'i', b'l', b'y', 7]);
         wire.extend_from_slice(b"example");
         wire.extend_from_slice(&[0, 0, 1, 0, 1]);
