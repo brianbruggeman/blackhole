@@ -91,8 +91,8 @@ Authenticated operators can revoke temporary blocks with bounded
 enabled, the revocation is recorded before the live breaker state is cleared
 and startup replays it in event order.
 When the bounded query log is enabled, `GET /abuse/incidents` provides a
-redacted incident review containing causes and expiry timestamps without
-client addresses.
+redacted incident review containing causes, expiry timestamps, and active or
+expired state without client addresses.
 Authenticated operators can export the newest bounded durable incident and
 revocation events at `GET /abuse/incidents/export`; this endpoint includes
 client keys for recovery and must be protected as operator-sensitive data.

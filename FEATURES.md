@@ -111,9 +111,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   state, and persists the revocation before applying it when durability is
   enabled.
 - Authenticated bounded `GET /abuse/incidents` provides a redacted review
-  projection of retained incident causes, actions, and expiry timestamps;
-  client addresses remain available only to the durable operator-controlled
-  recovery stream.
+  projection of retained incident causes, actions, expiry timestamps, and
+  active/expired state; client addresses remain available only to the durable
+  operator-controlled recovery stream.
 - Authenticated bounded `GET /abuse/incidents/export` reads the durable
   incident and revocation events through Proxima's JSONL source, retaining
   only the newest bounded event window and identifying that client keys are

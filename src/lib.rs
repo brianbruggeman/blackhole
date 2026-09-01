@@ -5599,6 +5599,11 @@ mod runtime {
             let Some(query_log) = self.query_log.as_ref() else {
                 return "{\"enabled\":false,\"incidents\":[]}".into();
             };
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |duration| {
+                    duration.as_millis().min(u128::from(u64::MAX)) as u64
+                });
             let incidents = query_log
                 .snapshot()
                 .into_iter()
@@ -5611,6 +5616,10 @@ mod runtime {
                             "cause": payload.get("cause"),
                             "response": payload.get("response"),
                             "expires_at_ms": payload.get("expires_at_ms"),
+                            "active": payload
+                                .get("expires_at_ms")
+                                .and_then(serde_json::Value::as_u64)
+                                .is_some_and(|expires_at_ms| expires_at_ms > now_ms),
                         }))
                     }
                     _ => None,
@@ -10275,6 +10284,7 @@ mod runtime {
                 serde_json::from_str(&policy.admin_abuse_incidents()).expect("review JSON");
             assert_eq!(review["enabled"], true);
             assert_eq!(review["incidents"].as_array().unwrap().len(), 1);
+            assert_eq!(review["incidents"][0]["active"], true);
             assert_eq!(review["client_addresses"], "redacted");
             assert!(!policy.admin_abuse_incidents().contains("192.0.2.10"));
         }
