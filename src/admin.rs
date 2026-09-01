@@ -1,7 +1,7 @@
 //! Authenticated operator control plane built from Proxima's HTTP pipe path.
 
 use std::collections::BTreeSet;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -92,6 +92,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <h2>Admission limits</h2><textarea id="admission-config" rows="16" cols="80">loading…</textarea><pre id="admission-status">loading…</pre>
 <h2>Adaptive abuse controls</h2><pre id="abuse-status">loading…</pre>
 <h2>Managed client denylist</h2><textarea id="denylist-config" rows="5" cols="80">loading…</textarea><p><button id="add-denylist">Add entries</button> <button id="remove-denylist">Revoke entries</button></p>
+<h2>Temporary incident revocation</h2><textarea id="abuse-revoke" rows="3" cols="80" placeholder='["192.0.2.10"]'></textarea><p><button id="revoke-abuse">Revoke temporary blocks</button></p>
 <h2>Policy bundle</h2><textarea id="policy-bundle" rows="12" cols="80">loading…</textarea>
 <h2>Blocklists</h2><div id="blocklist-controls"></div><pre id="blocklists">loading…</pre>
 <h2>Country policy</h2><pre id="country-status">loading…</pre>
@@ -155,6 +156,7 @@ document.querySelector('#clear-abuse').onclick = () => operate('/abuse/clear', {
 const updateDenylist = path => operate(path, {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#denylist-config').value}).then(refresh);
 document.querySelector('#add-denylist').onclick = () => updateDenylist('/abuse/denylist/add');
 document.querySelector('#remove-denylist').onclick = () => updateDenylist('/abuse/denylist/remove');
+document.querySelector('#revoke-abuse').onclick = () => operate('/abuse/revoke', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#abuse-revoke').value}).then(refresh);
 document.querySelector('#reload-blocklists').onclick = () => operate('/reload/blocklists', {method:'POST'}).then(refresh);
 document.querySelector('#reload-country').onclick = () => operate('/reload/country', {method:'POST'}).then(refresh);
 document.querySelector('#reload-admission').onclick = () => operate('/reload/admission', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#admission-config').value}).then(refresh);
@@ -215,6 +217,49 @@ impl SendPipe for AdminHandler {
                 "{{\"status\":\"cleared\",\"entries\":{}}}",
                 self.policy.clear_abuse_state()
             ))),
+            ("POST", "/abuse/revoke") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let clients = match serde_json::from_slice::<Vec<String>>(&request.payload) {
+                    Ok(clients) if !clients.is_empty() && clients.len() <= 256 => clients,
+                    Ok(_) => return Ok(Response::new(422)),
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                let clients = match clients
+                    .iter()
+                    .map(|client| client.parse::<IpAddr>())
+                    .collect::<Result<Vec<_>, _>>()
+                {
+                    Ok(clients) => clients,
+                    Err(error) => {
+                        return Ok(Response::new(422).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&format!("invalid incident client: {error}"))
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                if let Err(error) = self.policy.persist_abuse_revocation(&clients).await {
+                    return Ok(Response::new(503).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error).unwrap_or_else(|_| "null".into())
+                    )));
+                }
+                for client in &clients {
+                    self.policy.revoke_abuse_incident(*client);
+                }
+                Ok(Response::ok(format!(
+                    "{{\"status\":\"revoked\",\"entries\":{}}}",
+                    clients.len()
+                )))
+            }
             ("POST", "/abuse/denylist/add") | ("POST", "/abuse/denylist/remove") => {
                 if request.payload.len() > MAX_POLICY_BODY_BYTES {
                     return Ok(Response::new(413));
@@ -914,6 +959,7 @@ impl SendPipe for AdminHandler {
                 | "/abuse/status"
                 | "/abuse/denylist"
                 | "/abuse/clear"
+                | "/abuse/revoke"
                 | "/abuse/denylist/add"
                 | "/abuse/denylist/remove"
                 | "/reload/admission"
@@ -1054,6 +1100,16 @@ mod tests {
         );
         assert!(
             ui.payload
+                .windows(b"/abuse/revoke".len())
+                .any(|window| window == b"/abuse/revoke")
+        );
+        assert!(
+            ui.payload
+                .windows(b"revoke-abuse".len())
+                .any(|window| window == b"revoke-abuse")
+        );
+        assert!(
+            ui.payload
                 .windows(b"/cache/clear".len())
                 .any(|window| window == b"/cache/clear")
         );
@@ -1129,7 +1185,11 @@ mod tests {
                     .any(|window| window == control)
             );
         }
-        assert!(ui.payload.len() < 7 * 1024);
+        assert!(
+            ui.payload.len() < 8 * 1024,
+            "admin UI payload is {} bytes",
+            ui.payload.len()
+        );
         let clear =
             block_on(handler.call(request("POST", "/cache/clear"))).expect("cache clear response");
         assert_eq!(clear.status, 200);
@@ -1292,6 +1352,9 @@ mod tests {
         let wrong_abuse_clear_method =
             block_on(handler.call(request("GET", "/abuse/clear"))).expect("405 abuse clear");
         assert_eq!(wrong_abuse_clear_method.status, 405);
+        let wrong_abuse_revoke_method =
+            block_on(handler.call(request("GET", "/abuse/revoke"))).expect("405 abuse revoke");
+        assert_eq!(wrong_abuse_revoke_method.status, 405);
         let wrong_country_status_method =
             block_on(handler.call(request("POST", "/country/status")))
                 .expect("405 country status response");
@@ -1462,6 +1525,34 @@ mod tests {
             serde_json::from_slice::<Vec<String>>(&exported.payload).expect("export JSON"),
             vec!["2001:db8:42::/48"]
         );
+    }
+
+    #[test]
+    fn temporary_incident_revoke_route_is_bounded_and_validates_clients() {
+        let handler = AdminHandler::new(Arc::new(
+            Policy::new(crate::Config::default()).expect("default policy"),
+        ));
+        let revoke = Request::builder()
+            .method("POST")
+            .path("/abuse/revoke")
+            .payload(r#"["192.0.2.10","2001:db8::10"]"#)
+            .build()
+            .expect("valid incident revoke");
+        let response = block_on(handler.call(revoke)).expect("revoke response");
+        assert_eq!(response.status, 200);
+        assert_eq!(
+            response.payload,
+            Bytes::from_static(b"{\"status\":\"revoked\",\"entries\":2}")
+        );
+
+        let invalid = Request::builder()
+            .method("POST")
+            .path("/abuse/revoke")
+            .payload(r#"["not-an-ip"]"#)
+            .build()
+            .expect("invalid incident revoke");
+        let response = block_on(handler.call(invalid)).expect("invalid revoke response");
+        assert_eq!(response.status, 422);
     }
 
     #[test]

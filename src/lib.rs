@@ -435,6 +435,11 @@ mod runtime {
             );
         }
 
+        fn release_blocked(&self) {
+            self.blocked_until.store(0, Ordering::Release);
+            self.state.store(0, Ordering::Release);
+        }
+
         fn record_abuse(
             &self,
             epoch: Instant,
@@ -538,6 +543,14 @@ mod runtime {
             }
             let bucket = self.buckets.get_or_insert(key, AtomicWindowBucket::new);
             bucket.restore_blocked(epoch, remaining);
+        }
+
+        fn release_blocked(&self, key: &[u8]) {
+            // BucketTable is lock-free and bounded. A revoke may install an
+            // empty bucket when the incident already expired or was evicted;
+            // that keeps the operation deterministic without exposing keys.
+            let bucket = self.buckets.get_or_insert(key, AtomicWindowBucket::new);
+            bucket.release_blocked();
         }
 
         fn len(&self) -> usize {
@@ -3202,6 +3215,42 @@ mod runtime {
             recording.sync().await.map_err(|error| error.to_string())
         }
 
+        /// Persist an explicit incident revocation through the same bounded
+        /// Proxima recording sink used for incident recovery.
+        pub(crate) async fn persist_abuse_revocation(
+            &self,
+            clients: &[IpAddr],
+        ) -> Result<(), String> {
+            if !self.config.admission.ddos.persist_incidents {
+                return Ok(());
+            }
+            let recording = self
+                .recording
+                .as_ref()
+                .ok_or_else(|| "abuse persistence sink is not configured".to_owned())?;
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |duration| {
+                    duration.as_millis().min(u128::from(u64::MAX)) as u64
+                });
+            let event = RecordingEvent {
+                id: InteractionId::new(),
+                ts_ms: now_ms,
+                parent: None,
+                event: ProtocolEvent::Custom {
+                    kind: "blackhole.ddos_revoke".into(),
+                    payload: serde_json::json!({
+                        "clients": clients.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                    }),
+                },
+            };
+            recording
+                .append(event)
+                .await
+                .map_err(|error| error.to_string())?;
+            recording.sync().await.map_err(|error| error.to_string())
+        }
+
         /// Append validated rules to the current authoritative table and
         /// publish the combined snapshot atomically. The base-table lock is
         /// held through validation and publication so concurrent appenders do
@@ -4921,7 +4970,10 @@ mod runtime {
                 .allow(&key[..length], self.breaker_epoch, limit, bytes)
         }
 
-        fn allow_client_abuse(&self, client: Option<IpAddr>) -> bool {
+        /// Return whether an identified client currently passes both the
+        /// exact-client and configured-network abuse breakers.
+        #[must_use]
+        pub fn allow_client_abuse(&self, client: Option<IpAddr>) -> bool {
             let Some(client) = client else {
                 return true;
             };
@@ -5028,6 +5080,24 @@ mod runtime {
                 remaining,
             );
             true
+        }
+
+        /// Revoke a temporary incident for the exact client and its configured
+        /// abuse network. Both keyed tables use Proxima's bounded lock-free
+        /// buckets; revocation is idempotent and never changes policy rules.
+        pub fn revoke_abuse_incident(&self, client: IpAddr) {
+            let admission = self.admission_config();
+            let (client_key, client_key_len) = ip_key(client);
+            self.client_abuse
+                .release_blocked(&client_key[..client_key_len]);
+            let network = abuse_network_key(
+                client,
+                admission.network_abuse_ipv4_prefix,
+                admission.network_abuse_ipv6_prefix,
+            );
+            let (network_key, network_key_len) = abuse_network_bytes(network);
+            self.network_abuse
+                .release_blocked(&network_key[..network_key_len]);
         }
 
         fn admission_allows(&self, query: &proxima_dns::DnsQuery) -> bool {
@@ -9352,6 +9422,20 @@ mod runtime {
             assert!(!policy.allow_client_abuse(Some(same_network)));
             assert!(policy.allow_client_abuse(Some(other_network)));
             assert!(!policy.restore_abuse_incident(client, 1_000, 1_000));
+        }
+
+        #[test]
+        fn abuse_incident_revocation_reopens_exact_client_and_network() {
+            let mut config = Config::default();
+            config.admission.client_abuse_cooldown_secs = 60;
+            config.admission.network_abuse_cooldown_secs = 60;
+            let policy = Policy::new(config).expect("valid abuse config");
+            let client = "192.0.2.10".parse().expect("client address");
+            assert!(policy.restore_abuse_incident(client, 61_000, 1_000));
+            assert!(!policy.allow_client_abuse(Some(client)));
+            policy.revoke_abuse_incident(client);
+            assert!(policy.allow_client_abuse(Some(client)));
+            assert!(policy.allow_client_abuse(Some("192.0.2.11".parse().unwrap())));
         }
 
         #[test]

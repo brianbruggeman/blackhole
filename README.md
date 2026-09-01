@@ -86,6 +86,10 @@ atomic admission snapshot and are safe to retry.
 Set `[admission.ddos].persist_incidents = true` to persist temporary-blacklist
 events through the bounded Proxima recording sink; active markers are restored
 after restart until their configured expiry and expired markers are ignored.
+Authenticated operators can revoke temporary blocks with bounded
+`POST /abuse/revoke` using an array of exact client IPs; when persistence is
+enabled, the revocation is recorded before the live breaker state is cleared
+and startup replays it in event order.
 The same setting persists authenticated operator denylist additions and
 revocations in order; startup replays those bounded mutations before serving,
 and a failed durable mutation is rolled back.
@@ -214,6 +218,7 @@ in-flight capacity remains startup-only), bounded
 the configured client CIDRs), bounded
 `POST /abuse/denylist/add` and `/abuse/denylist/remove` (atomic bounded
 operator-managed additions and revocations), bounded
+`POST /abuse/revoke` (atomic bounded temporary-incident revocation), bounded
 `POST /reload/country`, bounded `POST /reload/policy` (a JSON array of complete rule objects), bounded
 `POST /reload/country/replace` (an atomic country/CIDR selector and map
 configuration replacement), bounded

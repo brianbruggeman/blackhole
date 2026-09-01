@@ -386,27 +386,64 @@ async fn restore_persisted_abuse(
         let proxima::ProtocolEvent::Custom { kind, payload } = event.event else {
             continue;
         };
-        if kind != "blackhole.ddos_incident" {
+        if kind != "blackhole.ddos_incident" && kind != "blackhole.ddos_revoke" {
             continue;
         }
+        let clients = if let Some(values) = payload.get("clients") {
+            let values = values.as_array().ok_or_else(|| {
+                ProximaError::Record("abuse recording revoke clients is not an array".into())
+            })?;
+            if values.is_empty() || values.len() > 256 {
+                return Err(ProximaError::Record(
+                    "abuse recording revoke client count is outside the bound".into(),
+                ));
+            }
+            values
+                .iter()
+                .map(|value| {
+                    value
+                        .as_str()
+                        .ok_or_else(|| {
+                            ProximaError::Record(
+                                "abuse recording revoke client is not a string".into(),
+                            )
+                        })?
+                        .parse()
+                        .map_err(|error| {
+                            ProximaError::Record(format!(
+                                "abuse recording revoke client is invalid: {error}"
+                            ))
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            let client = payload
+                .get("client")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| {
+                    ProximaError::Record("abuse recording incident is missing its client".into())
+                })?
+                .parse()
+                .map_err(|error| {
+                    ProximaError::Record(format!(
+                        "abuse recording incident has invalid client: {error}"
+                    ))
+                })?;
+            vec![client]
+        };
+        if kind == "blackhole.ddos_revoke" {
+            for client in clients {
+                policy.revoke_abuse_incident(client);
+            }
+            continue;
+        }
+        let client = clients[0];
         let Some(expires_at_ms) = payload
             .get("expires_at_ms")
             .and_then(serde_json::Value::as_u64)
         else {
             continue;
         };
-        let client = payload
-            .get("client")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| {
-                ProximaError::Record("abuse recording incident is missing its client".into())
-            })?
-            .parse()
-            .map_err(|error| {
-                ProximaError::Record(format!(
-                    "abuse recording incident has invalid client: {error}"
-                ))
-            })?;
         if policy.restore_abuse_incident(client, expires_at_ms, now_ms) {
             restored = restored.saturating_add(1);
         }
@@ -677,6 +714,49 @@ mod tests {
         let restored = futures::executor::block_on(restore_persisted_abuse(&policy, &path, 4_096))
             .expect("restore incident recording");
         assert_eq!(restored, 1);
+        std::fs::remove_dir_all(directory).expect("remove temporary directory");
+    }
+
+    #[test]
+    fn startup_replays_incident_revocation_after_an_incident() {
+        let directory = temporary_path("restore-revoke");
+        std::fs::create_dir(&directory).expect("temporary directory");
+        let path = directory.join("incidents.jsonl");
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_millis() as u64;
+        let event = |kind: &str, payload: serde_json::Value| proxima::RecordingEvent {
+            id: proxima::InteractionId::new(),
+            ts_ms: now_ms,
+            parent: None,
+            event: proxima::ProtocolEvent::Custom {
+                kind: kind.into(),
+                payload,
+            },
+        };
+        let mut recording = proxima::recording::jsonl::encode_jsonl_line(event(
+            "blackhole.ddos_incident",
+            serde_json::json!({
+                "client":"192.0.2.10",
+                "expires_at_ms":now_ms + 60_000,
+            }),
+        ))
+        .expect("encode incident event");
+        recording.push(b'\n');
+        recording.extend_from_slice(
+            &proxima::recording::jsonl::encode_jsonl_line(event(
+                "blackhole.ddos_revoke",
+                serde_json::json!({"client":"192.0.2.10"}),
+            ))
+            .expect("encode revoke event"),
+        );
+        std::fs::write(&path, recording).expect("write incident recording");
+        let policy = Policy::new(Config::default()).expect("valid default policy");
+        let restored = futures::executor::block_on(restore_persisted_abuse(&policy, &path, 4_096))
+            .expect("restore incident recording");
+        assert_eq!(restored, 1);
+        assert!(policy.allow_client_abuse(Some("192.0.2.10".parse().unwrap())));
         std::fs::remove_dir_all(directory).expect("remove temporary directory");
     }
 

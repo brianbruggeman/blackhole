@@ -106,6 +106,10 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   incident survives process death; the event includes a bounded expiry, and
   startup restores only active incidents to both the exact-client and
   configured-network breakers. DNS names and wire payloads remain absent.
+- Authenticated bounded incident revocation accepts exact client IPs, clears
+  the matching client and network breakers through Proxima's lock-free keyed
+  state, and persists the revocation before applying it when durability is
+  enabled.
 - When incident persistence is enabled, authenticated operator denylist
   additions and revocations are appended to that same bounded Proxima JSONL
   sink and replayed in order during startup; a failed durable append rolls the

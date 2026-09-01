@@ -25,10 +25,11 @@ below are future capabilities, grouped by the dependency layer they extend.
   identity, and network scope replacement/upsert/removal operations, including
   retained enable/disable state for profiles, groups, and identity mappings.
 - Extend the current bounded operator-managed CIDR denylist and expiring DDoS
-  breakers into an explainable reputation lifecycle: incident review, durable
-  approval and revocation, bounded import/export, and safe recovery after
-  restart. It must remain separate from authentication and must never become
-  an unbounded permanent blacklist.
+  breakers into the remaining explainable reputation lifecycle: incident
+  review, durable approval, bounded import/export, and safe recovery after
+  restart. Exact-client and network revocation is now durable and replayed in
+  order. It must remain separate from authentication and must never become an
+  unbounded permanent blacklist.
 - Add managed GeoIP/region/ASN data lifecycle and richer country policy beyond
   the current explicit country/CIDR/region/ASN map labels and bounded background
   refresh; uncertainty must remain explicit.
