@@ -63,6 +63,7 @@ mod runtime {
     const MAX_REGEX_PATTERN_BYTES: usize = 4096;
     const MAX_REGEX_PROGRAM_BYTES: usize = 1 << 20;
     const MAX_ADMIN_RULES_BODY_BYTES: usize = 64 * 1024;
+    const MAX_ADMIN_LOG_ENTRIES: usize = 1_024;
 
     #[derive(Debug, Clone, Deserialize, Default)]
     pub struct Config {
@@ -2582,7 +2583,7 @@ mod runtime {
             let Some(query_log) = self.query_log.as_ref() else {
                 return "{\"enabled\":false,\"entries\":[]}".into();
             };
-            let entries = query_log
+            let all_entries = query_log
                 .snapshot()
                 .into_iter()
                 .filter_map(|event| match event.event {
@@ -2592,7 +2593,17 @@ mod runtime {
                     _ => None,
                 })
                 .collect::<Vec<_>>();
-            serde_json::json!({"enabled": true, "entries": entries}).to_string()
+            let truncated = all_entries.len() > MAX_ADMIN_LOG_ENTRIES;
+            let entries = all_entries
+                .into_iter()
+                .rev()
+                .take(MAX_ADMIN_LOG_ENTRIES)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>();
+            serde_json::json!({"enabled": true, "truncated": truncated, "entries": entries})
+                .to_string()
         }
 
         pub(crate) fn clear_query_log(&self) -> usize {
@@ -4929,13 +4940,37 @@ mod runtime {
             let log = policy.query_log().expect("enabled query log");
             let events = log.snapshot();
             assert_eq!(events.len(), 1, "entry bound is enforced");
-            assert_eq!(
-                policy.admin_query_log().matches("secret.example").count(),
-                0
-            );
-            assert!(policy.admin_query_log().contains("nxdomain"));
+            let rendered = policy.admin_query_log();
+            assert_eq!(rendered.matches("secret.example").count(), 0);
+            assert!(rendered.contains("nxdomain"));
+            assert!(rendered.contains("\"truncated\":false"));
             assert_eq!(policy.clear_query_log(), 1);
             assert!(log.snapshot().is_empty());
+        }
+
+        #[test]
+        fn query_log_admin_projection_is_bounded() {
+            let mut config = Config::default();
+            config.privacy.query_log_enabled = true;
+            config.privacy.query_log_max_entries = 2_000;
+            let policy = Policy::new(config).expect("valid query log config");
+            let query = proxima_dns::DnsQuery {
+                id: 1,
+                recursion_desired: true,
+                name: "bounded.example.".into(),
+                qtype: 1,
+                qclass: 1,
+            };
+            for _ in 0..(MAX_ADMIN_LOG_ENTRIES + 1) {
+                futures::executor::block_on(policy.record_decision(Action::Reject, &query));
+            }
+            let rendered: serde_json::Value =
+                serde_json::from_str(&policy.admin_query_log()).expect("log JSON");
+            assert_eq!(
+                rendered["entries"].as_array().expect("entries").len(),
+                MAX_ADMIN_LOG_ENTRIES
+            );
+            assert_eq!(rendered["truncated"], true);
         }
 
         #[test]

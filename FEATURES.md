@@ -94,8 +94,8 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   answers and reports only the number of entries removed.
 - Optional bounded privacy-safe query-decision logs use Proxima's recording
   event shape, retain only timestamp/action/qtype/qclass metadata, enforce
-  entry and age limits, and support authenticated inspection and deletion;
-  logging is disabled by default.
+  entry and age limits, cap the authenticated inspection projection, and
+  support authenticated deletion; logging is disabled by default.
 - A tested policy/FSM/snapshot core that does not require privileged capture
   APIs.
 - Shared capture-controller orchestration with exact ownership journaling,
