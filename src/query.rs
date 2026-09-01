@@ -25,6 +25,7 @@ pub enum QueryParseError {
     Wire(ParseError),
     Response,
     InvalidFlags,
+    InvalidQuestion,
     UnsupportedName,
     NotSingleQuestion,
     Oversized,
@@ -41,6 +42,7 @@ impl QueryParseError {
             Self::Wire(ParseError::Malformed(_)) => "query_wire_malformed",
             Self::Response => "query_response",
             Self::InvalidFlags => "query_invalid_flags",
+            Self::InvalidQuestion => "query_invalid_question",
             Self::UnsupportedName => "query_unsupported_name",
             Self::NotSingleQuestion => "query_question_count",
             Self::Oversized => "query_oversized",
@@ -57,6 +59,9 @@ impl core::fmt::Display for QueryParseError {
             }
             Self::InvalidFlags => {
                 formatter.write_str("DNS query contains response or reserved flag bits")
+            }
+            Self::InvalidQuestion => {
+                formatter.write_str("DNS question contains a zero qtype or qclass")
             }
             Self::UnsupportedName => {
                 formatter.write_str("DNS name contains non-ASCII labels; IDNA is unsupported")
@@ -95,6 +100,9 @@ impl<'packet> QueryView<'packet> {
             .questions()
             .next()
             .ok_or(QueryParseError::NotSingleQuestion)??;
+        if question.qtype == 0 || question.qclass == 0 {
+            return Err(QueryParseError::InvalidQuestion);
+        }
         if question.name.labels().any(|label| !label.is_ascii()) {
             return Err(QueryParseError::UnsupportedName);
         }
@@ -206,6 +214,20 @@ mod tests {
                 "flags {:02x}{:02x} must not enter policy",
                 packet[2],
                 packet[3]
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_zero_question_type_or_class() {
+        for (qtype, qclass) in [(0u16, 1u16), (1u16, 0u16)] {
+            let mut packet = query(b"\x07example\x03com\0", qtype);
+            let class_start = packet.len() - 2;
+            packet[class_start..].copy_from_slice(&qclass.to_be_bytes());
+            assert_eq!(
+                QueryView::parse(&packet),
+                Err(QueryParseError::InvalidQuestion),
+                "qtype={qtype} qclass={qclass} must not enter policy"
             );
         }
     }

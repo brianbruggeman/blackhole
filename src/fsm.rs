@@ -204,8 +204,7 @@ mod tests {
     use super::*;
 
     fn query() -> QueryView<'static> {
-        QueryView::parse(&[0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1])
-            .expect("root query")
+        QueryView::parse(&[0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1]).expect("root query")
     }
 
     #[test]
