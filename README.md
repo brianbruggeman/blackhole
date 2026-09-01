@@ -68,9 +68,10 @@ same bounded `client_cidrs` network scope as domain rules.
 
 The upstream transport is selected in `[upstream]`: `transport = "udp"` keeps
 UDP with bounded TCP fallback, `transport = "tcp"` uses DNS-over-TCP for every
-exchange, and `transport = "tls"` uses DNS-over-TLS for every exchange. TLS
-requires `tls_server_name` and validates the server certificate through
-Proxima's GitHub `proxima-tls` adapter.
+exchange, `transport = "tls"` uses DNS-over-TLS for every exchange, and
+`transport = "doh"` uses DNS-over-HTTPS for every exchange. Encrypted modes
+require `tls_server_name` and validate the server certificate through
+Proxima's GitHub HTTP/TLS pipe adapters.
 
 Proxima is consumed from GitHub. Prime is the default runtime and executable
 path. Proxima's HTTP listener currently brings a small Tokio dependency into

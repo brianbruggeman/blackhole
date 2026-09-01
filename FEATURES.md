@@ -37,9 +37,9 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   is bounded to 60 seconds, at most eight attempts per exchange, and the
   outstanding-query limit is bounded.
 - Configurable Proxima upstream transport: `udp` (with TCP fallback), `tcp`,
-  or `tls` for DNS-over-TLS stream-only exchanges; TLS requires an explicit
-  server name and uses certificate verification through Proxima's GitHub
-  `proxima-tls` adapter.
+  `tls` for DNS-over-TLS, or `doh` for DNS-over-HTTPS stream-only exchanges;
+  encrypted modes require an explicit server name and use Proxima's GitHub
+  HTTP/TLS pipe adapters.
 - Bounded positive and negative response caching with a configured maximum
   protocol TTL, a bounded stale-serving window for upstream outages, plus
   Proxima-native hit/miss/stale/eviction counters and effective positive/
