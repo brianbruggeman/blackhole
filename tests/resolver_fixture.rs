@@ -29,6 +29,7 @@ async fn listener_preserves_distinct_terminal_actions_on_udp() {
         ("honeypot.example.", Action::Honeypot),
         ("pass.example.", Action::Pass),
         ("observe.example.", Action::Observe),
+        ("forward.example.", Action::Forward),
         ("drop.example.", Action::Drop),
         ("ignore.example.", Action::Ignore),
     ];
@@ -94,7 +95,8 @@ async fn listener_preserves_distinct_terminal_actions_on_udp() {
             | Action::Sink
             | Action::Honeypot
             | Action::Pass
-            | Action::Observe => {
+            | Action::Observe
+            | Action::Forward => {
                 let (length, _) = received.expect("terminal action response");
                 let message = parse_message(&response[..length]).expect("parse action response");
                 assert_eq!(message.header.id, index as u16 + 1);
@@ -113,10 +115,13 @@ async fn listener_preserves_distinct_terminal_actions_on_udp() {
                         assert_eq!(message.header.flags.rcode(), 0);
                         assert_eq!(message.answers().count(), 0);
                     }
+                    Action::Forward => {
+                        assert_eq!(message.header.flags.rcode(), 0);
+                        assert_eq!(message.answers().count(), 0);
+                    }
                     _ => unreachable!("response action already matched"),
                 }
             }
-            _ => unreachable!("action matrix contains only terminal actions"),
         }
     }
     drop(server);
@@ -131,6 +136,7 @@ async fn listener_preserves_distinct_terminal_actions_on_tcp() {
         ("honeypot.example.", Action::Honeypot),
         ("pass.example.", Action::Pass),
         ("observe.example.", Action::Observe),
+        ("forward.example.", Action::Forward),
         ("drop.example.", Action::Drop),
         ("ignore.example.", Action::Ignore),
     ];
@@ -236,7 +242,8 @@ async fn listener_preserves_distinct_terminal_actions_on_tcp() {
             | Action::Sink
             | Action::Honeypot
             | Action::Pass
-            | Action::Observe => {
+            | Action::Observe
+            | Action::Forward => {
                 let mut response_len = [0u8; 2];
                 client
                     .read_exact(&mut response_len)
@@ -265,10 +272,13 @@ async fn listener_preserves_distinct_terminal_actions_on_tcp() {
                         assert_eq!(message.header.flags.rcode(), 0);
                         assert_eq!(message.answers().count(), 0);
                     }
+                    Action::Forward => {
+                        assert_eq!(message.header.flags.rcode(), 0);
+                        assert_eq!(message.answers().count(), 0);
+                    }
                     _ => unreachable!("response action already matched"),
                 }
             }
-            _ => unreachable!("action matrix contains only terminal actions"),
         }
     }
     server.stop();
