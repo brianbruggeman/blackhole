@@ -12,6 +12,8 @@ concurrency:
 jobs:
   linux:
     runs-on: ubuntu-latest
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -98,6 +100,8 @@ jobs:
 
   macos:
     runs-on: macos-latest
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

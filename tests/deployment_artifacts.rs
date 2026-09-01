@@ -238,6 +238,7 @@ fn query_fuzz_corpus_is_bounded_and_content_addressed() {
 #[test]
 fn macos_workflow_builds_and_bounds_launchd_smoke() {
     let workflow = fs::read_to_string(VERIFY_WORKFLOW).expect("read verification workflow");
+    assert!(workflow.contains("CARGO_TARGET_DIR: ${{ github.workspace }}/target"));
     let release_build = workflow
         .find("name: build launchd release binary")
         .expect("macOS release build step");
