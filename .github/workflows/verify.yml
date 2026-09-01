@@ -144,6 +144,9 @@ jobs:
         run: |
           sudo -n pfctl -E
           sudo -n target/debug/examples/capture_smoke
+      - name: build launchd release binary
+        if: always()
+        run: cargo build --locked --release --bin blackhole
       - name: run launchd host install and upgrade smoke
         if: always()
         run: |
