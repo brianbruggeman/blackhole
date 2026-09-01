@@ -19,7 +19,7 @@ use std::future::poll_fn;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::time::Instant;
 
-const SAMPLES: usize = 100;
+const SAMPLES: usize = 1_000;
 
 struct Passthrough;
 
@@ -60,7 +60,7 @@ async fn main() -> Result<(), ProximaError> {
     config.policy.default_action = Action::Pass;
     // Keep the benchmark workload below the configured admission ceiling;
     // this is a measurement of the listener path, not of rate shedding.
-    config.admission.max_queries_per_client_per_second = 1_000;
+    config.admission.max_queries_per_client_per_second = 20_000;
     config.policy.rewrites = vec![RewriteConfig {
         name: "benchmark.example".into(),
         ipv4: Some(Ipv4Addr::new(192, 0, 2, 42)),
