@@ -41,6 +41,7 @@ jobs:
           sh -n deploy/package/build.sh
           sh -n deploy/package/build-deb.sh
           sh -n deploy/package/smoke-deb.sh
+          sh -n deploy/package/smoke-archive.sh
       - name: build release packages
         run: |
           cargo build --locked --release --features std --bin blackhole
@@ -68,6 +69,8 @@ jobs:
         run: sudo -n env BLACKHOLE_BINARY="$PWD/target/release/blackhole" BLACKHOLE_CONFIG="$PWD/blackhole.example.toml" deploy/systemd/smoke.sh
       - name: run Debian package install smoke
         run: sudo -n deploy/package/smoke-deb.sh "$(find dist -name 'blackhole_*.deb' -print -quit)"
+      - name: run archive installer smoke
+        run: sudo -n deploy/package/smoke-archive.sh "$(find dist -name 'blackhole-*.tar.gz' -print -quit)"
       - name: run privileged capture smoke
         run: sudo -n target/debug/examples/capture_smoke
 
@@ -84,6 +87,7 @@ jobs:
           sh -n deploy/package/build.sh
           sh -n deploy/package/build-deb.sh
           sh -n deploy/package/smoke-deb.sh
+          sh -n deploy/package/smoke-archive.sh
       - name: validate launchd service
         run: plutil -lint deploy/launchd/com.brianbruggeman.blackhole.plist
       - name: record macOS toolchain

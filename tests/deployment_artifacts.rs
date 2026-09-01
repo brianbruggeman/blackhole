@@ -11,6 +11,7 @@ const LAUNCHD_INSTALLER: &str = "deploy/launchd/install.sh";
 const PACKAGE_BUILDER: &str = "deploy/package/build.sh";
 const DEB_BUILDER: &str = "deploy/package/build-deb.sh";
 const DEB_SMOKE: &str = "deploy/package/smoke-deb.sh";
+const ARCHIVE_SMOKE: &str = "deploy/package/smoke-archive.sh";
 
 #[test]
 fn launchd_service_is_unprivileged_and_direct() {
@@ -241,5 +242,16 @@ fn deb_smoke_exercises_a_disposable_root_transaction() {
     assert!(script.contains("dpkg --root=\"$root\" --unpack"));
     assert!(script.matches("dpkg --root=\"$root\" --unpack").count() >= 2);
     assert!(script.contains("dpkg-query --root=\"$root\""));
+    assert!(script.contains("/var/lib/blackhole"));
+}
+
+#[test]
+fn archive_smoke_runs_the_shipped_installer_in_a_disposable_root() {
+    let script = fs::read_to_string(ARCHIVE_SMOKE).expect("read archive smoke script");
+    assert!(script.starts_with("#!/bin/sh\nset -eu\n"));
+    assert!(script.contains("tar -xzf"));
+    assert!(script.contains("share/blackhole/deploy/systemd/install.sh"));
+    assert!(script.contains("BLACKHOLE_INSTALL_ROOT=\"$install_root\""));
+    assert!(script.contains("etc/systemd/system/blackhole.service"));
     assert!(script.contains("/var/lib/blackhole"));
 }
