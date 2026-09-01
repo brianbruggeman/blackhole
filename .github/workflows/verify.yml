@@ -36,8 +36,27 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --all-targets
+      - name: record macOS toolchain
+        run: |
+          {
+            uname -a
+            xcodebuild -version
+            rustc -vV
+            cargo -vV
+            cc --version
+          } > macos-toolchain.txt 2>&1
+      - name: check all targets
+        run: |
+          set -o pipefail
+          cargo check --all-targets 2>&1 | tee macos-cargo-check.log
       - run: cargo test --lib
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: blackhole-macos-diagnostics-${{ github.sha }}
+          path: |
+            macos-toolchain.txt
+            macos-cargo-check.log
 
   wasm:
     runs-on: ubuntu-latest
