@@ -488,6 +488,9 @@ mod runtime {
         /// policy before enabling it.
         #[serde(default)]
         pub query_recording_path: Option<String>,
+        /// Hard upper bound for the encoded JSONL recording file.
+        #[serde(default = "default_query_recording_max_bytes")]
+        pub query_recording_max_bytes: u64,
     }
 
     impl Default for PrivacyConfig {
@@ -497,7 +500,84 @@ mod runtime {
                 query_log_max_entries: default_query_log_entries(),
                 query_log_retention_secs: default_query_log_retention_secs(),
                 query_recording_path: None,
+                query_recording_max_bytes: default_query_recording_max_bytes(),
             }
+        }
+    }
+
+    /// A Proxima recording sink with an exact encoded-byte ceiling. The
+    /// reservation is made before forwarding to the existing sink, so an
+    /// overflow never reaches the durable backend.
+    pub struct BoundedQueryRecordingSink {
+        inner: DynRecordingSink,
+        reserved_bytes: AtomicU64,
+        max_bytes: u64,
+    }
+
+    impl BoundedQueryRecordingSink {
+        pub fn new(
+            inner: DynRecordingSink,
+            path: &std::path::Path,
+            max_bytes: u64,
+        ) -> Result<Self, ProximaError> {
+            let existing_bytes = std::fs::metadata(path)
+                .map_or(Ok(0), |metadata| Ok(metadata.len()))
+                .map_err(|error: std::io::Error| {
+                    ProximaError::Record(format!("inspect query recording: {error}"))
+                })?;
+            if existing_bytes > max_bytes {
+                return Err(ProximaError::Record(format!(
+                    "query recording already exceeds configured limit: {existing_bytes} > {max_bytes}"
+                )));
+            }
+            Ok(Self {
+                inner,
+                reserved_bytes: AtomicU64::new(existing_bytes),
+                max_bytes,
+            })
+        }
+
+        fn reserve(&self, additional: u64) -> Result<(), ProximaError> {
+            let mut current = self.reserved_bytes.load(Ordering::Acquire);
+            loop {
+                let next = current.checked_add(additional).ok_or_else(|| {
+                    ProximaError::Record("query recording byte limit overflow".into())
+                })?;
+                if next > self.max_bytes {
+                    return Err(ProximaError::Record(format!(
+                        "query recording byte limit reached: {next} > {}",
+                        self.max_bytes
+                    )));
+                }
+                match self.reserved_bytes.compare_exchange(
+                    current,
+                    next,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                ) {
+                    Ok(_) => return Ok(()),
+                    Err(observed) => current = observed,
+                }
+            }
+        }
+    }
+
+    impl RecordingSink for BoundedQueryRecordingSink {
+        fn append<'lifetime>(
+            &'lifetime self,
+            event: RecordingEvent,
+        ) -> RecordingAppendFuture<'lifetime> {
+            let result = proxima::recording::jsonl::encode_jsonl_line(event.clone())
+                .map_err(|error| ProximaError::Record(format!("encode query recording: {error}")))
+                .and_then(|encoded| self.reserve(encoded.len() as u64 + 1).map(|()| event));
+            match result {
+                Ok(event) => self.inner.append(event),
+                Err(error) => Box::pin(async move { Err(error) }),
+            }
+        }
+
+        fn flush<'lifetime>(&'lifetime self) -> RecordingAppendFuture<'lifetime> {
+            self.inner.flush()
         }
     }
 
@@ -791,6 +871,10 @@ mod runtime {
 
     fn default_query_log_retention_secs() -> u64 {
         86_400
+    }
+
+    fn default_query_recording_max_bytes() -> u64 {
+        64 * 1024 * 1024
     }
 
     fn default_max_cache_ttl_secs() -> u64 {
@@ -1715,6 +1799,14 @@ mod runtime {
             {
                 return Err(policy::PolicyError::InvalidAdmission {
                     reason: "query recording path must be between 1 and 4096 bytes".into(),
+                });
+            }
+            if config.privacy.query_recording_path.is_some()
+                && (config.privacy.query_recording_max_bytes == 0
+                    || config.privacy.query_recording_max_bytes > 1 << 30)
+            {
+                return Err(policy::PolicyError::InvalidAdmission {
+                    reason: "query recording max bytes must be between 1 and 1073741824".into(),
                 });
             }
             if config.policy.blocklist_reload_interval_secs > MAX_BLOCKLIST_RELOAD_INTERVAL_SECS {
@@ -6001,7 +6093,10 @@ mod runtime {
                     ))
                     .is_ok()
             );
-            let sink: Arc<dyn RecordingSink> = Arc::new(AccumulatingSink::new(durable, 1));
+            let buffered: DynRecordingSink = Arc::new(AccumulatingSink::new(durable, 1));
+            let bounded = BoundedQueryRecordingSink::new(buffered, &path, 4_096)
+                .expect("bounded recording sink");
+            let sink: Arc<dyn RecordingSink> = Arc::new(bounded);
             let policy = Policy::new(Config::default())
                 .expect("valid policy")
                 .with_recording_sink(Arc::clone(&sink));
@@ -6018,10 +6113,11 @@ mod runtime {
                 sink.flush().await.expect("flush recording sink");
             });
 
-            let contents = std::fs::read_to_string(path).expect("read JSONL recording");
+            let contents = std::fs::read_to_string(&path).expect("read JSONL recording");
             assert!(contents.contains("blackhole.dns_decision"));
             assert!(contents.contains("nxdomain"));
             assert!(!contents.contains("secret.example"));
+            assert!(std::fs::metadata(&path).expect("recording metadata").len() <= 4_096);
             std::fs::remove_dir_all(directory).expect("remove recording directory");
         }
 
@@ -6094,6 +6190,11 @@ mod runtime {
 
             let mut config = Config::default();
             config.privacy.query_recording_path = Some(String::new());
+            assert!(Policy::new(config).is_err());
+
+            let mut config = Config::default();
+            config.privacy.query_recording_path = Some("decisions.jsonl".into());
+            config.privacy.query_recording_max_bytes = 0;
             assert!(Policy::new(config).is_err());
         }
     }

@@ -14,7 +14,8 @@ DNS edge and is a prerequisite for any future honeypot terminal.
 - The optional Proxima recording sink receives only action, qtype, and qclass
   metadata. The executable may append the same events to the configured
   `privacy.query_recording_path`; operators must enforce rotation, retention,
-  and storage limits before enabling it. Blackhole never supplies
+  and deletion policy before enabling it. Blackhole enforces the configured
+  `privacy.query_recording_max_bytes` ceiling and never supplies
   query names, client identity, credentials, or packet bytes to that sink.
 - The bounded fuzz corpus contains only synthetic/minimized wire samples and
   must not contain client identity or production payloads.

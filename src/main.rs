@@ -10,7 +10,7 @@ use blackhole::listener::{TcpProtocol, UdpProtocol};
 #[cfg(target_os = "macos")]
 use blackhole::pf_capture::{PfRulePlan, native::PfctlCommandBackend};
 #[cfg(feature = "std")]
-use blackhole::{Config, Policy, UpstreamTransport};
+use blackhole::{BoundedQueryRecordingSink, Config, Policy, UpstreamTransport};
 #[cfg(feature = "std")]
 use bytes::Bytes;
 #[cfg(feature = "std")]
@@ -402,6 +402,7 @@ async fn main() -> Result<(), ProximaError> {
     let country_reload_enabled =
         country_reload_interval != 0 && config.country_policy.map_path.is_some();
     let query_recording_path = config.privacy.query_recording_path.clone();
+    let query_recording_max_bytes = config.privacy.query_recording_max_bytes;
     if let Some(path) = query_recording_path.as_deref() {
         validate_query_recording_path(path)?;
     }
@@ -501,7 +502,11 @@ async fn main() -> Result<(), ProximaError> {
                 ProximaError::Config(format!("cannot start recording runtime: {error}"))
             })?))
             .map_err(|_| ProximaError::Config("recording runtime already initialized".into()))?;
-        policy = policy.with_recording_sink(Arc::new(AccumulatingSink::new(durable, 32)));
+        let buffered = Arc::new(AccumulatingSink::new(durable, 32));
+        let bounded =
+            BoundedQueryRecordingSink::new(buffered, Path::new(&path), query_recording_max_bytes)
+                .map_err(|error| ProximaError::Config(error.to_string()))?;
+        policy = policy.with_recording_sink(Arc::new(bounded));
         println!("blackhole query recording enabled ({path})");
     }
     let policy = Arc::new(policy);

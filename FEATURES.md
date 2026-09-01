@@ -88,7 +88,8 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   (`action`, `qtype`, and `qclass`); DNS names, client identity, credentials,
   and wire payloads are excluded from recording events. The convenience API
   wraps a supplied backend in Proxima's bounded queue, and the executable can
-  append the same events to an operator-selected Proxima JSONL destination.
+  append the same events to an operator-selected Proxima JSONL destination
+  with a hard encoded-byte ceiling.
 - Atomic in-process rule-table reloads over Proxima's immutable `Live` snapshot
   primitive, with failed reloads retaining the last valid generation and
   successful policy reloads invalidating cached forwarding answers.
