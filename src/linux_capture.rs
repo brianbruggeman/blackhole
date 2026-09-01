@@ -264,8 +264,9 @@ impl<B: RuleBackend, S: OwnershipStore> CaptureController<B, S> {
         }
         self.state = InstallState::Installing;
         if let Err(error) = self.backend.install(plan) {
+            let rollback = self.backend.remove(plan);
             self.state = InstallState::Failed;
-            return Err(CaptureError::Backend(error));
+            return Err(CaptureError::Transaction { error, rollback });
         }
         if let Err(error) = self.backend.verify(plan) {
             let rollback = self.backend.remove(plan);
@@ -456,6 +457,7 @@ mod tests {
     #[derive(Default)]
     struct FakeBackend {
         calls: Vec<&'static str>,
+        fail_install: bool,
         fail_verify: bool,
     }
 
@@ -464,6 +466,9 @@ mod tests {
 
         fn install(&mut self, _plan: &Self::Plan) -> Result<(), String> {
             self.calls.push("install");
+            if self.fail_install {
+                return Err("partial install".into());
+            }
             Ok(())
         }
         fn verify(&mut self, _plan: &Self::Plan) -> Result<(), String> {
@@ -528,6 +533,22 @@ mod tests {
             controller.backend.calls,
             vec!["install", "verify", "remove"]
         );
+    }
+
+    #[test]
+    fn install_failure_attempts_rollback_of_partial_rules() {
+        let plan = NftRulePlan::new("capture", 5353, 42).unwrap();
+        let backend = FakeBackend {
+            fail_install: true,
+            ..Default::default()
+        };
+        let mut controller = CaptureController::new(backend);
+        assert!(matches!(
+            controller.install(&plan),
+            Err(CaptureError::Transaction { .. })
+        ));
+        assert_eq!(controller.status(), InstallState::Failed);
+        assert_eq!(controller.backend.calls, vec!["install", "remove"]);
     }
 
     #[test]
