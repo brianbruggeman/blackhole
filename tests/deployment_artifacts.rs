@@ -180,6 +180,8 @@ fn package_builder_contains_provenance_and_bounded_inputs() {
         "blackhole.example.toml",
         "blackhole.service",
         "com.brianbruggeman.blackhole.plist",
+        "deploy/systemd/install.sh",
+        "deploy/launchd/install.sh",
         "tar -C",
     ] {
         assert!(

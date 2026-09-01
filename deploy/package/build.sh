@@ -43,10 +43,14 @@ cp "$repo_dir/blackhole.example.toml" \
     "$staging/$package_name/etc/blackhole/blackhole.toml"
 cp "$repo_dir/deploy/systemd/blackhole.service" \
     "$repo_dir/deploy/systemd/blackhole.conf" \
+    "$repo_dir/deploy/systemd/install.sh" \
     "$staging/$package_name/share/blackhole/deploy/systemd/"
 cp "$repo_dir/deploy/launchd/com.brianbruggeman.blackhole.plist" \
+    "$repo_dir/deploy/launchd/install.sh" \
     "$staging/$package_name/share/blackhole/deploy/launchd/"
-chmod 0755 "$staging/$package_name/bin/blackhole"
+chmod 0755 "$staging/$package_name/bin/blackhole" \
+    "$staging/$package_name/share/blackhole/deploy/systemd/install.sh" \
+    "$staging/$package_name/share/blackhole/deploy/launchd/install.sh"
 
 {
     printf 'package=%s\n' "$package_name"
