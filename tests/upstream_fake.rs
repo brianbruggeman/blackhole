@@ -20,6 +20,7 @@ enum ReplyMode {
     Malformed,
     WrongSender,
     Timeout,
+    Overflow,
 }
 
 struct FakeState {
@@ -60,7 +61,8 @@ impl FakeSocket {
             | ReplyMode::Negative
             | ReplyMode::Servfail
             | ReplyMode::WrongId
-            | ReplyMode::WrongSender => {
+            | ReplyMode::WrongSender
+            | ReplyMode::Overflow => {
                 let message = parse_message(query).expect("fake query");
                 let question = message
                     .questions()
@@ -84,6 +86,16 @@ impl FakeSocket {
                 };
                 let records = if matches!(mode, ReplyMode::Negative | ReplyMode::Servfail) {
                     Vec::new()
+                } else if matches!(mode, ReplyMode::Overflow) {
+                    (0..65)
+                        .map(|_| encode::AnswerRecord {
+                            name: &name,
+                            rtype: 1,
+                            rclass: question.qclass,
+                            ttl: 30,
+                            rdata: &rdata,
+                        })
+                        .collect()
                 } else {
                     vec![record]
                 };
@@ -181,6 +193,7 @@ fn policy(mode: ReplyMode) -> (Policy, FakeSocket) {
 
 fn policy_with_action(mode: ReplyMode, action: Action) -> (Policy, FakeSocket) {
     let mut config = Config::default();
+    config.admission.max_response_records = 1;
     config.policy.rules = vec![RuleConfig {
         id: 1,
         domain: "example.com".into(),
@@ -288,6 +301,14 @@ async fn fake_upstream_timeout_fails_closed() {
     let (policy, _) = policy(ReplyMode::Timeout);
     let result = policy.call(request()).await;
     assert!(result.is_err());
+}
+
+#[proxima::test]
+async fn fake_upstream_overflow_fails_closed() {
+    let (policy, _) = policy(ReplyMode::Overflow);
+    let answer = policy.call(request()).await.expect("fail-closed response");
+    assert_eq!(answer.payload.rcode, 2, "overflow must become SERVFAIL");
+    assert!(answer.payload.records.is_empty());
 }
 
 #[proxima::test]
