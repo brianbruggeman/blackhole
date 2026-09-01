@@ -28,10 +28,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let table_cleanup = Command::new("nft")
         .args(["delete", "table", "inet", &table])
         .status()?;
+    if let Err(error) = operation {
+        return Err(error.into());
+    }
     if !table_cleanup.success() {
         return Err(format!("nft table cleanup failed for {table}").into());
     }
-    operation?;
     if journal.exists() {
         return Err("capture smoke left an ownership journal".into());
     }
