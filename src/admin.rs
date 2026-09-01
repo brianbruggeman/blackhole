@@ -663,6 +663,8 @@ mod tests {
             serde_json::from_slice(&privacy_status.payload).expect("privacy status JSON");
         assert_eq!(privacy_status["query_log_enabled"], false);
         assert_eq!(privacy_status["query_recording_enabled"], false);
+        assert_eq!(privacy_status["query_recording_rotation_enabled"], false);
+        assert_eq!(privacy_status["query_recording_max_files"], 3);
         assert_eq!(privacy_status["payload_recording"], "disabled");
         assert_eq!(privacy_status["client_identity_recording"], "disabled");
         let admission_status =
@@ -936,7 +938,10 @@ mod tests {
         let groups: serde_json::Value =
             serde_json::from_slice(&groups.payload).expect("groups JSON");
         assert_eq!(groups["total"], 2);
-        assert_eq!(groups["client_groups"][0]["client_addresses"][0], "192.0.2.53");
+        assert_eq!(
+            groups["client_groups"][0]["client_addresses"][0],
+            "192.0.2.53"
+        );
 
         let invalid = Request::builder()
             .method("POST")
