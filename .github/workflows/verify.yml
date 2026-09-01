@@ -47,6 +47,15 @@ jobs:
           deploy/package/build-deb.sh target/release/blackhole dist
           tar -tzf dist/blackhole-*.tar.gz >/dev/null
           ar t dist/blackhole_*.deb
+          mkdir -p package-check/control package-check/data
+          ar p dist/blackhole_*.deb control.tar.gz | tar -xzf - -C package-check/control
+          ar p dist/blackhole_*.deb data.tar.gz | tar -xzf - -C package-check/data
+          test -x package-check/control/postinst
+          test -x package-check/control/prerm
+          test -x package-check/data/usr/local/bin/blackhole
+          test -f package-check/data/etc/blackhole/blackhole.toml
+          test -f package-check/data/etc/systemd/system/blackhole.service
+          sh -n package-check/control/postinst package-check/control/prerm
       - uses: actions/upload-artifact@v4
         with:
           name: blackhole-linux-packages-${{ github.sha }}
