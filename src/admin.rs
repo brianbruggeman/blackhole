@@ -105,7 +105,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <h2>Profiles</h2><textarea id="profile-editor" rows="8" cols="80"></textarea><button id="upsert-profiles">Upsert profiles</button><div id="profile-controls"></div><pre id="profiles"></pre>
 <h2>Groups</h2><textarea id="group-editor" rows="8" cols="80"></textarea><button id="upsert-groups">Upsert groups</button><div id="group-controls"></div><pre id="groups"></pre>
 <h2>Identities</h2><textarea id="identity-editor" rows="8" cols="80"></textarea><button id="upsert-identities">Upsert identities</button><div id="identity-controls"></div><pre id="identities"></pre>
-<h2>Rewrites</h2><pre id="rewrites"></pre>
+<h2>Rewrites</h2><textarea id="rewrite-editor" rows="8" cols="80"></textarea><button id="replace-rewrites">Replace rewrites</button><pre id="rewrites"></pre>
 <h2>Privacy log</h2><pre id="logs"></pre>
 <script>
 const load = (path, target) => fetch(path).then(response => response.json()).then(value => {
@@ -144,6 +144,7 @@ const load = (path, target) => fetch(path).then(response => response.json()).the
     document.querySelector('#group-editor').value = JSON.stringify(value.client_groups || [], null, 2);
     document.querySelector('#identity-editor').value = JSON.stringify(value.client_identities || [], null, 2);
     document.querySelector('#country-editor').value = JSON.stringify(value.country_policy || {}, null, 2);
+    document.querySelector('#rewrite-editor').value = JSON.stringify(value.rewrites || [], null, 2);
   }
   if (path === '/policy-bundle') document.querySelector(target).value = JSON.stringify(value, null, 2);
   else if (path === '/abuse/denylist') document.querySelector(target).value = JSON.stringify(value, null, 2);
@@ -165,6 +166,10 @@ const replaceCountry = () => {
   try { return operate('/reload/country/replace', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#country-editor').value}).then(refresh); }
   catch (error) { document.querySelector('#operation-status').textContent = `/reload/country/replace: ${error.message}`; return Promise.reject(error); }
 };
+const replaceRewrites = () => {
+  try { return operate('/reload/rewrites', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#rewrite-editor').value}).then(refresh); }
+  catch (error) { document.querySelector('#operation-status').textContent = `/reload/rewrites: ${error.message}`; return Promise.reject(error); }
+};
 const refresh = () => Promise.all([load('/status','#status'), load('/stats','#stats'), load('/admission/status','#admission-status'), load('/abuse/status','#abuse-status'), load('/abuse/incidents','#abuse-incidents'), load('/abuse/denylist','#denylist-config'), load('/policy-bundle','#policy-bundle'), load('/blocklists','#blocklists'), load('/country/status','#country-status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/client-identities','#identities'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
 document.querySelector('#clear-logs').onclick = () => operate('/logs/clear', {method:'POST'}).then(refresh);
 document.querySelector('#clear-stats').onclick = () => operate('/stats/clear', {method:'POST'}).then(refresh);
@@ -182,6 +187,7 @@ document.querySelector('#upsert-profiles').onclick = () => edit('#profile-editor
 document.querySelector('#upsert-groups').onclick = () => edit('#group-editor', '/reload/client-groups/upsert', 'client_groups');
 document.querySelector('#upsert-identities').onclick = () => edit('#identity-editor', '/reload/client-identities/upsert', 'client_identities');
 document.querySelector('#replace-country').onclick = replaceCountry;
+document.querySelector('#replace-rewrites').onclick = replaceRewrites;
 document.querySelector('#reload-blocklists').onclick = () => operate('/reload/blocklists', {method:'POST'}).then(refresh);
 document.querySelector('#reload-country').onclick = () => operate('/reload/country', {method:'POST'}).then(refresh);
 document.querySelector('#reload-admission').onclick = () => operate('/reload/admission', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#admission-config').value}).then(refresh);
@@ -1322,6 +1328,8 @@ mod tests {
             b"upsert-identities".as_slice(),
             b"country-editor".as_slice(),
             b"replace-country".as_slice(),
+            b"rewrite-editor".as_slice(),
+            b"replace-rewrites".as_slice(),
         ] {
             assert!(
                 ui.payload
