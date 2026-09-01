@@ -1438,6 +1438,7 @@ mod runtime {
         profiles: RwLock<Vec<ServiceProfileConfig>>,
         client_groups: RwLock<Vec<ClientGroupConfig>>,
         country_policy: Arc<RwLock<Option<CountryPolicy>>>,
+        reload_lock: RwLock<()>,
         rewrites: RwLock<RewriteTable>,
         reference: PolicyStore,
         regex_rules: Mutex<Vec<RegexRule>>,
@@ -1730,6 +1731,7 @@ mod runtime {
                 profiles: RwLock::new(profiles),
                 client_groups: RwLock::new(client_groups),
                 country_policy: Arc::new(RwLock::new(country_policy)),
+                reload_lock: RwLock::new(()),
                 rewrites: RwLock::new(rewrites),
                 reference,
                 regex_rules: Mutex::new(regex_rules),
@@ -1799,6 +1801,7 @@ mod runtime {
             &self,
             rules: &[RuleConfig],
         ) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
             let started = Instant::now();
             let mut base_rules = self.base_rules.lock().expect("base rules lock");
             let generated = self.current_profile_rules()?;
@@ -1815,6 +1818,7 @@ mod runtime {
             &self,
             additions: &[RuleConfig],
         ) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
             let started = Instant::now();
             let mut base_rules = self.base_rules.lock().expect("base rules lock");
             let mut explicit = self
@@ -1847,6 +1851,7 @@ mod runtime {
         /// table atomically. Unknown IDs are rejected so an operator cannot
         /// mistake a no-op for a successful destructive update.
         pub fn remove_rules(&self, ids: &[u32]) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
             let started = Instant::now();
             let requested = ids.iter().copied().collect::<BTreeSet<_>>();
             if requested.is_empty() {
@@ -1936,6 +1941,7 @@ mod runtime {
         /// Files are read and validated before the live snapshot is touched,
         /// so an unreadable or malformed update keeps the last good generation.
         pub fn reload_blocklists(&self) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
             let started = Instant::now();
             let paths = self
                 .blocklist_paths
@@ -1978,6 +1984,7 @@ mod runtime {
         /// Reload the configured country/CIDR map and publish it only after
         /// the complete replacement has passed bounded validation.
         pub fn reload_country_policy(&self) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
             let started = Instant::now();
             let next = load_country_policy(&self.config.country_policy)?;
             *self.country_policy.write().expect("country policy lock") = next;
@@ -1994,6 +2001,7 @@ mod runtime {
             profiles: &[ServiceProfileConfig],
             client_groups: &[ClientGroupConfig],
         ) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
             let started = Instant::now();
             let generated = compile_profiles(profiles, client_groups)?;
             let mut base_rules = self.base_rules.lock().expect("base rules lock");
@@ -2029,6 +2037,7 @@ mod runtime {
             country_config: &CountryPolicyConfig,
             blocklist_paths: Option<&[String]>,
         ) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
             let started = Instant::now();
             let generated = compile_profiles(profiles, client_groups)?;
             let rewrites = compile_rewrites(rewrite_configs)?;
@@ -2083,6 +2092,7 @@ mod runtime {
             &self,
             configs: &[RegexRuleConfig],
         ) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
             let started = Instant::now();
             let rule_ids = self.reference.rule_ids();
             let compiled = compile_regex_rules(configs, rule_ids)?;
@@ -2249,6 +2259,7 @@ mod runtime {
             query: &proxima_dns::DnsQuery,
             client: Option<std::net::IpAddr>,
         ) -> Option<policy::Decision> {
+            let _reload = self.reload_lock.read().expect("reload lock");
             let reference = self.reference.read(|reference| {
                 reference.decide(QueryContext {
                     name: &query.name,
@@ -2614,6 +2625,7 @@ mod runtime {
             query: QueryView<'_>,
             client: Option<std::net::IpAddr>,
         ) -> Action {
+            let _reload = self.reload_lock.read().expect("reload lock");
             let name = query.name.to_dotted();
             if !self.rules_configured.load(Ordering::Acquire) {
                 if !self.matches(&name) {
@@ -2877,6 +2889,7 @@ mod runtime {
         }
 
         pub(crate) fn admin_status(&self) -> String {
+            let _reload = self.reload_lock.read().expect("reload lock");
             let cache = self.cache.lock().expect("cache lock");
             serde_json::json!({
                 "status": "ok",
@@ -2899,6 +2912,7 @@ mod runtime {
         /// Return bounded effective-policy metadata without exposing source
         /// paths, query names, client identities, credentials, or payloads.
         pub(crate) fn admin_policy_status(&self) -> String {
+            let _reload = self.reload_lock.read().expect("reload lock");
             let base_rules = self.base_rules.lock().expect("base rules lock");
             let regex_rules = self.regex_rules.lock().expect("regex rules lock");
             let blocklist_rules = self.blocklist_rules.lock().expect("blocklist rules lock");
@@ -2926,6 +2940,7 @@ mod runtime {
         }
 
         pub(crate) fn admin_rules(&self) -> String {
+            let _reload = self.reload_lock.read().expect("reload lock");
             let base_rules = self.base_rules.lock().expect("base rules lock").clone();
             let regex_rules = self.regex_rules.lock().expect("regex rules lock");
             let total = base_rules.len().saturating_add(regex_rules.len());
@@ -2974,6 +2989,7 @@ mod runtime {
         }
 
         pub(crate) fn admin_profiles(&self) -> String {
+            let _reload = self.reload_lock.read().expect("reload lock");
             let profiles = self.profiles.read().expect("profiles lock");
             let visible = profiles
                 .iter()
@@ -3001,6 +3017,7 @@ mod runtime {
         }
 
         pub(crate) fn admin_client_groups(&self) -> String {
+            let _reload = self.reload_lock.read().expect("reload lock");
             let groups = self.client_groups.read().expect("client groups lock");
             let visible = groups
                 .iter()
@@ -3704,6 +3721,92 @@ mod runtime {
                 Policy::new(config),
                 Err(policy::PolicyError::InvalidBlocklist { .. })
             ));
+        }
+
+        #[test]
+        fn policy_status_readers_observe_only_published_bundle_generations() {
+            let policy =
+                std::sync::Arc::new(Policy::new(Config::default()).expect("default policy"));
+            let failed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let mut readers = Vec::new();
+            for _ in 0..4 {
+                let policy = std::sync::Arc::clone(&policy);
+                let failed = std::sync::Arc::clone(&failed);
+                readers.push(std::thread::spawn(move || {
+                    for _ in 0..500 {
+                        let status: serde_json::Value =
+                            serde_json::from_str(&policy.admin_policy_status())
+                                .expect("valid status");
+                        let generation = status["policy_generation"]
+                            .as_u64()
+                            .expect("generation in status");
+                        let domain_rules = status["domain_rules"].as_u64().expect("domain count");
+                        let profiles = status["profiles"].as_u64().expect("profile count");
+                        let valid = match generation {
+                            1 => domain_rules == 0 && profiles == 0,
+                            generation if generation % 2 == 0 => domain_rules == 1 && profiles == 0,
+                            _ => domain_rules == 1 && profiles == 1,
+                        };
+                        if !valid {
+                            failed.store(true, std::sync::atomic::Ordering::Release);
+                            return;
+                        }
+                    }
+                }));
+            }
+
+            let explicit = RuleConfig {
+                id: 70_001,
+                domain: "explicit.example".into(),
+                action: Action::Reject,
+                priority: 0,
+                qtype: None,
+                qclass: None,
+                client: None,
+                client_cidr: None,
+                client_cidrs: Vec::new(),
+            };
+            let profile = ServiceProfileConfig {
+                id: 70_002,
+                name: "generated".into(),
+                domains: vec!["profile.example".into()],
+                action: Action::Nxdomain,
+                groups: Vec::new(),
+                priority: 0,
+                client_cidrs: Vec::new(),
+                qtype: None,
+                qclass: None,
+            };
+            for _ in 0..64 {
+                assert_eq!(
+                    policy.reload_policy_bundle(
+                        std::slice::from_ref(&explicit),
+                        &[],
+                        &[],
+                        &[],
+                        &[],
+                        &CountryPolicyConfig::default(),
+                        None,
+                    ),
+                    Ok(ReloadState::Published)
+                );
+                assert_eq!(
+                    policy.reload_policy_bundle(
+                        &[],
+                        &[],
+                        std::slice::from_ref(&profile),
+                        &[],
+                        &[],
+                        &CountryPolicyConfig::default(),
+                        None,
+                    ),
+                    Ok(ReloadState::Published)
+                );
+            }
+            for reader in readers {
+                reader.join().expect("reader completed");
+            }
+            assert!(!failed.load(std::sync::atomic::Ordering::Acquire));
         }
 
         #[test]
