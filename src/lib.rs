@@ -2192,6 +2192,65 @@ mod runtime {
             Ok(published)
         }
 
+        /// Remove named client groups only when no configured profile depends
+        /// on them. Dependency validation and policy publication are atomic.
+        pub fn remove_client_groups(
+            &self,
+            names: &[String],
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
+            let started = Instant::now();
+            if names.is_empty() {
+                return Err(policy::PolicyError::InvalidProfile {
+                    name: "<client-groups>".into(),
+                    reason: "at least one client group name is required".into(),
+                });
+            }
+            let requested = names
+                .iter()
+                .map(|name| name.trim().to_ascii_lowercase())
+                .collect::<BTreeSet<_>>();
+            if requested.iter().any(String::is_empty) {
+                return Err(policy::PolicyError::InvalidProfile {
+                    name: "<client-groups>".into(),
+                    reason: "group names must be non-empty".into(),
+                });
+            }
+            let current = self
+                .client_groups
+                .read()
+                .expect("client groups lock")
+                .clone();
+            let mut groups = current.clone();
+            let original_len = groups.len();
+            groups.retain(|group| !requested.contains(&group.name.trim().to_ascii_lowercase()));
+            if groups.len() == original_len {
+                return Err(policy::PolicyError::InvalidProfile {
+                    name: "<client-groups>".into(),
+                    reason: "no requested group exists".into(),
+                });
+            }
+            let profiles = self.profiles.read().expect("profiles lock").clone();
+            let generated = compile_profiles(&profiles, &groups)?;
+            let explicit = self
+                .explicit_rules
+                .lock()
+                .expect("explicit rules lock")
+                .clone();
+            let mut combined = explicit.clone();
+            combined.extend(generated);
+            let mut base_rules = self.base_rules.lock().expect("base rules lock");
+            let published = self.publish_rules_locked(
+                &combined,
+                &explicit,
+                &mut base_rules,
+                "client_groups_remove",
+                started,
+            )?;
+            *self.client_groups.write().expect("client groups lock") = groups;
+            Ok(published)
+        }
+
         /// Atomically replace all operator-managed policy tables while
         /// retaining the current blocklist snapshot. Every generated rule,
         /// regex, and cross-table ID is validated before publication.

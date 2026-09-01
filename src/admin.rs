@@ -189,6 +189,28 @@ impl SendPipe for AdminHandler {
                     ))),
                 }
             }
+            ("POST", "/reload/client-groups/remove") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let names = match serde_json::from_slice::<Vec<String>>(&request.payload) {
+                    Ok(names) => names,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                match self.policy.remove_client_groups(&names) {
+                    Ok(_) => Ok(Response::ok("{\"status\":\"removed\"}")),
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
             ("GET", "/logs") => Ok(Response::ok(self.policy.admin_query_log())),
             ("POST", "/cache/clear") => Ok(Response::ok(format!(
                 "{{\"status\":\"cleared\",\"entries\":{}}}",
@@ -306,6 +328,7 @@ impl SendPipe for AdminHandler {
                 | "/client-groups"
                 | "/reload/profiles"
                 | "/reload/client-groups/upsert"
+                | "/reload/client-groups/remove"
                 | "/reload/policy-bundle"
                 | "/logs"
                 | "/cache/clear"
@@ -590,6 +613,36 @@ mod tests {
             groups["client_groups"][0]["client_cidrs"][0],
             "198.51.100.0/24"
         );
+
+        let remove_unused = Request::builder()
+            .method("POST")
+            .path("/reload/client-groups/remove")
+            .payload(r#"["GUEST"]"#)
+            .build()
+            .expect("remove unused group request");
+        let response = block_on(handler.call(remove_unused)).expect("remove unused response");
+        assert_eq!(response.status, 200);
+        let groups = block_on(handler.call(request("GET", "/client-groups")))
+            .expect("removed groups response");
+        let groups: serde_json::Value =
+            serde_json::from_slice(&groups.payload).expect("removed groups JSON");
+        assert_eq!(groups["total"], 1);
+
+        let remove_referenced = Request::builder()
+            .method("POST")
+            .path("/reload/client-groups/remove")
+            .payload(r#"["home"]"#)
+            .build()
+            .expect("remove referenced group request");
+        let response =
+            block_on(handler.call(remove_referenced)).expect("remove referenced response");
+        assert_eq!(response.status, 422);
+        let groups = block_on(handler.call(request("GET", "/client-groups")))
+            .expect("retained groups response");
+        let groups: serde_json::Value =
+            serde_json::from_slice(&groups.payload).expect("retained groups JSON");
+        assert_eq!(groups["total"], 1);
+        assert_eq!(groups["client_groups"][0]["name"], "HOME");
     }
 
     #[test]
