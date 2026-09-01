@@ -37,6 +37,9 @@ struct PolicyBundle {
     rewrites: Vec<RewriteConfig>,
     #[serde(default)]
     country_policy: CountryPolicyConfig,
+    /// Omitted/null retains the currently loaded blocklist snapshot.
+    #[serde(default)]
+    blocklists: Option<Vec<String>>,
 }
 const ADMIN_UI: &str = r#"<!doctype html>
 <meta charset="utf-8">
@@ -124,6 +127,7 @@ impl SendPipe for AdminHandler {
                     &bundle.client_groups,
                     &bundle.rewrites,
                     &bundle.country_policy,
+                    bundle.blocklists.as_deref(),
                 ) {
                     Ok(_) => Ok(Response::ok(r#"{"status":"reloaded"}"#)),
                     Err(error) => Ok(Response::new(422).with_body(format!(
