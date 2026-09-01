@@ -1203,7 +1203,13 @@ mod tests {
             serde_json::from_slice(&blocklists.payload).expect("blocklist inspection JSON");
         assert_eq!(blocklists["source_count"], 1);
         assert_eq!(blocklists["rule_count"], 2);
-        assert_eq!(blocklists["sources"][0], path.to_string_lossy().as_ref());
+        assert_eq!(
+            blocklists["sources"][0]["path"],
+            path.to_string_lossy().as_ref()
+        );
+        assert_eq!(blocklists["sources"][0]["status"], "ok");
+        assert_eq!(blocklists["sources"][0]["bytes"], 12);
+        assert!(blocklists["sources"][0]["modified_age_secs"].is_number());
 
         let failed = block_on(
             handler.call(

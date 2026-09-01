@@ -5016,8 +5016,36 @@ mod runtime {
             let _reload = self.reload_lock.read().expect("reload lock");
             let paths = self.blocklist_paths.lock().expect("blocklist paths lock");
             let rules = self.blocklist_rules.lock().expect("blocklist rules lock");
+            let now = std::time::SystemTime::now();
+            let sources = paths
+                .iter()
+                .map(|path| {
+                    let metadata = std::fs::metadata(path);
+                    let (status, bytes, modified_age_secs) = match metadata {
+                        Ok(metadata) if metadata.is_file() => {
+                            let age = metadata
+                                .modified()
+                                .ok()
+                                .and_then(|modified| now.duration_since(modified).ok())
+                                .map(|duration| duration.as_secs());
+                            ("ok", metadata.len().min(MAX_BLOCKLIST_BYTES), age)
+                        }
+                        Ok(_) => ("unreadable", 0, None),
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                            ("missing", 0, None)
+                        }
+                        Err(_) => ("unreadable", 0, None),
+                    };
+                    serde_json::json!({
+                        "path": path,
+                        "status": status,
+                        "bytes": bytes,
+                        "modified_age_secs": modified_age_secs,
+                    })
+                })
+                .collect::<Vec<_>>();
             serde_json::json!({
-                "sources": paths.as_slice(),
+                "sources": sources,
                 "source_count": paths.len(),
                 "rule_count": rules.len(),
                 "reload_interval_secs": self.config.policy.blocklist_reload_interval_secs,
