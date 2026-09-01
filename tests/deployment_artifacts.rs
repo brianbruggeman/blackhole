@@ -4,6 +4,7 @@ const LAUNCHD_PLIST: &str = "deploy/launchd/com.brianbruggeman.blackhole.plist";
 const SYSTEMD_UNIT: &str = "deploy/systemd/blackhole.service";
 const SYSTEMD_TMPFILES: &str = "deploy/systemd/blackhole.conf";
 const SYSTEMD_INSTALLER: &str = "deploy/systemd/install.sh";
+const LAUNCHD_INSTALLER: &str = "deploy/launchd/install.sh";
 
 #[test]
 fn launchd_service_is_unprivileged_and_direct() {
@@ -91,4 +92,31 @@ fn systemd_state_and_installer_are_scoped() {
         );
     }
     assert!(installer.contains("if [ \"$(id -u)\" -ne 0 ]"));
+}
+
+#[test]
+fn launchd_installer_is_transactional_and_platform_native() {
+    let installer = fs::read_to_string(LAUNCHD_INSTALLER).expect("read launchd installer");
+    for required in [
+        "set -eu",
+        "plutil -lint",
+        "backup_file /usr/local/bin/blackhole",
+        "restore_file /usr/local/bin/blackhole",
+        "launchctl bootout",
+        "launchctl bootstrap system",
+        "installation failed; restoring the previous launchd files",
+        "trap cleanup EXIT HUP INT TERM",
+        "rollback_needed=0",
+    ] {
+        assert!(
+            installer.contains(required),
+            "missing launchd installer step: {required}"
+        );
+    }
+    for forbidden in ["sudo", "pfctl"] {
+        assert!(
+            !installer.contains(forbidden),
+            "launchd installer must not invoke {forbidden}"
+        );
+    }
 }
