@@ -1,6 +1,7 @@
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 
 const LAUNCHD_PLIST: &str = "deploy/launchd/com.brianbruggeman.blackhole.plist";
 const SYSTEMD_UNIT: &str = "deploy/systemd/blackhole.service";
@@ -194,6 +195,43 @@ fn installers_are_executable() {
             .mode();
         assert_ne!(mode & 0o111, 0, "installer is not executable: {path}");
     }
+}
+
+#[test]
+fn query_fuzz_corpus_is_bounded_and_content_addressed() {
+    let corpus = Path::new("fuzz/corpus/query_view");
+    let mut samples = 0usize;
+    for entry in fs::read_dir(corpus).expect("read query fuzz corpus") {
+        let entry = entry.expect("read query fuzz corpus entry");
+        let path = entry.path();
+        if path.file_name().and_then(|name| name.to_str()) == Some("README.md") {
+            continue;
+        }
+        let metadata = fs::symlink_metadata(&path).expect("read query fuzz sample metadata");
+        assert!(
+            metadata.file_type().is_file(),
+            "fuzz sample is not a file: {path:?}"
+        );
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("fuzz sample name is UTF-8");
+        assert_eq!(
+            name.len(),
+            40,
+            "fuzz sample name is not a SHA-1 label: {name}"
+        );
+        assert!(
+            name.bytes().all(|byte| byte.is_ascii_hexdigit()),
+            "fuzz sample name is not hexadecimal: {name}"
+        );
+        assert!(
+            metadata.len() as usize <= blackhole::query::MAX_QUERY_BYTES,
+            "fuzz sample exceeds the query bound: {path:?}"
+        );
+        samples += 1;
+    }
+    assert!(samples > 0, "query fuzz corpus must contain samples");
 }
 
 #[test]
