@@ -153,6 +153,8 @@ mod runtime {
         pub privacy: PrivacyConfig,
         #[serde(default)]
         pub capture: CaptureConfig,
+        #[serde(default)]
+        pub dhcp: DhcpConfig,
     }
 
     #[derive(Debug, Clone, Deserialize)]
@@ -789,6 +791,47 @@ mod runtime {
             }
         }
     }
+
+    #[derive(Debug, Clone, Deserialize)]
+    pub struct DhcpConfig {
+        #[serde(default)]
+        pub enabled: bool,
+        #[serde(default = "default_dhcp_listen")]
+        pub listen: String,
+        #[serde(default = "default_dhcp_server")]
+        pub server: String,
+        #[serde(default = "default_dhcp_subnet_mask")]
+        pub subnet_mask: String,
+        #[serde(default = "default_dhcp_pool_start")]
+        pub pool_start: String,
+        #[serde(default = "default_dhcp_pool_end")]
+        pub pool_end: String,
+        #[serde(default)]
+        pub router: Option<String>,
+        #[serde(default)]
+        pub dns: Option<String>,
+        #[serde(default = "default_dhcp_lease_secs")]
+        pub lease_secs: u32,
+        #[serde(default = "default_dhcp_max_leases")]
+        pub max_leases: usize,
+    }
+
+    impl Default for DhcpConfig {
+        fn default() -> Self {
+            Self {
+                enabled: false,
+                listen: default_dhcp_listen(),
+                server: default_dhcp_server(),
+                subnet_mask: default_dhcp_subnet_mask(),
+                pool_start: default_dhcp_pool_start(),
+                pool_end: default_dhcp_pool_end(),
+                router: None,
+                dns: None,
+                lease_secs: default_dhcp_lease_secs(),
+                max_leases: default_dhcp_max_leases(),
+            }
+        }
+    }
     impl Default for ServerConfig {
         fn default() -> Self {
             Self {
@@ -944,6 +987,27 @@ mod runtime {
     }
     fn default_capture_original_destination() -> String {
         "127.0.0.1:53".into()
+    }
+    fn default_dhcp_listen() -> String {
+        "0.0.0.0:67".into()
+    }
+    fn default_dhcp_server() -> String {
+        "192.0.2.1".into()
+    }
+    fn default_dhcp_subnet_mask() -> String {
+        "255.255.255.0".into()
+    }
+    fn default_dhcp_pool_start() -> String {
+        "192.0.2.100".into()
+    }
+    fn default_dhcp_pool_end() -> String {
+        "192.0.2.199".into()
+    }
+    fn default_dhcp_lease_secs() -> u32 {
+        3600
+    }
+    fn default_dhcp_max_leases() -> usize {
+        256
     }
     fn default_mode() -> Mode {
         Mode::Nxdomain
@@ -2014,6 +2078,7 @@ mod runtime {
 
     impl Policy {
         pub fn new(mut config: Config) -> Result<Self, policy::PolicyError> {
+            validate_dhcp(&config.dhcp)?;
             if config.cache.max_ttl_secs == 0 {
                 return Err(policy::PolicyError::InvalidCache {
                     reason: "max_ttl_secs must be non-zero".into(),
@@ -4463,6 +4528,53 @@ mod runtime {
         }
     }
 
+    fn validate_dhcp(config: &DhcpConfig) -> Result<(), policy::PolicyError> {
+        if !config.enabled {
+            return Ok(());
+        }
+        let listen = config.listen.parse::<std::net::SocketAddr>().map_err(|_| {
+            policy::PolicyError::InvalidDhcp {
+                reason: "listen must be a socket address".into(),
+            }
+        })?;
+        if !listen.ip().is_ipv4() || listen.port() != 67 {
+            return Err(policy::PolicyError::InvalidDhcp {
+                reason: "listen must be an IPv4 DHCP server address on port 67".into(),
+            });
+        }
+        let parse_ip = |name: &str, value: &str| {
+            value
+                .parse::<Ipv4Addr>()
+                .map_err(|_| policy::PolicyError::InvalidDhcp {
+                    reason: format!("{name} must be an IPv4 address"),
+                })
+        };
+        let server = parse_ip("server", &config.server)?;
+        let subnet_mask = parse_ip("subnet_mask", &config.subnet_mask)?;
+        let pool_start = parse_ip("pool_start", &config.pool_start)?;
+        let pool_end = parse_ip("pool_end", &config.pool_end)?;
+        if u32::from(pool_start) > u32::from(pool_end) {
+            return Err(policy::PolicyError::InvalidDhcp {
+                reason: "pool_start must not be greater than pool_end".into(),
+            });
+        }
+        if config.lease_secs == 0 || config.max_leases == 0 || config.max_leases > 4096 {
+            return Err(policy::PolicyError::InvalidDhcp {
+                reason: "lease_secs and max_leases must be bounded and non-zero".into(),
+            });
+        }
+        for (name, value) in [
+            ("router", config.router.as_deref()),
+            ("dns", config.dns.as_deref()),
+        ] {
+            if let Some(value) = value {
+                parse_ip(name, value)?;
+            }
+        }
+        let _ = (server, subnet_mask);
+        Ok(())
+    }
+
     impl Policy {
         async fn call_inner(
             &self,
@@ -4897,6 +5009,20 @@ mod runtime {
         #[test]
         fn default_config_is_safe_for_local_testing() {
             assert_eq!(Config::default().server.listen, "127.0.0.1:5353");
+            assert!(!Config::default().dhcp.enabled);
+        }
+
+        #[test]
+        fn enabled_dhcp_configuration_is_bounded_and_validated() {
+            let mut config = Config::default();
+            config.dhcp.enabled = true;
+            assert!(Policy::new(config.clone()).is_ok());
+
+            config.dhcp.max_leases = 4097;
+            assert!(matches!(
+                Policy::new(config),
+                Err(policy::PolicyError::InvalidDhcp { .. })
+            ));
         }
 
         #[test]

@@ -67,6 +67,7 @@ pub enum PolicyError {
     InvalidUpstream { reason: String },
     InvalidCache { reason: String },
     InvalidAdmission { reason: String },
+    InvalidDhcp { reason: String },
     InvalidBlocklist { path: String, reason: String },
     InvalidCountryMap { path: String, reason: String },
     InvalidRewrite { name: String, reason: String },
@@ -97,6 +98,7 @@ impl core::fmt::Display for PolicyError {
             Self::InvalidUpstream { reason } => write!(formatter, "invalid upstream: {reason}"),
             Self::InvalidCache { reason } => write!(formatter, "invalid cache: {reason}"),
             Self::InvalidAdmission { reason } => write!(formatter, "invalid admission: {reason}"),
+            Self::InvalidDhcp { reason } => write!(formatter, "invalid dhcp: {reason}"),
             Self::InvalidBlocklist { path, reason } => {
                 write!(formatter, "invalid blocklist {path}: {reason}")
             }
