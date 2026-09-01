@@ -3789,7 +3789,9 @@ mod runtime {
             query: &proxima_dns::DnsQuery,
             client: Option<std::net::IpAddr>,
         ) -> Option<policy::Decision> {
-            let _reload = self.reload_lock.read().expect("reload lock");
+            // Request matching consumes independently published immutable
+            // snapshots.  Reload serialization is control-plane state; a
+            // reader lock here would put a blocking lock on every query.
             let client_identity = self.client_identity_for(client);
             let reference = self.reference.read(|reference| {
                 reference.decide(QueryContext {
