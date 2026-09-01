@@ -30,7 +30,9 @@ DNS edge and is a prerequisite for any future honeypot terminal.
   metadata through Proxima's recording event shape, and is readable or
   deletable only through the authenticated loopback admin surface (`GET
   /logs` and `POST /logs/clear`). The in-memory log is not a durable honeypot
-  store and is cleared on process exit.
+  store and is cleared on process exit. An authenticated
+  `POST /logs/clear-durable` applies the same bounded exact-target deletion and
+  verification to operator-requested durable erasure.
 - The optional JSONL recording destination is a durable decision audit, not a
   honeypot terminal. It contains no query names, client identity, credentials,
   or wire payloads. When explicitly enabled, bounded startup rotation retains

@@ -88,7 +88,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <meta charset="utf-8">
 <title>Blackhole</title>
 <h1>Blackhole</h1>
-<p><button id="clear-logs">Clear log</button> <button id="clear-stats">Clear stats</button> <button id="clear-cache">Clear cache</button> <button id="clear-abuse">Clear abuse</button> <button id="reload-blocklists">Reload lists</button> <button id="reload-country">Reload country</button> <button id="reload-admission">Reload admission</button> <button id="reload-bundle">Publish config</button> <button id="toggle-filtering">Toggle filtering</button></p>
+<p><button id="clear-logs">Clear log</button> <button id="clear-durable-logs">Delete durable log</button> <button id="clear-stats">Clear stats</button> <button id="clear-cache">Clear cache</button> <button id="clear-abuse">Clear abuse</button> <button id="reload-blocklists">Reload lists</button> <button id="reload-country">Reload country</button> <button id="reload-admission">Reload admission</button> <button id="reload-bundle">Publish config</button> <button id="toggle-filtering">Toggle filtering</button></p>
 <p id="operation-status"></p>
 <h2>Status</h2><pre id="status"></pre>
 <h2>Stats</h2><pre id="stats"></pre>
@@ -174,6 +174,7 @@ const replaceRewrites = () => {
 };
 const refresh = () => Promise.all([load('/status','#status'), load('/stats','#stats'), load('/admission/status','#admission-status'), load('/abuse/status','#abuse-status'), load('/abuse/incidents','#abuse-incidents'), load('/abuse/denylist','#denylist-config'), load('/policy-bundle','#policy-bundle'), load('/blocklists','#blocklists'), load('/country/status','#country-status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/client-identities','#identities'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
 document.querySelector('#clear-logs').onclick = () => operate('/logs/clear', {method:'POST'}).then(refresh);
+document.querySelector('#clear-durable-logs').onclick = () => operate('/logs/clear-durable', {method:'POST'}).then(refresh);
 document.querySelector('#clear-stats').onclick = () => operate('/stats/clear', {method:'POST'}).then(refresh);
 document.querySelector('#clear-cache').onclick = () => operate('/cache/clear', {method:'POST'}).then(refresh);
 document.querySelector('#clear-abuse').onclick = () => operate('/abuse/clear', {method:'POST'}).then(refresh);
@@ -775,6 +776,15 @@ impl SendPipe for AdminHandler {
                 "{{\"status\":\"cleared\",\"entries\":{}}}",
                 self.policy.clear_query_log()
             ))),
+            ("POST", "/logs/clear-durable") => match self.policy.clear_durable_query_recording() {
+                Ok(files) => Ok(Response::ok(format!(
+                    "{{\"status\":\"deleted\",\"files\":{files}}}"
+                ))),
+                Err(error) => Ok(Response::new(422).with_body(format!(
+                    "{{\"status\":\"error\",\"message\":{}}}",
+                    serde_json::to_string(&error).unwrap_or_else(|_| "null".into())
+                ))),
+            },
             ("POST", "/reload/blocklists") => match self.policy.reload_blocklists() {
                 Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
                 Err(error) => Ok(Response::new(500).with_body(format!(
@@ -1111,6 +1121,7 @@ impl SendPipe for AdminHandler {
                 | "/logs"
                 | "/cache/clear"
                 | "/logs/clear"
+                | "/logs/clear-durable"
                 | "/reload/blocklists"
                 | "/reload/blocklists/replace"
                 | "/reload/blocklists/add"
@@ -1305,6 +1316,11 @@ mod tests {
             ui.payload
                 .windows(b"toggle-filtering".len())
                 .any(|window| window == b"toggle-filtering")
+        );
+        assert!(
+            ui.payload
+                .windows(b"/logs/clear-durable".len())
+                .any(|window| window == b"/logs/clear-durable")
         );
         for route in [
             b"/reload/profiles/upsert".as_slice(),
@@ -1541,6 +1557,13 @@ mod tests {
         let wrong_policy_bundle_method = block_on(handler.call(request("POST", "/policy-bundle")))
             .expect("405 policy bundle response");
         assert_eq!(wrong_policy_bundle_method.status, 405);
+        let durable_delete = block_on(handler.call(request("POST", "/logs/clear-durable")))
+            .expect("durable log deletion response");
+        assert_eq!(durable_delete.status, 422);
+        let wrong_durable_delete_method =
+            block_on(handler.call(request("GET", "/logs/clear-durable")))
+                .expect("405 durable log deletion response");
+        assert_eq!(wrong_durable_delete_method.status, 405);
     }
 
     #[test]

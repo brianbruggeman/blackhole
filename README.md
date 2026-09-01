@@ -220,7 +220,7 @@ authenticated `GET /health`, `GET /status`, bounded `GET /admission/status`,
 `GET /abuse/denylist`,
 `GET /policy-bundle`,
 `GET /rules`, `GET /logs`,
-and `POST /logs/clear`, `POST /cache/clear`, `POST /reload/blocklists`, bounded
+and `POST /logs/clear`, `POST /logs/clear-durable`, `POST /cache/clear`, `POST /reload/blocklists`, bounded
 `POST /reload/blocklists/replace`, `/reload/blocklists/add`, and
 `/reload/blocklists/remove`, `/reload/blocklists/enable`, and
 `/reload/blocklists/disable` (atomic exact source-path management), bounded
@@ -247,7 +247,9 @@ stable ID), and `POST /reload/regex/remove` (a JSON array of regex rule IDs).
 It also provides bounded `GET /profiles`, `GET /client-groups`, and
 `GET /rewrites` metadata views, plus bounded privacy-safe
 query-decision inspection at `GET /logs` and deletion at `POST /logs/clear` when
-enabled. `POST /reload/profiles` atomically replaces the profile and client-group
+enabled. `POST /logs/clear-durable` deletes the configured durable recording and
+bounded rotations only after regular-file preflight and post-delete verification.
+`POST /reload/profiles` atomically replaces the profile and client-group
 tables from a bounded JSON object with `profiles` and `client_groups` arrays.
 `POST /reload/profiles/upsert` replaces or adds profiles by stable ID while
 preserving unspecified profiles; duplicate IDs and invalid expansions fail

@@ -48,7 +48,10 @@ breaker limits repeated failures; an open circuit has no network side effect.
 Decision recording is opt-in. The authenticated `/logs` surface reads the bounded
 in-memory metadata log; `privacy.query_recording_path` additionally appends the same
 metadata-only events through Proxima's JSONL recording sink. The file is not rotated or
-deleted through the admin surface. When startup rotation is explicitly enabled,
+ deleted through the admin surface. An authenticated `POST /logs/clear-durable`
+ deletes only the configured recording basename and its bounded `.1` through
+ `.16` rotations after regular-file preflight, then verifies every exact target
+ is absent. When startup rotation is explicitly enabled,
 Blackhole rotates only oversized files within the configured bounded generation
 count and verifies deletion of the exact oldest generation. Its encoded size is bounded by
 `privacy.query_recording_max_bytes`; operators must configure rotation and deletion

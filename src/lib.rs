@@ -117,6 +117,7 @@ mod runtime {
     use std::fs::Metadata;
     use std::hash::Hash;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+    use std::path::Path;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::{Arc, Mutex, RwLock};
     use std::time::{Duration, Instant};
@@ -5883,6 +5884,94 @@ mod runtime {
                 "client_identity_recording": "disabled",
             })
             .to_string()
+        }
+
+        /// Delete the configured durable recording and its bounded rotations.
+        ///
+        /// The authenticated admin surface uses this operation for an
+        /// operator-requested privacy deletion. Every target is preflighted as
+        /// a regular file, only the configured recording basename and the
+        /// fixed rotation bound are touched, and every deletion is verified.
+        pub(crate) fn clear_durable_query_recording(&self) -> Result<usize, String> {
+            const MAX_ROTATIONS: usize = 16;
+            let path = self
+                .config
+                .privacy
+                .query_recording_path
+                .as_deref()
+                .ok_or_else(|| "durable query recording is not configured".to_owned())?;
+            let destination = Path::new(path);
+            let parent = destination
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or_else(|| Path::new("."));
+            let parent_metadata = std::fs::metadata(parent).map_err(|error| {
+                format!("inspect recording parent {}: {error}", parent.display())
+            })?;
+            if !parent_metadata.is_dir() {
+                return Err(format!(
+                    "recording parent {} is not a directory",
+                    parent.display()
+                ));
+            }
+
+            let mut targets = Vec::with_capacity(MAX_ROTATIONS + 1);
+            targets.push(destination.to_owned());
+            for index in 1..=MAX_ROTATIONS {
+                let mut rotated = destination.as_os_str().to_os_string();
+                rotated.push(format!(".{index}"));
+                targets.push(std::path::PathBuf::from(rotated));
+            }
+            for target in &targets {
+                match std::fs::metadata(target) {
+                    Ok(metadata) if metadata.is_file() => {}
+                    Ok(_) => {
+                        return Err(format!(
+                            "recording target {} is not a regular file",
+                            target.display()
+                        ));
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => {
+                        return Err(format!(
+                            "inspect recording target {}: {error}",
+                            target.display()
+                        ));
+                    }
+                }
+            }
+
+            let mut removed = 0;
+            for target in &targets {
+                match std::fs::remove_file(target) {
+                    Ok(()) => removed += 1,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => {
+                        return Err(format!(
+                            "delete recording target {}: {error}",
+                            target.display()
+                        ));
+                    }
+                }
+            }
+            for target in &targets {
+                match std::fs::metadata(target) {
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Ok(_) => {
+                        return Err(format!(
+                            "recording target {} remains after deletion",
+                            target.display()
+                        ));
+                    }
+                    Err(error) => {
+                        return Err(format!(
+                            "verify recording deletion {}: {error}",
+                            target.display()
+                        ));
+                    }
+                }
+            }
+            Ok(removed)
         }
 
         /// Return aggregate action counts without exposing names, client
