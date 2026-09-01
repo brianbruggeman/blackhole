@@ -1,3 +1,8 @@
+# Optional bounded background reload of policy-bearing configuration fields.
+# Listener, transport, capture, storage, and process-capacity changes remain
+# startup-only; zero disables polling.
+reload_interval_secs = 0
+
 [server]
 # Use 53 only with the required OS capability; loopback keeps local testing scoped.
 listen = "127.0.0.1:5353"

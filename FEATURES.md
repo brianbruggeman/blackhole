@@ -132,6 +132,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Atomic in-process rule-table reloads over Proxima's immutable `Live` snapshot
   primitive, with failed reloads retaining the last valid generation and
   successful policy reloads invalidating cached forwarding answers.
+- Optional bounded background reloads of the policy-bearing configuration file
+  use Proxima's cancellable interval lifecycle; startup-only listener,
+  transport, capture, storage, and process-capacity changes fail closed.
 - Atomic operator-triggered blocklist reloads rebuild the explicit rules plus
   current bounded files and retain the last good snapshot on failure.
 - Optional bounded background blocklist reloads use Proxima's cancellable

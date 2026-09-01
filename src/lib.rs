@@ -132,8 +132,11 @@ mod runtime {
     const MAX_ADMIN_LOG_ENTRIES: usize = 1_024;
     const MAX_BLOCKLIST_RELOAD_INTERVAL_SECS: u64 = 86_400;
 
-    #[derive(Debug, Clone, Deserialize, Default)]
+    #[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]
     pub struct Config {
+        /// Optional bounded background reload interval for policy config.
+        #[serde(default)]
+        pub reload_interval_secs: u64,
         #[serde(default)]
         pub server: ServerConfig,
         #[serde(default)]
@@ -160,7 +163,7 @@ mod runtime {
         pub dhcp: DhcpConfig,
     }
 
-    #[derive(Debug, Clone, Deserialize)]
+    #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
     pub struct CacheConfig {
         #[serde(default = "default_cache_entries")]
         pub max_entries: usize,
@@ -669,7 +672,9 @@ mod runtime {
         }
     }
 
-    #[derive(Debug, Clone, Deserialize, serde::Serialize, conflaguration::Settings)]
+    #[derive(
+        Debug, Clone, Deserialize, serde::Serialize, conflaguration::Settings, PartialEq, Eq,
+    )]
     #[settings(prefix = "BLACKHOLE_DDOS")]
     pub struct DdosConfig {
         /// Persist abuse-open incidents through the configured Proxima
@@ -687,7 +692,7 @@ mod runtime {
         }
     }
 
-    #[derive(Debug, Clone, Deserialize, serde::Serialize)]
+    #[derive(Debug, Clone, Deserialize, serde::Serialize, PartialEq, Eq)]
     pub struct AdmissionConfig {
         #[serde(default = "default_max_name_bytes")]
         pub max_name_bytes: usize,
@@ -763,7 +768,7 @@ mod runtime {
         }
     }
 
-    #[derive(Debug, Clone, Deserialize, serde::Serialize, Default)]
+    #[derive(Debug, Clone, Deserialize, serde::Serialize, Default, PartialEq, Eq)]
     pub struct CountryPolicyConfig {
         /// Operator-supplied lines of `COUNTRY CIDR`; no database is bundled.
         #[serde(default)]
@@ -867,13 +872,13 @@ mod runtime {
         }
     }
 
-    #[derive(Debug, Clone, Deserialize)]
+    #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
     pub struct SecurityConfig {
         #[serde(default = "default_reject_private_upstream_addresses")]
         pub reject_private_upstream_addresses: bool,
     }
 
-    #[derive(Debug, Clone, Deserialize)]
+    #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
     pub struct PrivacyConfig {
         /// Enable the bounded in-memory query-decision log.
         #[serde(default)]
@@ -1005,7 +1010,7 @@ mod runtime {
         }
     }
 
-    #[derive(Debug, Clone, Copy, Deserialize)]
+    #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
     #[serde(rename_all = "lowercase")]
     pub enum UpstreamTransport {
         Udp,
@@ -1022,7 +1027,7 @@ mod runtime {
         }
     }
 
-    #[derive(Debug, Clone, Deserialize)]
+    #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
     pub struct UpstreamConfig {
         #[serde(default = "default_resolver_ip")]
         pub resolver_ip: String,
@@ -1060,13 +1065,13 @@ mod runtime {
         }
     }
 
-    #[derive(Debug, Clone, Deserialize)]
+    #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
     pub struct ServerConfig {
         #[serde(default = "default_listen")]
         pub listen: String,
     }
 
-    #[derive(Debug, Clone, Deserialize)]
+    #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
     pub struct CaptureConfig {
         #[serde(default)]
         pub enabled: bool,
@@ -1095,7 +1100,7 @@ mod runtime {
         }
     }
 
-    #[derive(Debug, Clone, Deserialize)]
+    #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
     pub struct DhcpConfig {
         #[serde(default)]
         pub enabled: bool,
@@ -1143,7 +1148,7 @@ mod runtime {
         }
     }
 
-    #[derive(Debug, Clone, Deserialize, Default)]
+    #[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]
     pub struct AdminConfig {
         /// Optional HTTP control-plane bind. Disabled when absent.
         pub listen: Option<String>,
@@ -1151,7 +1156,7 @@ mod runtime {
         pub token: Option<String>,
     }
 
-    #[derive(Debug, Clone, Deserialize)]
+    #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
     pub struct PolicyConfig {
         #[serde(default = "default_mode")]
         pub mode: Mode,
@@ -1260,7 +1265,7 @@ mod runtime {
         pub client_cidrs: Vec<String>,
     }
 
-    #[derive(Debug, Clone, Deserialize)]
+    #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
     pub struct HoneypotConfig {
         #[serde(default = "default_ipv4")]
         pub ipv4: Ipv4Addr,
@@ -2505,6 +2510,13 @@ mod runtime {
                     ),
                 });
             }
+            if config.reload_interval_secs > MAX_BLOCKLIST_RELOAD_INTERVAL_SECS {
+                return Err(policy::PolicyError::InvalidConfigReload {
+                    reason: format!(
+                        "reload interval exceeds {MAX_BLOCKLIST_RELOAD_INTERVAL_SECS} seconds"
+                    ),
+                });
+            }
             let profile_rules =
                 compile_profiles(&config.policy.profiles, &config.policy.client_groups)?;
             let explicit_rules = config.policy.rules.clone();
@@ -3129,6 +3141,54 @@ mod runtime {
             self.policy_generation.fetch_add(1, Ordering::Relaxed);
             self.observe_reload_latency("country_replace", started);
             Ok(ReloadState::Published)
+        }
+
+        /// Reload the policy-bearing portions of a configuration file. The
+        /// listener, transport, storage, capture, and process-capacity
+        /// settings remain startup-only and must not change underneath the
+        /// running process.
+        pub fn reload_config(&self, next: &Config) -> Result<ReloadState, policy::PolicyError> {
+            let current = &self.config;
+            if next.server != current.server
+                || next.admin != current.admin
+                || next.honeypot != current.honeypot
+                || next.upstream != current.upstream
+                || next.cache != current.cache
+                || next.security != current.security
+                || next.privacy != current.privacy
+                || next.capture != current.capture
+                || next.dhcp != current.dhcp
+            {
+                return Err(policy::PolicyError::InvalidConfigReload {
+                    reason: "startup-only listener, transport, storage, capture, or service settings changed".into(),
+                });
+            }
+            if next.admission.max_inflight_requests != current.admission.max_inflight_requests
+                || next.admission.ddos.persist_incidents != current.admission.ddos.persist_incidents
+                || next.policy.blocklist_reload_interval_secs
+                    != current.policy.blocklist_reload_interval_secs
+                || next.country_policy.reload_interval_secs
+                    != current.country_policy.reload_interval_secs
+                || next.reload_interval_secs != current.reload_interval_secs
+            {
+                return Err(policy::PolicyError::InvalidConfigReload {
+                    reason: "startup-only capacity, incident-persistence, or reload interval settings changed".into(),
+                });
+            }
+            self.reload_policy_bundle_with_legacy_and_admission(
+                &next.policy.rules,
+                &next.policy.regex_rules,
+                &next.policy.profiles,
+                &next.policy.client_groups,
+                &next.policy.client_identities,
+                &next.policy.rewrites,
+                &next.country_policy,
+                Some(&next.policy.blocklists),
+                Some(next.policy.mode),
+                Some(&next.policy.domains),
+                Some(next.policy.default_action),
+                Some(&next.admission),
+            )
         }
 
         /// Atomically replace the configured service profiles and client
@@ -5895,6 +5955,12 @@ mod runtime {
                 Policy::new(config),
                 Err(policy::PolicyError::InvalidCountryMap { path, .. }) if path == "<config>"
             ));
+            let mut config = Config::default();
+            config.reload_interval_secs = MAX_BLOCKLIST_RELOAD_INTERVAL_SECS + 1;
+            assert!(matches!(
+                Policy::new(config),
+                Err(policy::PolicyError::InvalidConfigReload { .. })
+            ));
         }
 
         #[test]
@@ -6018,6 +6084,42 @@ mod runtime {
                 Policy::new(config),
                 Err(policy::PolicyError::InvalidBlocklist { .. })
             ));
+        }
+
+        #[test]
+        fn configuration_reload_publishes_policy_and_rejects_startup_changes() {
+            let policy = Policy::new(Config::default()).expect("default policy");
+            let mut next = Config::default();
+            next.policy.rules = vec![RuleConfig {
+                id: 77,
+                domain: "reload.example".into(),
+                action: Action::Reject,
+                priority: 3,
+                qtype: None,
+                qclass: None,
+                client: None,
+                client_cidr: None,
+                client_cidrs: Vec::new(),
+                client_identity: None,
+            }];
+            next.admission.max_queries_per_second = 7;
+            assert_eq!(policy.reload_config(&next), Ok(ReloadState::Published));
+            let status: serde_json::Value =
+                serde_json::from_str(&policy.admin_policy_status()).expect("status");
+            assert_eq!(status["domain_rules"], 1);
+            let admission: serde_json::Value =
+                serde_json::from_str(&policy.admin_admission_status()).expect("admission");
+            assert_eq!(admission["max_queries_per_second"], 7);
+
+            let mut invalid = next.clone();
+            invalid.server.listen = "0.0.0.0:53".into();
+            assert!(matches!(
+                policy.reload_config(&invalid),
+                Err(policy::PolicyError::InvalidConfigReload { .. })
+            ));
+            let status: serde_json::Value =
+                serde_json::from_str(&policy.admin_policy_status()).expect("status");
+            assert_eq!(status["domain_rules"], 1);
         }
 
         #[test]

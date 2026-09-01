@@ -524,6 +524,12 @@ struct CountryReloadHandler {
 }
 
 #[cfg(feature = "std")]
+struct ConfigReloadHandler {
+    policy: Arc<Policy>,
+    path: PathBuf,
+}
+
+#[cfg(feature = "std")]
 impl SendPipe for CountryReloadHandler {
     type In = PipeRequest<Bytes>;
     type Out = PipeResponse<Bytes>;
@@ -536,6 +542,27 @@ impl SendPipe for CountryReloadHandler {
                 "background country-map reload failed: {error}"
             ))),
         }
+    }
+}
+
+#[cfg(feature = "std")]
+impl SendPipe for ConfigReloadHandler {
+    type In = PipeRequest<Bytes>;
+    type Out = PipeResponse<Bytes>;
+    type Err = ProximaError;
+
+    async fn call(&self, _request: Self::In) -> Result<Self::Out, Self::Err> {
+        let mut config = Config::from_file(&self.path).map_err(|error| {
+            ProximaError::Config(format!(
+                "background configuration reload cannot load {}: {error}",
+                self.path.display()
+            ))
+        })?;
+        apply_environment_overrides(&mut config)?;
+        self.policy.reload_config(&config).map_err(|error| {
+            ProximaError::Config(format!("background configuration reload failed: {error}"))
+        })?;
+        Ok(PipeResponse::ok(Bytes::new()))
     }
 }
 
@@ -574,6 +601,18 @@ fn admin_endpoint(
             Ok(Some((bind, token.clone())))
         }
     }
+}
+
+#[cfg(feature = "std")]
+fn apply_environment_overrides(config: &mut Config) -> Result<(), ProximaError> {
+    config.admission.ddos = config_builder()
+        .value(config.admission.ddos.clone())
+        .env_with_prefix("BLACKHOLE_DDOS")
+        .build()
+        .map_err(|error| {
+            ProximaError::Config(format!("invalid BLACKHOLE_DDOS settings: {error}"))
+        })?;
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]
@@ -718,19 +757,15 @@ async fn main() -> Result<(), ProximaError> {
     if let Some(replay_path) = replay_path {
         return replay_metadata(Path::new(replay_path)).await;
     }
-    let mut config = if let Some(config_path) = explicit_config_path {
-        Config::from_file(Path::new(&config_path))
-            .map_err(|error| ProximaError::Config(format!("cannot load {config_path}: {error}")))?
+    let config_file_path = explicit_config_path.map(PathBuf::from);
+    let mut config = if let Some(config_path) = config_file_path.as_deref() {
+        Config::from_file(config_path).map_err(|error| {
+            ProximaError::Config(format!("cannot load {}: {error}", config_path.display()))
+        })?
     } else {
         Config::default()
     };
-    config.admission.ddos = config_builder()
-        .value(config.admission.ddos.clone())
-        .env_with_prefix("BLACKHOLE_DDOS")
-        .build()
-        .map_err(|error| {
-            ProximaError::Config(format!("invalid BLACKHOLE_DDOS settings: {error}"))
-        })?;
+    apply_environment_overrides(&mut config)?;
     let bind: SocketAddr = config
         .server
         .listen
@@ -757,6 +792,8 @@ async fn main() -> Result<(), ProximaError> {
     let country_reload_interval = config.country_policy.reload_interval_secs;
     let country_reload_enabled =
         country_reload_interval != 0 && config.country_policy.map_path.is_some();
+    let config_reload_interval = config.reload_interval_secs;
+    let config_reload_enabled = config_reload_interval != 0 && config_file_path.is_some();
     let query_recording_path = config.privacy.query_recording_path.clone();
     let query_recording_max_bytes = config.privacy.query_recording_max_bytes;
     let query_recording_rotation_enabled = config.privacy.query_recording_rotation_enabled;
@@ -943,6 +980,25 @@ async fn main() -> Result<(), ProximaError> {
         println!(
             "blackhole country-map reload enabled ({}s)",
             country_reload_interval
+        );
+    }
+    if config_reload_enabled {
+        let reload_handler = into_pipe_handle(ConfigReloadHandler {
+            policy: Arc::clone(&policy),
+            path: config_file_path
+                .clone()
+                .expect("configuration reload path is present"),
+        });
+        let reload_source = into_source_handle(IntervalPipe::new(
+            std::time::Duration::from_secs(config_reload_interval),
+            reload_handler,
+            IntervalPipe::empty_request_factory(),
+            "blackhole-config-reload",
+        ));
+        source_lifecycle.spawn_from_source("config-reload", &reload_source);
+        println!(
+            "blackhole configuration reload enabled ({}s)",
+            config_reload_interval
         );
     }
     let server = match Listener::builder()

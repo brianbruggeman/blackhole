@@ -94,6 +94,9 @@ Configured blocklists may be refreshed by Proxima's cancellable background
 interval with `policy.blocklist_reload_interval_secs`; zero disables polling,
 the interval is bounded to one day, unchanged content does not create a new
 policy generation, and failed reloads retain the last good snapshot.
+Set the top-level `reload_interval_secs` to enable bounded polling of the
+policy-bearing portions of the same configuration file; listener, transport,
+capture, storage, and process-capacity changes fail closed until restart.
 Named service profiles are also compiled into the authoritative rule table;
 each profile supplies a bounded domain set and action.
 The optional country policy accepts an operator-supplied `COUNTRY CIDR [REGION]
