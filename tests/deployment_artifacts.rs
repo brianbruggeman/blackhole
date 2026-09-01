@@ -88,6 +88,8 @@ fn systemd_state_and_installer_are_scoped() {
         "systemctl restart blackhole.service",
         "systemctl stop blackhole.service",
         "rollback_needed=0",
+        "../../../../bin/blackhole",
+        "../../../../etc/blackhole/blackhole.toml",
         "install -d -o \"$blackhole_uid\" -g \"$blackhole_gid\" -m 0750 \"$state_target\"",
         "systemd-tmpfiles --create /etc/tmpfiles.d/blackhole.conf",
         "systemctl daemon-reload",
@@ -136,6 +138,8 @@ fn launchd_installer_is_transactional_and_platform_native() {
         "installation failed; restoring the previous launchd files",
         "trap cleanup EXIT HUP INT TERM",
         "rollback_needed=0",
+        "../../../../bin/blackhole",
+        "../../../../etc/blackhole/blackhole.toml",
     ] {
         assert!(
             installer.contains(required),

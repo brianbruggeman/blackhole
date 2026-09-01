@@ -7,8 +7,20 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-binary=${BLACKHOLE_BINARY:-"$script_dir/../../target/release/blackhole"}
-config=${BLACKHOLE_CONFIG:-"$script_dir/../../blackhole.example.toml"}
+if [ -n "${BLACKHOLE_BINARY+x}" ]; then
+    binary=$BLACKHOLE_BINARY
+elif [ -x "$script_dir/../../../../bin/blackhole" ]; then
+    binary=$script_dir/../../../../bin/blackhole
+else
+    binary=$script_dir/../../target/release/blackhole
+fi
+if [ -n "${BLACKHOLE_CONFIG+x}" ]; then
+    config=$BLACKHOLE_CONFIG
+elif [ -r "$script_dir/../../../../etc/blackhole/blackhole.toml" ]; then
+    config=$script_dir/../../../../etc/blackhole/blackhole.toml
+else
+    config=$script_dir/../../blackhole.example.toml
+fi
 install_root=${BLACKHOLE_INSTALL_ROOT:-}
 root_path() { printf '%s%s' "$install_root" "$1"; }
 
