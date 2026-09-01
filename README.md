@@ -58,6 +58,10 @@ blocks. Local A/AAAA rewrites are bounded and apply to `pass`/`observe` queries;
 explicit policy actions take precedence. The `[capture]` section is disabled
 by default; when enabled, it installs and recovers only the platform-native,
 journal-owned DNS redirect rules.
+Configured blocklists may be refreshed by Proxima's cancellable background
+interval with `policy.blocklist_reload_interval_secs`; zero disables polling,
+the interval is bounded to one day, unchanged content does not create a new
+policy generation, and failed reloads retain the last good snapshot.
 Named service profiles are also compiled into the authoritative rule table;
 each profile supplies a bounded domain set and action.
 Profiles may name bounded client groups with `groups = ["family", "guest"]`;

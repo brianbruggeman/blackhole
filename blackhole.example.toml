@@ -31,6 +31,8 @@ default_action = "pass"
 # bounded generated apex and subdomain NXDOMAIN rules; basic @@||domain^
 # exceptions override them. Missing or malformed files fail startup.
 blocklists = []
+# Optional cancellable background reload interval; zero disables polling.
+blocklist_reload_interval_secs = 0
 
 # Optional local DNS rewrites. A rewrite answers matching A/AAAA queries when
 # the selected policy action is pass or observe. An explicit rule action wins.

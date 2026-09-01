@@ -87,6 +87,9 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   successful policy reloads invalidating cached forwarding answers.
 - Atomic operator-triggered blocklist reloads rebuild the explicit rules plus
   current bounded files and retain the last good snapshot on failure.
+- Optional bounded background blocklist reloads use Proxima's cancellable
+  interval source, publish only changed rule sets, and drain during shutdown;
+  malformed or unreadable replacements retain the last good snapshot.
 - Optional Proxima HTTP admin control plane with bearer authentication, a
   read-only health, bounded rule metadata, and non-sensitive status endpoints, authenticated blocklist
   and country-map reloads, bounded complete domain and regex rule-table
