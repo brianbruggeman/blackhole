@@ -276,9 +276,80 @@ mod runtime {
         }
     }
 
+    struct ClientAdmissionBucket {
+        active: AtomicU64,
+        last_access_micros: AtomicU64,
+    }
+
+    impl ClientAdmissionBucket {
+        fn new() -> Self {
+            Self {
+                active: AtomicU64::new(0),
+                last_access_micros: AtomicU64::new(0),
+            }
+        }
+    }
+
     struct ClientPermit {
-        active: Arc<Mutex<HashMap<IpAddr, usize>>>,
-        client: IpAddr,
+        bucket: Arc<ClientAdmissionBucket>,
+    }
+
+    impl Drop for ClientPermit {
+        fn drop(&mut self) {
+            self.bucket.active.fetch_sub(1, Ordering::AcqRel);
+            self.bucket.last_access_micros.store(0, Ordering::Release);
+        }
+    }
+
+    struct ClientAdmissionTable {
+        buckets: BucketTable<ClientAdmissionBucket>,
+    }
+
+    impl ClientAdmissionTable {
+        fn new() -> Self {
+            Self {
+                buckets: BucketTable::with_max_keys(MAX_CLIENT_RATE_ENTRIES),
+            }
+        }
+
+        fn try_acquire(
+            &self,
+            client: IpAddr,
+            limit: usize,
+            epoch: Instant,
+        ) -> Option<ClientPermit> {
+            let (key, length) = ip_key(client);
+            if self.buckets.len() >= MAX_CLIENT_RATE_ENTRIES {
+                self.buckets.evict_one_lru(|bucket| {
+                    if bucket.active.load(Ordering::Acquire) != 0 {
+                        u64::MAX
+                    } else {
+                        bucket.last_access_micros.load(Ordering::Relaxed)
+                    }
+                });
+            }
+            let bucket = self
+                .buckets
+                .get_or_insert(&key[..length], ClientAdmissionBucket::new);
+            let limit = limit.min(u64::MAX as usize) as u64;
+            loop {
+                let current = bucket.active.load(Ordering::Acquire);
+                if current >= limit {
+                    return None;
+                }
+                if bucket
+                    .active
+                    .compare_exchange(current, current + 1, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+                {
+                    bucket.last_access_micros.store(
+                        epoch.elapsed().as_micros().min(u64::MAX as u128) as u64,
+                        Ordering::Relaxed,
+                    );
+                    return Some(ClientPermit { bucket });
+                }
+            }
+        }
     }
 
     struct AtomicWindowBucket {
@@ -557,19 +628,6 @@ mod runtime {
 
     const MAX_CLIENT_RATE_ENTRIES: usize = 4096;
     const MAX_GLOBAL_QUERIES_PER_SECOND: usize = 1_000_000;
-
-    impl Drop for ClientPermit {
-        fn drop(&mut self) {
-            let mut active = self.active.lock().expect("client admission lock");
-            if let Some(count) = active.get_mut(&self.client) {
-                if *count <= 1 {
-                    active.remove(&self.client);
-                } else {
-                    *count -= 1;
-                }
-            }
-        }
-    }
 
     impl Default for CacheConfig {
         fn default() -> Self {
@@ -2150,7 +2208,7 @@ mod runtime {
         breaker: Arc<Mutex<ProximaCircuitBreaker>>,
         breaker_epoch: Instant,
         request_slots: Arc<Semaphore>,
-        client_admission: Arc<Mutex<HashMap<IpAddr, usize>>>,
+        client_admission: ClientAdmissionTable,
         client_rates: KeyedWindowBudgetTable,
         global_rate: AtomicWindowBudget,
         client_response_budgets: KeyedWindowBudgetTable,
@@ -2463,7 +2521,7 @@ mod runtime {
                 breaker,
                 breaker_epoch: Instant::now(),
                 request_slots: Arc::new(Semaphore::new(max_inflight_requests)),
-                client_admission: Arc::new(Mutex::new(HashMap::new())),
+                client_admission: ClientAdmissionTable::new(),
                 client_rates: KeyedWindowBudgetTable::new(),
                 global_rate: AtomicWindowBudget::new(),
                 client_response_budgets: KeyedWindowBudgetTable::new(),
@@ -3787,16 +3845,11 @@ mod runtime {
         fn try_client_admission(&self, client: Option<IpAddr>) -> Option<ClientPermit> {
             let client = client?;
             let admission = self.admission_config();
-            let mut active = self.client_admission.lock().expect("client admission lock");
-            let count = active.entry(client).or_default();
-            if *count >= admission.max_inflight_per_client {
-                return None;
-            }
-            *count += 1;
-            Some(ClientPermit {
-                active: Arc::clone(&self.client_admission),
+            self.client_admission.try_acquire(
                 client,
-            })
+                admission.max_inflight_per_client,
+                self.breaker_epoch,
+            )
         }
 
         fn allow_client_rate(&self, client: Option<IpAddr>) -> bool {
