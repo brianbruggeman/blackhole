@@ -2200,7 +2200,8 @@ mod runtime {
         telemetry: Option<TelemetryHandle>,
         recording: Option<DynRecordingSink>,
         query_log: Option<Arc<QueryLog>>,
-        admission: RwLock<AdmissionConfig>,
+        admission: Live<AdmissionConfig>,
+        admission_control: LiveControl<AdmissionConfig>,
         upstream: Option<DnsClientUpstream>,
         upstream_slots: Option<Arc<Semaphore>>,
         cache: Live<DnsCache>,
@@ -2487,6 +2488,7 @@ mod runtime {
             let admission = config.admission.clone();
             let (client_identities, client_identity_control) = live(client_identities);
             let (country_policy, country_policy_control) = live(country_policy);
+            let (admission, admission_control) = live(admission);
             let policy = Self {
                 config,
                 base_rules: Mutex::new(base_rules),
@@ -2513,7 +2515,8 @@ mod runtime {
                 telemetry: None,
                 recording: None,
                 query_log,
-                admission: RwLock::new(admission),
+                admission,
+                admission_control,
                 upstream: None,
                 upstream_slots: None,
                 cache,
@@ -2627,7 +2630,7 @@ mod runtime {
             }
             let _reload = self.reload_lock.write().expect("reload lock");
             let started = Instant::now();
-            *self.admission.write().expect("admission lock") = admission.clone();
+            self.admission_control.replace(admission.clone());
             self.policy_generation.fetch_add(1, Ordering::Relaxed);
             self.observe_reload_latency("admission", started);
             Ok(ReloadState::Published)
@@ -3839,7 +3842,7 @@ mod runtime {
         }
 
         fn admission_config(&self) -> AdmissionConfig {
-            self.admission.read().expect("admission lock").clone()
+            self.admission.snapshot().as_ref().clone()
         }
 
         fn try_client_admission(&self, client: Option<IpAddr>) -> Option<ClientPermit> {
