@@ -57,8 +57,8 @@ below are future capabilities, grouped by the dependency layer they extend.
   per-client identity and group-management controls.
 - Add a separately isolated honeypot terminal with explicit retention and
   access controls.
-- Add a measured policy/codec WASM edge experiment while retaining scalar
-  fallback.
+- Extend the measured policy/codec WASM edge experiment with additional
+  runtimes and workload cells while retaining scalar fallback.
 
 ## Reference sources
 
