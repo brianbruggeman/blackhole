@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::net::Ipv4Addr;
+use std::net::SocketAddr;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -92,6 +93,7 @@ impl<'packet> Request<'packet> {
         let mut message_type = None;
         let mut requested_ip = None;
         let mut server_identifier = None;
+        let mut unsupported_message_type = false;
         let mut cursor = 240;
         while cursor < packet.len() {
             let kind = packet[cursor];
@@ -111,6 +113,7 @@ impl<'packet> Request<'packet> {
             match kind {
                 OPTION_MESSAGE_TYPE if length == 1 => {
                     message_type = MessageType::from_wire(value[0]);
+                    unsupported_message_type = message_type.is_none();
                 }
                 OPTION_REQUESTED_IP if length == 4 => {
                     let octets: [u8; 4] = value.try_into().unwrap();
@@ -123,6 +126,9 @@ impl<'packet> Request<'packet> {
                 _ => {}
             }
             cursor = end;
+        }
+        if unsupported_message_type {
+            return Err(ParseError::UnsupportedMessageType);
         }
         Ok(Self {
             transaction_id,
@@ -328,8 +334,16 @@ fn serve_socket(
         if leases.len() >= config.max_leases && !leases.contains_key(&request.client) {
             continue;
         }
-        let Some(address) = pool.allocate(&mut leases, request.client, now_secs, config.lease_secs)
-        else {
+        let requested = (request.message_type == MessageType::Request)
+            .then_some(request.requested_ip)
+            .flatten();
+        let Some(address) = pool.allocate_requested(
+            &mut leases,
+            request.client,
+            now_secs,
+            config.lease_secs,
+            requested,
+        ) else {
             continue;
         };
         let Ok(response_length) =
@@ -337,7 +351,12 @@ fn serve_socket(
         else {
             continue;
         };
-        socket.send_to(&output[..response_length], peer)?;
+        let destination = if request.broadcast || peer.ip().is_unspecified() {
+            SocketAddr::new(Ipv4Addr::BROADCAST.into(), 68)
+        } else {
+            peer
+        };
+        socket.send_to(&output[..response_length], destination)?;
     }
     Ok(())
 }
@@ -356,13 +375,40 @@ impl Pool {
         now_secs: u64,
         lease_secs: u32,
     ) -> Option<Ipv4Addr> {
+        self.allocate_requested(leases, client, now_secs, lease_secs, None)
+    }
+
+    pub fn allocate_requested(
+        &self,
+        leases: &mut BTreeMap<[u8; 6], (Ipv4Addr, u64)>,
+        client: [u8; 6],
+        now_secs: u64,
+        lease_secs: u32,
+        requested: Option<Ipv4Addr>,
+    ) -> Option<Ipv4Addr> {
         if lease_secs == 0 {
             return None;
         }
         leases.retain(|_, (_, expiry)| *expiry > now_secs);
         if let Some((address, expiry)) = leases.get_mut(&client) {
+            if requested.is_some_and(|requested| requested != *address) {
+                return None;
+            }
             *expiry = now_secs.saturating_add(u64::from(lease_secs));
             return Some(*address);
+        }
+        if let Some(requested) = requested {
+            if requested >= Ipv4Addr::from(self.start)
+                && requested <= Ipv4Addr::from(self.end)
+                && !leases.values().any(|(used, _)| *used == requested)
+            {
+                leases.insert(
+                    client,
+                    (requested, now_secs.saturating_add(u64::from(lease_secs))),
+                );
+                return Some(requested);
+            }
+            return None;
         }
         for candidate in self.start..=self.end {
             let address = Ipv4Addr::from(candidate);
@@ -434,6 +480,13 @@ mod tests {
         assert_eq!(Request::parse(&packet), Err(ParseError::InvalidOperation));
         packet = vec![0; MAX_DHCP_PACKET + 1];
         assert_eq!(Request::parse(&packet), Err(ParseError::TooShort));
+
+        let mut packet = discover();
+        packet[242] = 99;
+        assert_eq!(
+            Request::parse(&packet),
+            Err(ParseError::UnsupportedMessageType)
+        );
     }
 
     #[test]
@@ -451,6 +504,26 @@ mod tests {
         assert_eq!(
             pool.allocate(&mut leases, [12, 13, 14, 15, 16, 17], 51, 30),
             Some(first)
+        );
+        assert_eq!(
+            pool.allocate_requested(
+                &mut leases,
+                [18, 19, 20, 21, 22, 23],
+                60,
+                30,
+                Some(Ipv4Addr::new(192, 0, 2, 11)),
+            ),
+            Some(Ipv4Addr::new(192, 0, 2, 11))
+        );
+        assert_eq!(
+            pool.allocate_requested(
+                &mut leases,
+                [24, 25, 26, 27, 28, 29],
+                60,
+                30,
+                Some(Ipv4Addr::new(192, 0, 2, 1)),
+            ),
+            None
         );
     }
 
