@@ -237,6 +237,8 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   live policy bundle and provides authenticated blocklist reload and complete
   full-configuration publication controls, contains no packet payloads, and uses
   the existing Proxima HTTP pipe.
+- The blocklist section also replaces, adds, removes, enables, disables, and
+  reloads local or hosted sources through the authenticated atomic routes.
 - `deploy/package/build.sh` creates a bounded release archive from an explicit
   executable and output directory, including configuration, service assets,
   source/toolchain/lock provenance, and a SHA-256 manifest. Native package

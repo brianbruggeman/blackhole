@@ -107,6 +107,13 @@ async fn admin_http_listener_enforces_bearer_auth() {
     let authorized = String::from_utf8_lossy(&authorized);
     assert!(authorized.starts_with("HTTP/1.1 200"));
     assert!(authorized.contains("{\"status\":\"ok\"}"));
+    let ui = request(addr, "GET", "/", Some("Bearer integration-secret"), None)
+        .await
+        .expect("status UI response");
+    let ui = String::from_utf8_lossy(&ui);
+    assert!(ui.starts_with("HTTP/1.1 200"));
+    assert!(ui.contains("replace-blocklists"));
+    assert!(ui.contains("/reload/blocklists/${op}"));
     let status = request(
         addr,
         "GET",
