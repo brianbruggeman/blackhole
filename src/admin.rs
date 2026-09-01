@@ -69,9 +69,9 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <style>body{font:15px system-ui,sans-serif;max-width:70rem;margin:2rem auto;padding:0 1rem}pre{background:#f3f3f3;padding:1rem;overflow:auto}button{padding:.4rem .7rem}</style>
 <h1>Blackhole DNS</h1>
 <p>Authenticated operator control plane. DNS names and packet payloads are not shown here.</p>
-<p><button id="clear-logs">Clear privacy log</button> <button id="reload-blocklists">Reload blocklists</button></p>
+<p><button id="clear-logs">Clear privacy log</button> <button id="reload-blocklists">Reload blocklists</button> <button id="reload-admission">Reload admission JSON</button></p>
 <h2>Status</h2><pre id="status">loading…</pre>
-<h2>Admission limits</h2><pre id="admission-status">loading…</pre>
+<h2>Admission limits</h2><textarea id="admission-config" rows="16" cols="80">loading…</textarea><pre id="admission-status">loading…</pre>
 <h2>Country policy</h2><pre id="country-status">loading…</pre>
 <h2>Privacy status</h2><pre id="privacy-status">loading…</pre>
 <h2>Rules</h2><pre id="rules">loading…</pre>
@@ -82,10 +82,12 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <script>
 const load = (path, target) => fetch(path).then(response => response.json()).then(value => {
   document.querySelector(target).textContent = JSON.stringify(value, null, 2);
+  if (path === '/admission/status') document.querySelector('#admission-config').value = JSON.stringify(value, null, 2);
 });
 const refresh = () => Promise.all([load('/status','#status'), load('/admission/status','#admission-status'), load('/country/status','#country-status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
 document.querySelector('#clear-logs').onclick = () => fetch('/logs/clear', {method:'POST'}).then(refresh);
 document.querySelector('#reload-blocklists').onclick = () => fetch('/reload/blocklists', {method:'POST'}).then(refresh);
+document.querySelector('#reload-admission').onclick = () => fetch('/reload/admission', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#admission-config').value}).then(refresh);
 refresh();
 </script>
 "#;
@@ -653,6 +655,11 @@ mod tests {
             ui.payload
                 .windows(b"/reload/blocklists".len())
                 .any(|window| window == b"/reload/blocklists")
+        );
+        assert!(
+            ui.payload
+                .windows(b"/reload/admission".len())
+                .any(|window| window == b"/reload/admission")
         );
         assert!(ui.payload.len() < 4 * 1024);
         let clear =

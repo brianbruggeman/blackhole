@@ -4127,6 +4127,12 @@ mod runtime {
                 "max_response_bytes_per_client_per_second": admission.max_response_bytes_per_client_per_second,
                 "max_response_bytes_per_network_per_second": admission.max_response_bytes_per_network_per_second,
                 "max_response_bytes_per_second": admission.max_response_bytes_per_second,
+                "max_client_abuse_violations": admission.max_client_abuse_violations,
+                "client_abuse_window_secs": admission.client_abuse_window_secs,
+                "client_abuse_cooldown_secs": admission.client_abuse_cooldown_secs,
+                "max_network_abuse_violations": admission.max_network_abuse_violations,
+                "network_abuse_window_secs": admission.network_abuse_window_secs,
+                "network_abuse_cooldown_secs": admission.network_abuse_cooldown_secs,
                 "network_abuse_ipv4_prefix": admission.network_abuse_ipv4_prefix,
                 "network_abuse_ipv6_prefix": admission.network_abuse_ipv6_prefix,
             })
