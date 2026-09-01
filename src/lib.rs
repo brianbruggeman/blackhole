@@ -2700,7 +2700,8 @@ mod runtime {
         default_action_control: LiveControl<Action>,
         filtering_enabled: Live<bool>,
         filtering_enabled_control: LiveControl<bool>,
-        rewrite_configs: RwLock<Vec<RewriteConfig>>,
+        rewrite_configs: Live<Vec<RewriteConfig>>,
+        rewrite_configs_control: LiveControl<Vec<RewriteConfig>>,
         rewrites: Live<RewriteTable>,
         rewrite_control: LiveControl<RewriteTable>,
         reference: PolicyStore,
@@ -3042,6 +3043,7 @@ mod runtime {
             let (country_policy, country_policy_control) = live(country_policy);
             let (admission, admission_control) = live(admission);
             let (rewrites, rewrite_control) = live(rewrites);
+            let (rewrite_configs, rewrite_configs_control) = live(rewrite_configs);
             let (legacy_domains, legacy_domains_control) = live(legacy_domains);
             let (legacy_mode, legacy_mode_control) = live(legacy_mode);
             let (default_action, default_action_control) = live(default_action);
@@ -3070,7 +3072,8 @@ mod runtime {
                 default_action_control,
                 filtering_enabled,
                 filtering_enabled_control,
-                rewrite_configs: RwLock::new(rewrite_configs),
+                rewrite_configs,
+                rewrite_configs_control,
                 rewrites,
                 rewrite_control,
                 reference,
@@ -4442,7 +4445,8 @@ mod runtime {
             *self.client_groups.write().expect("client groups lock") = client_groups.to_vec();
             self.client_identity_control.replace(client_identities);
             self.rewrite_control.replace(rewrites);
-            *self.rewrite_configs.write().expect("rewrite configs lock") = rewrite_configs.to_vec();
+            self.rewrite_configs_control
+                .replace(rewrite_configs.to_vec());
             self.country_policy_control.replace(country_policy);
             *self
                 .country_policy_config
@@ -4513,11 +4517,7 @@ mod runtime {
                     });
                 }
             }
-            let mut next = self
-                .rewrite_configs
-                .read()
-                .expect("rewrite configs lock")
-                .clone();
+            let mut next = self.rewrite_configs.snapshot().as_ref().clone();
             for update in updates {
                 let name = normalize(&update.name);
                 if let Some(existing) = next
@@ -4553,11 +4553,7 @@ mod runtime {
                     reason: "rewrite names must be non-empty".into(),
                 });
             }
-            let current = self
-                .rewrite_configs
-                .read()
-                .expect("rewrite configs lock")
-                .clone();
+            let current = self.rewrite_configs.snapshot().as_ref().clone();
             let mut next = current.clone();
             next.retain(|rewrite| !requested.contains(&normalize(&rewrite.name)));
             if next.len() == current.len() {
@@ -4588,7 +4584,7 @@ mod runtime {
         ) -> Result<ReloadState, policy::PolicyError> {
             let compiled = compile_rewrites(configs)?;
             self.rewrite_control.replace(compiled);
-            *self.rewrite_configs.write().expect("rewrite configs lock") = configs.to_vec();
+            self.rewrite_configs_control.replace(configs.to_vec());
             self.cache_control.update(|cache| {
                 let mut next = cache.clone();
                 next.clear();
@@ -6266,7 +6262,7 @@ mod runtime {
             let profiles = self.profiles.read().expect("profiles lock");
             let client_groups = self.client_groups.read().expect("client groups lock");
             let client_identities = self.client_identities.snapshot();
-            let rewrites = self.rewrite_configs.read().expect("rewrite configs lock");
+            let rewrites = self.rewrite_configs.snapshot();
             let value = serde_json::json!({
                 "mode": mode_label(*self.legacy_mode.snapshot()),
                 "domains": self.legacy_domains.snapshot().as_ref().clone(),
@@ -6508,7 +6504,7 @@ mod runtime {
 
         pub(crate) fn admin_rewrites(&self) -> String {
             let _reload = self.reload_lock.read().expect("reload lock");
-            let rewrites = self.rewrite_configs.read().expect("rewrite configs lock");
+            let rewrites = self.rewrite_configs.snapshot();
             let visible = rewrites
                 .iter()
                 .take(MAX_ADMIN_LOG_ENTRIES)
