@@ -946,7 +946,7 @@ mod tests {
         let reload = Request::builder()
             .method("POST")
             .path("/reload/client-identities")
-            .payload(r#"[{"name":"family-router","clients":["192.0.2.10"]}]"#)
+            .payload(r#"[{"name":"family-router","clients":["192.0.2.10"],"client_cidrs":["192.0.2.0/24"]}]"#)
             .build()
             .expect("identity reload request");
         let response = block_on(handler.call(reload)).expect("identity reload response");
@@ -958,6 +958,7 @@ mod tests {
             serde_json::from_slice(&status.payload).expect("identity status JSON");
         assert_eq!(status["total"], 1);
         assert_eq!(status["client_identities"][0]["name"], "family-router");
+        assert_eq!(status["client_identities"][0]["client_cidrs"], 1);
 
         let upsert = Request::builder()
             .method("POST")

@@ -24,8 +24,10 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   silently take over.
 - Client-scoped rules can match one exact address or a bounded list of IPv4
   and IPv6 CIDRs; the most specific matching network wins.
-- Bounded exact-client identity labels can be mapped to policy rules without
-  retaining client identity in telemetry, logs, or payload records.
+- Bounded client identity labels can be mapped from exact IPv4/IPv6 addresses
+  or non-overlapping IPv4/IPv6 CIDR scopes to policy rules without retaining
+  client identity in telemetry, logs, or payload records; exact addresses win
+  over CIDR matches.
 - Bounded Pi-hole/AdGuard-compatible blocklist ingestion from hosts/domain files
   with comments, normalization, deduplication, apex-and-subdomain blocking,
   `@@` exceptions, and fail-closed startup reloads.
@@ -202,9 +204,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - The policy-bundle reload can also atomically replace the legacy fallback mode,
   legacy domain set, and default action; invalid legacy domains fail before any
   table or fallback setting is published.
-- The policy-bundle editor round-trips bounded client-identity address mappings;
-  identity publication uses Proxima's lock-free `Live` snapshot and rejects
-  invalid replacements before changing the current mapping.
+- The policy-bundle editor round-trips bounded client-identity address and CIDR
+  mappings; identity publication uses Proxima's lock-free `Live` snapshot and
+  rejects invalid or overlapping replacements before changing the mapping.
 - Authenticated client-identity upsert and removal routes publish copy-on-write
   snapshots, preserve unspecified identities, and reject unknown or invalid
   updates without changing the live mapping.

@@ -109,10 +109,13 @@ to an opaque label:
 [[policy.client_identities]]
 name = "family-router"
 clients = ["192.0.2.10"]
+client_cidrs = ["192.0.2.0/24"]
 ```
 
-Rules using `client_identity = "family-router"` match only that transient
-label; names and client identities are excluded from telemetry and recording.
+Rules using `client_identity = "family-router"` match that transient label;
+exact addresses take precedence over CIDR scopes, overlapping scopes across
+identities are rejected, and names and client identities are excluded from
+telemetry and recording.
 Direct `client_cidrs` and named groups are mutually exclusive.
 Rules may use `client_cidrs` for a bounded set of IPv4/IPv6 networks; the
 most-specific matching network wins while `client_cidr` remains supported.
@@ -177,7 +180,7 @@ while preserving profiles and validates the resulting profile expansion before
 publication.
 `POST /reload/client-groups/remove` removes named groups only when no profile
 references them; dependent removals fail without changing the live snapshot.
-`POST /reload/client-identities` replaces all exact client-identity mappings,
+`POST /reload/client-identities` replaces all exact/CIDR client-identity mappings,
 while `POST /reload/client-identities/upsert` and
 `POST /reload/client-identities/remove` update them by exact name without
 publishing partial state; invalid or unknown updates fail closed.

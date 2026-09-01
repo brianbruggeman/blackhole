@@ -1217,6 +1217,9 @@ mod runtime {
         pub name: String,
         #[serde(default)]
         pub clients: Vec<IpAddr>,
+        /// Optional bounded networks whose clients receive this identity.
+        #[serde(default)]
+        pub client_cidrs: Vec<String>,
     }
 
     #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -3886,10 +3889,25 @@ mod runtime {
         fn client_identity_for(&self, client: Option<std::net::IpAddr>) -> Option<String> {
             let client = client?;
             self.client_identities.read(|identities| {
-                identities
+                if let Some(identity) = identities
                     .iter()
                     .find(|identity| identity.clients.contains(&client))
-                    .map(|identity| identity.name.clone())
+                {
+                    return Some(identity.name.clone());
+                }
+                identities
+                    .iter()
+                    .filter_map(|identity| {
+                        identity
+                            .client_cidrs
+                            .iter()
+                            .filter_map(|cidr| policy::IpNetwork::parse(cidr))
+                            .filter(|network| network.contains(client))
+                            .max_by_key(|network| network.prefix())
+                            .map(|network| (network.prefix(), identity.name.clone()))
+                    })
+                    .max_by_key(|(prefix, _)| *prefix)
+                    .map(|(_, name)| name)
             })
         }
 
@@ -4753,6 +4771,7 @@ mod runtime {
                 "client_identities": client_identities.iter().map(|identity| serde_json::json!({
                     "name": identity.name,
                     "clients": identity.clients,
+                    "client_cidrs": identity.client_cidrs,
                 })).collect::<Vec<_>>(),
                 "rewrites": rewrites.iter().map(|rewrite| serde_json::json!({
                     "name": rewrite.name,
@@ -4884,6 +4903,7 @@ mod runtime {
                         serde_json::json!({
                             "name": identity.name,
                             "clients": identity.clients.len(),
+                            "client_cidrs": identity.client_cidrs.len(),
                         })
                     })
                     .collect::<Vec<_>>();
@@ -5023,6 +5043,7 @@ mod runtime {
         }
         let mut names = BTreeSet::new();
         let mut clients = HashMap::new();
+        let mut networks = Vec::new();
         for identity in identities {
             if identity.name.is_empty()
                 || identity.name.len() > policy::MAX_CLIENT_IDENTITY_BYTES
@@ -5034,10 +5055,18 @@ mod runtime {
                     reason: "names must be unique, non-empty, and bounded ASCII".into(),
                 });
             }
-            if identity.clients.is_empty() || identity.clients.len() > 256 {
+            if (identity.clients.is_empty() && identity.client_cidrs.is_empty())
+                || identity.clients.len() > 256
+                || identity.client_cidrs.len() > policy::MAX_CLIENT_CIDRS
+                || identity
+                    .clients
+                    .len()
+                    .saturating_add(identity.client_cidrs.len())
+                    > 256
+            {
                 return Err(policy::PolicyError::InvalidClientIdentityMap {
                     name: identity.name.clone(),
-                    reason: "each identity must contain 1 to 256 client addresses".into(),
+                    reason: "each identity must contain bounded client addresses or CIDRs".into(),
                 });
             }
             for client in &identity.clients {
@@ -5047,6 +5076,33 @@ mod runtime {
                         reason: format!("client already belongs to identity {previous}"),
                     });
                 }
+            }
+            for value in &identity.client_cidrs {
+                let network = policy::IpNetwork::parse(value).ok_or_else(|| {
+                    policy::PolicyError::InvalidClientIdentityMap {
+                        name: identity.name.clone(),
+                        reason: format!("invalid client CIDR {value}"),
+                    }
+                })?;
+                if networks
+                    .iter()
+                    .any(|(previous, _)| network.overlaps(*previous))
+                {
+                    return Err(policy::PolicyError::InvalidClientIdentityMap {
+                        name: identity.name.clone(),
+                        reason: "client CIDR overlaps another identity scope".into(),
+                    });
+                }
+                if clients.iter().any(|(client, previous)| {
+                    network.contains(*client) && previous != &identity.name
+                }) {
+                    return Err(policy::PolicyError::InvalidClientIdentityMap {
+                        name: identity.name.clone(),
+                        reason: "client CIDR overlaps an address assigned to another identity"
+                            .into(),
+                    });
+                }
+                networks.push((network, identity.name.clone()));
             }
         }
         Ok(identities.to_vec())
@@ -6219,6 +6275,7 @@ mod runtime {
             config.policy.client_identities = vec![ClientIdentityConfig {
                 name: "family-router".into(),
                 clients: vec!["192.0.2.10".parse().expect("client")],
+                client_cidrs: Vec::new(),
             }];
             config.policy.rules = vec![RuleConfig {
                 id: 3,
@@ -6246,6 +6303,63 @@ mod runtime {
                 policy.action_for_view_with_client(view, Some("192.0.2.11".parse().unwrap())),
                 Action::Pass
             );
+        }
+
+        #[test]
+        fn client_identity_cidrs_match_and_overlaps_fail_closed() {
+            let mut config = Config::default();
+            config.policy.client_identities = vec![ClientIdentityConfig {
+                name: "family-router".into(),
+                clients: vec!["192.0.2.10".parse().expect("client")],
+                client_cidrs: vec!["192.0.2.0/24".into(), "2001:db8::/32".into()],
+            }];
+            config.policy.rules = vec![RuleConfig {
+                id: 5,
+                domain: "identity.example".into(),
+                action: Action::Reject,
+                priority: 0,
+                qtype: None,
+                qclass: None,
+                client: None,
+                client_cidr: None,
+                client_cidrs: Vec::new(),
+                client_identity: Some("family-router".into()),
+            }];
+            let policy = Policy::new(config).expect("valid identity CIDRs");
+            let packet = [
+                0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 8, b'i', b'd', b'e', b'n', b't', b'i', b't',
+                b'y', 7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 0, 0, 1, 0, 1,
+            ];
+            let view = QueryView::parse(&packet).expect("valid query");
+            assert_eq!(
+                policy.action_for_view_with_client(view, Some("192.0.2.11".parse().unwrap())),
+                Action::Reject
+            );
+            assert_eq!(
+                policy.action_for_view_with_client(view, Some("2001:db8::11".parse().unwrap())),
+                Action::Reject
+            );
+            assert_eq!(
+                policy.action_for_view_with_client(view, Some("198.51.100.11".parse().unwrap())),
+                Action::Pass
+            );
+
+            let invalid = [
+                ClientIdentityConfig {
+                    name: "family-router".into(),
+                    clients: vec!["192.0.2.10".parse().expect("client")],
+                    client_cidrs: vec!["192.0.2.0/24".into()],
+                },
+                ClientIdentityConfig {
+                    name: "guest-router".into(),
+                    clients: Vec::new(),
+                    client_cidrs: vec!["192.0.2.128/25".into()],
+                },
+            ];
+            assert!(matches!(
+                policy.reload_client_identities(&invalid),
+                Err(policy::PolicyError::InvalidClientIdentityMap { .. })
+            ));
         }
 
         #[test]
@@ -6279,6 +6393,7 @@ mod runtime {
                 policy.reload_client_identities(&[ClientIdentityConfig {
                     name: "family-router".into(),
                     clients: vec![family],
+                    client_cidrs: Vec::new(),
                 }]),
                 Ok(ReloadState::Published)
             );
@@ -6294,10 +6409,11 @@ mod runtime {
                 policy.reload_client_identities(&[ClientIdentityConfig {
                     name: "family-router".into(),
                     clients: Vec::new(),
+                    client_cidrs: Vec::new(),
                 }]),
                 Err(policy::PolicyError::InvalidClientIdentityMap {
                     name: "family-router".into(),
-                    reason: "each identity must contain 1 to 256 client addresses".into(),
+                    reason: "each identity must contain bounded client addresses or CIDRs".into(),
                 })
             );
             assert_eq!(
