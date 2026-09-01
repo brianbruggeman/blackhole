@@ -2784,6 +2784,68 @@ mod runtime {
             Ok(ReloadState::Published)
         }
 
+        /// Replace or add client identities by exact name without exposing a
+        /// partially updated mapping to readers.
+        pub fn upsert_client_identities(
+            &self,
+            updates: &[ClientIdentityConfig],
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
+            let started = Instant::now();
+            if updates.is_empty() {
+                return Err(policy::PolicyError::InvalidClientIdentityMap {
+                    name: "<client-identities>".into(),
+                    reason: "at least one identity is required".into(),
+                });
+            }
+            let mut next = self.client_identities.snapshot().as_ref().clone();
+            for update in updates {
+                if let Some(existing) = next
+                    .iter_mut()
+                    .find(|identity| identity.name == update.name)
+                {
+                    *existing = update.clone();
+                } else {
+                    next.push(update.clone());
+                }
+            }
+            let next = validate_client_identities(&next)?;
+            self.client_identity_control.replace(next);
+            self.policy_generation.fetch_add(1, Ordering::Relaxed);
+            self.observe_reload_latency("client_identities_upsert", started);
+            Ok(ReloadState::Published)
+        }
+
+        /// Remove client identities by exact name; unknown names fail without
+        /// changing the published snapshot.
+        pub fn remove_client_identities(
+            &self,
+            names: &[String],
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
+            let started = Instant::now();
+            if names.is_empty() || names.iter().any(String::is_empty) {
+                return Err(policy::PolicyError::InvalidClientIdentityMap {
+                    name: "<client-identities>".into(),
+                    reason: "at least one non-empty identity name is required".into(),
+                });
+            }
+            let requested = names.iter().cloned().collect::<BTreeSet<_>>();
+            let mut next = self.client_identities.snapshot().as_ref().clone();
+            let original_len = next.len();
+            next.retain(|identity| !requested.contains(&identity.name));
+            if next.len() == original_len {
+                return Err(policy::PolicyError::InvalidClientIdentityMap {
+                    name: "<client-identities>".into(),
+                    reason: "no requested identity exists".into(),
+                });
+            }
+            self.client_identity_control.replace(next);
+            self.policy_generation.fetch_add(1, Ordering::Relaxed);
+            self.observe_reload_latency("client_identities_remove", started);
+            Ok(ReloadState::Published)
+        }
+
         /// Atomically replace or add named client groups while preserving the
         /// configured profiles. The resulting profile expansion is validated
         /// before any live snapshot or group metadata is changed.

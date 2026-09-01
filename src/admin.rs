@@ -29,6 +29,11 @@ struct ClientGroupUpsert {
 }
 
 #[derive(Debug, serde::Deserialize)]
+struct ClientIdentityUpsert {
+    client_identities: Vec<ClientIdentityConfig>,
+}
+
+#[derive(Debug, serde::Deserialize)]
 struct ProfileUpsert {
     profiles: Vec<ServiceProfileConfig>,
 }
@@ -187,6 +192,54 @@ impl SendPipe for AdminHandler {
                         }
                     };
                 match self.policy.reload_client_identities(&identities) {
+                    Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
+            ("POST", "/reload/client-identities/upsert") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let update = match serde_json::from_slice::<ClientIdentityUpsert>(&request.payload)
+                {
+                    Ok(update) => update,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                match self
+                    .policy
+                    .upsert_client_identities(&update.client_identities)
+                {
+                    Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
+            ("POST", "/reload/client-identities/remove") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let names = match serde_json::from_slice::<Vec<String>>(&request.payload) {
+                    Ok(names) => names,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                match self.policy.remove_client_identities(&names) {
                     Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
                     Err(error) => Ok(Response::new(422).with_body(format!(
                         "{{\"status\":\"error\",\"message\":{}}}",
@@ -603,6 +656,8 @@ impl SendPipe for AdminHandler {
                 | "/reload/client-groups/upsert"
                 | "/reload/client-groups/remove"
                 | "/reload/client-identities"
+                | "/reload/client-identities/upsert"
+                | "/reload/client-identities/remove"
                 | "/reload/policy-bundle"
                 | "/logs"
                 | "/cache/clear"
@@ -863,6 +918,38 @@ mod tests {
             serde_json::from_slice(&status.payload).expect("identity status JSON");
         assert_eq!(status["total"], 1);
         assert_eq!(status["client_identities"][0]["name"], "family-router");
+
+        let upsert = Request::builder()
+            .method("POST")
+            .path("/reload/client-identities/upsert")
+            .payload(r#"{"client_identities":[{"name":"guest-router","clients":["192.0.2.11"]}]}"#)
+            .build()
+            .expect("identity upsert request");
+        assert_eq!(
+            block_on(handler.call(upsert))
+                .expect("identity upsert response")
+                .status,
+            200
+        );
+
+        let remove = Request::builder()
+            .method("POST")
+            .path("/reload/client-identities/remove")
+            .payload(r#"["family-router"]"#)
+            .build()
+            .expect("identity removal request");
+        assert_eq!(
+            block_on(handler.call(remove))
+                .expect("identity removal response")
+                .status,
+            200
+        );
+        let status = block_on(handler.call(request("GET", "/client-identities")))
+            .expect("updated identity status response");
+        let status: serde_json::Value =
+            serde_json::from_slice(&status.payload).expect("updated identity status JSON");
+        assert_eq!(status["total"], 1);
+        assert_eq!(status["client_identities"][0]["name"], "guest-router");
     }
 
     #[test]

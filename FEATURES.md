@@ -182,6 +182,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - The policy-bundle editor round-trips bounded client-identity address mappings;
   identity publication uses Proxima's lock-free `Live` snapshot and rejects
   invalid replacements before changing the current mapping.
+- Authenticated client-identity upsert and removal routes publish copy-on-write
+  snapshots, preserve unspecified identities, and reject unknown or invalid
+  updates without changing the live mapping.
 - Authenticated cache deletion clears all bounded positive and negative DNS
   answers and reports only the number of entries removed.
 - Optional bounded privacy-safe query-decision logs use Proxima's recording

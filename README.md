@@ -171,6 +171,10 @@ while preserving profiles and validates the resulting profile expansion before
 publication.
 `POST /reload/client-groups/remove` removes named groups only when no profile
 references them; dependent removals fail without changing the live snapshot.
+`POST /reload/client-identities` replaces all exact client-identity mappings,
+while `POST /reload/client-identities/upsert` and
+`POST /reload/client-identities/remove` update them by exact name without
+publishing partial state; invalid or unknown updates fail closed.
 `POST /reload/rewrites/upsert` replaces or adds local A/AAAA rewrites by
 normalized DNS name, while `POST /reload/rewrites/remove` removes named
 rewrites atomically; `POST /reload/rewrites` replaces the complete rewrite
