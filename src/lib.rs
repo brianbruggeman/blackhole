@@ -64,6 +64,7 @@ mod runtime {
     const MAX_REGEX_PROGRAM_BYTES: usize = 1 << 20;
     const MAX_ADMIN_RULES_BODY_BYTES: usize = 64 * 1024;
     const MAX_ADMIN_LOG_ENTRIES: usize = 1_024;
+    const MAX_BLOCKLIST_RELOAD_INTERVAL_SECS: u64 = 86_400;
 
     #[derive(Debug, Clone, Deserialize, Default)]
     pub struct Config {
@@ -611,6 +612,9 @@ mod runtime {
         pub regex_rules: Vec<RegexRuleConfig>,
         #[serde(default)]
         pub blocklists: Vec<String>,
+        /// Optional bounded background reload interval. Zero disables polling.
+        #[serde(default)]
+        pub blocklist_reload_interval_secs: u64,
         #[serde(default)]
         pub rewrites: Vec<RewriteConfig>,
         #[serde(default)]
@@ -628,6 +632,7 @@ mod runtime {
                 rules: Vec::new(),
                 regex_rules: Vec::new(),
                 blocklists: Vec::new(),
+                blocklist_reload_interval_secs: 0,
                 rewrites: Vec::new(),
                 profiles: Vec::new(),
                 client_groups: Vec::new(),
@@ -1679,6 +1684,14 @@ mod runtime {
                     reason: "enabled query log bounds are invalid".into(),
                 });
             }
+            if config.policy.blocklist_reload_interval_secs > MAX_BLOCKLIST_RELOAD_INTERVAL_SECS {
+                return Err(policy::PolicyError::InvalidBlocklist {
+                    path: "<config>".into(),
+                    reason: format!(
+                        "reload interval exceeds {MAX_BLOCKLIST_RELOAD_INTERVAL_SECS} seconds"
+                    ),
+                });
+            }
             let profile_rules =
                 compile_profiles(&config.policy.profiles, &config.policy.client_groups)?;
             let explicit_rules = config.policy.rules.clone();
@@ -1949,6 +1962,55 @@ mod runtime {
                 .expect("blocklist paths lock")
                 .clone();
             let replacement = load_blocklists(&paths)?;
+            let base_rules = self.base_rules.lock().expect("base rules lock");
+            let mut rules = base_rules.clone();
+            rules.extend(replacement.iter().cloned());
+            let regex_ids = self
+                .regex_rules
+                .lock()
+                .expect("regex rules lock")
+                .iter()
+                .map(|rule| rule.id)
+                .collect::<BTreeSet<_>>();
+            if let Some(rule) = rules.iter().find(|rule| regex_ids.contains(&rule.id)) {
+                return Err(policy::PolicyError::DuplicateRule { id: rule.id });
+            }
+            let published = self.reference.reload(&rules)?;
+            *self.blocklist_rules.lock().expect("blocklist rules lock") = replacement;
+            self.domain_rules_configured
+                .store(!rules.is_empty(), Ordering::Release);
+            self.rules_configured.store(
+                !rules.is_empty()
+                    || !self
+                        .regex_rules
+                        .lock()
+                        .expect("regex rules lock")
+                        .is_empty(),
+                Ordering::Release,
+            );
+            self.cache.lock().expect("cache lock").clear();
+            self.policy_generation.fetch_add(1, Ordering::Relaxed);
+            self.observe_reload_latency("blocklists", started);
+            Ok(published)
+        }
+
+        /// Reload configured blocklists only when the resulting bounded rule
+        /// set changes. This is used by the optional Proxima interval source;
+        /// malformed or unreadable replacements still fail closed and retain
+        /// the last valid snapshot.
+        pub fn reload_blocklists_if_changed(&self) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
+            let started = Instant::now();
+            let paths = self
+                .blocklist_paths
+                .lock()
+                .expect("blocklist paths lock")
+                .clone();
+            let replacement = load_blocklists(&paths)?;
+            if replacement == *self.blocklist_rules.lock().expect("blocklist rules lock") {
+                self.observe_reload_latency("blocklists_unchanged", started);
+                return Ok(ReloadState::Unchanged);
+            }
             let base_rules = self.base_rules.lock().expect("base rules lock");
             let mut rules = base_rules.clone();
             rules.extend(replacement.iter().cloned());
@@ -3642,6 +3704,16 @@ mod runtime {
         }
 
         #[test]
+        fn background_blocklist_reload_interval_is_bounded() {
+            let mut config = Config::default();
+            config.policy.blocklist_reload_interval_secs = MAX_BLOCKLIST_RELOAD_INTERVAL_SECS + 1;
+            assert!(matches!(
+                Policy::new(config),
+                Err(policy::PolicyError::InvalidBlocklist { path, .. }) if path == "<config>"
+            ));
+        }
+
+        #[test]
         fn blocklist_reload_publishes_atomically_and_keeps_last_good_snapshot() {
             let path = std::env::temp_dir().join(format!(
                 "blackhole-blocklist-reload-{}-{}.txt",
@@ -3711,6 +3783,46 @@ mod runtime {
             assert_eq!(policy.evaluate(&query("bundle.example.")).unwrap().rcode, 3);
             std::fs::remove_file(path).expect("remove blocklist");
             std::fs::remove_file(replacement_path).expect("remove replacement blocklist");
+        }
+
+        #[test]
+        fn unchanged_blocklist_reload_does_not_publish_a_generation() {
+            let path = std::env::temp_dir().join(format!(
+                "blackhole-blocklist-unchanged-{}-{}.txt",
+                std::process::id(),
+                1
+            ));
+            std::fs::write(&path, "stable.example\n").expect("write blocklist");
+            let mut config = Config::default();
+            config.policy.blocklists = vec![path.to_string_lossy().into_owned()];
+            let policy = Policy::new(config).expect("valid blocklist");
+            let initial_generation = policy.admin_policy_status();
+            let initial_generation: serde_json::Value =
+                serde_json::from_str(&initial_generation).expect("valid status");
+            let initial_generation = initial_generation["policy_generation"]
+                .as_u64()
+                .expect("generation");
+            assert_eq!(
+                policy.reload_blocklists_if_changed(),
+                Ok(ReloadState::Unchanged)
+            );
+            let unchanged: serde_json::Value =
+                serde_json::from_str(&policy.admin_policy_status()).expect("valid status");
+            assert_eq!(
+                unchanged["policy_generation"].as_u64(),
+                Some(initial_generation)
+            );
+
+            std::fs::write(&path, "changed.example\n").expect("write changed blocklist");
+            assert_eq!(
+                policy.reload_blocklists_if_changed(),
+                Ok(ReloadState::Published)
+            );
+            assert_eq!(
+                policy.reload_blocklists_if_changed(),
+                Ok(ReloadState::Unchanged)
+            );
+            std::fs::remove_file(path).expect("remove blocklist");
         }
 
         #[test]

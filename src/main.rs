@@ -21,6 +21,10 @@ use proxima::{H1ClientUpstream, Request, Response, SendPipe};
 use proxima::{Listener, ListenerBuilderEntry, ProximaError};
 #[cfg(feature = "std")]
 use proxima_net::prime::{PrimeDatagramFactory, PrimeTcpUpstream};
+use proxima_primitives::pipe::{
+    IntervalPipe, ProducerLifecycle, Request as PipeRequest, Response as PipeResponse,
+    into_handle as into_pipe_handle, into_source_handle,
+};
 #[cfg(feature = "std")]
 use proxima_primitives::stream::{StreamConnection, StreamUpstream};
 #[cfg(feature = "doq")]
@@ -91,6 +95,27 @@ impl CaptureGuard {
 
 #[cfg(feature = "std")]
 struct AnyHandler;
+
+#[cfg(feature = "std")]
+struct BlocklistReloadHandler {
+    policy: Arc<Policy>,
+}
+
+#[cfg(feature = "std")]
+impl SendPipe for BlocklistReloadHandler {
+    type In = PipeRequest<Bytes>;
+    type Out = PipeResponse<Bytes>;
+    type Err = ProximaError;
+
+    async fn call(&self, _request: Self::In) -> Result<Self::Out, Self::Err> {
+        match self.policy.reload_blocklists_if_changed() {
+            Ok(_) => Ok(PipeResponse::ok(Bytes::new())),
+            Err(error) => Err(ProximaError::Config(format!(
+                "background blocklist reload failed: {error}"
+            ))),
+        }
+    }
+}
 
 fn admin_endpoint(
     config: &blackhole::AdminConfig,
@@ -276,6 +301,9 @@ async fn main() -> Result<(), ProximaError> {
         return Ok(());
     }
     let capture_config = config.capture.clone();
+    let blocklist_reload_interval = config.policy.blocklist_reload_interval_secs;
+    let blocklist_reload_enabled =
+        blocklist_reload_interval != 0 && !config.policy.blocklists.is_empty();
     let mut capture = install_capture(&capture_config, bind.port())?;
     let upstream = config.upstream.clone();
     let mut policy = Policy::new(config)
@@ -378,6 +406,23 @@ async fn main() -> Result<(), ProximaError> {
     } else {
         None
     };
+    let mut source_lifecycle = ProducerLifecycle::new();
+    if blocklist_reload_enabled {
+        let reload_handler = into_pipe_handle(BlocklistReloadHandler {
+            policy: Arc::clone(&policy),
+        });
+        let reload_source = into_source_handle(IntervalPipe::new(
+            std::time::Duration::from_secs(blocklist_reload_interval),
+            reload_handler,
+            IntervalPipe::empty_request_factory(),
+            "blackhole-blocklist-reload",
+        ));
+        source_lifecycle.spawn_from_source("blocklist-reload", &reload_source);
+        println!(
+            "blackhole blocklist reload enabled ({}s)",
+            blocklist_reload_interval
+        );
+    }
     let server = match Listener::builder()
         .bind(bind)
         .any()
@@ -392,6 +437,9 @@ async fn main() -> Result<(), ProximaError> {
             if let Some(admin_server) = admin_server {
                 admin_server.stop();
             }
+            source_lifecycle
+                .shutdown(std::time::Duration::from_secs(2))
+                .await;
             if let Some(capture) = capture.as_mut() {
                 let _ = capture.cleanup();
             }
@@ -404,6 +452,9 @@ async fn main() -> Result<(), ProximaError> {
     } else {
         server.run_until_signal().await;
     }
+    source_lifecycle
+        .shutdown(std::time::Duration::from_secs(2))
+        .await;
     if let Some(capture) = capture.as_mut() {
         capture.cleanup()?;
     }

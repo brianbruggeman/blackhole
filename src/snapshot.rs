@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReloadState {
     Published,
+    Unchanged,
 }
 
 /// Read/control halves for immutable policy snapshots.
