@@ -110,6 +110,7 @@ mod runtime {
     use proxima_primitives::sync::AtomicPermitPool;
     use serde::Deserialize;
     use std::collections::{BTreeSet, HashMap, VecDeque};
+    use std::fs::Metadata;
     use std::hash::Hash;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -1723,6 +1724,8 @@ mod runtime {
                 path: path.into(),
                 reason: error.to_string(),
             })?;
+        let initial_length = metadata.len();
+        let initial_modified = metadata.modified().ok();
         if let Some(max_age_secs) = config.max_age_secs {
             if max_age_secs == 0 {
                 return Err(policy::PolicyError::InvalidCountryMap {
@@ -1745,7 +1748,7 @@ mod runtime {
                 });
             }
         }
-        if metadata.len() > MAX_COUNTRY_MAP_BYTES {
+        if initial_length > MAX_COUNTRY_MAP_BYTES {
             return Err(policy::PolicyError::InvalidCountryMap {
                 path: path.into(),
                 reason: format!("file exceeds {MAX_COUNTRY_MAP_BYTES} bytes"),
@@ -1757,6 +1760,17 @@ mod runtime {
                 reason: error.to_string(),
             }
         })?;
+        let final_metadata =
+            std::fs::metadata(path).map_err(|error| policy::PolicyError::InvalidCountryMap {
+                path: path.into(),
+                reason: error.to_string(),
+            })?;
+        if country_map_changed(initial_length, initial_modified, &final_metadata) {
+            return Err(policy::PolicyError::InvalidCountryMap {
+                path: path.into(),
+                reason: "map changed while it was being read".into(),
+            });
+        }
         let mut entries = Vec::new();
         for (line_number, raw_line) in contents.lines().enumerate() {
             if raw_line.len() > MAX_COUNTRY_MAP_LINE_BYTES {
@@ -1866,6 +1880,16 @@ mod runtime {
             && now
                 .duration_since(modified)
                 .map_or(false, |age| age <= Duration::from_secs(max_age_secs))
+    }
+
+    fn country_map_changed(
+        initial_length: u64,
+        initial_modified: Option<std::time::SystemTime>,
+        final_metadata: &Metadata,
+    ) -> bool {
+        final_metadata.len() != initial_length
+            || initial_modified
+                .is_some_and(|modified| final_metadata.modified().ok() != Some(modified))
     }
 
     const MAX_REWRITES: usize = 10_000;
@@ -6821,6 +6845,26 @@ mod runtime {
             ));
             assert!(!country_map_is_fresh(now + Duration::from_secs(1), now, 60));
             assert!(!country_map_is_fresh(now, now, 0));
+        }
+
+        #[test]
+        fn country_map_change_detection_rejects_length_changes() {
+            let path = std::env::temp_dir().join(format!(
+                "blackhole-country-stability-{}-{}.txt",
+                std::process::id(),
+                1
+            ));
+            std::fs::write(&path, "US 192.0.2.0/24\n").expect("write initial map");
+            let initial = std::fs::metadata(&path).expect("initial metadata");
+            std::fs::write(&path, "US 192.0.2.0/24\nCA 198.51.100.0/24\n")
+                .expect("write changed map");
+            let final_metadata = std::fs::metadata(&path).expect("final metadata");
+            assert!(country_map_changed(
+                initial.len(),
+                initial.modified().ok(),
+                &final_metadata
+            ));
+            std::fs::remove_file(path).expect("remove country map");
         }
 
         #[test]
