@@ -102,6 +102,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   wraps a supplied backend in Proxima's bounded queue, and the executable can
   append the same events to an operator-selected Proxima JSONL destination
   with a hard encoded-byte ceiling.
+- The in-process query-decision log uses Proxima's lock-free live snapshot
+  publication for concurrent append/read paths while retaining bounded count
+  and age limits.
 - Atomic in-process rule-table reloads over Proxima's immutable `Live` snapshot
   primitive, with failed reloads retaining the last valid generation and
   successful policy reloads invalidating cached forwarding answers.

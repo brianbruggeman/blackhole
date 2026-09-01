@@ -1807,36 +1807,41 @@ mod runtime {
     /// Query names, client addresses, credentials, and wire payloads are never
     /// accepted by this sink.
     pub struct QueryLog {
-        entries: Mutex<VecDeque<RecordingEvent>>,
+        entries: Live<VecDeque<RecordingEvent>>,
+        control: LiveControl<VecDeque<RecordingEvent>>,
         max_entries: usize,
         retention: Duration,
     }
 
     impl QueryLog {
         fn new(config: &PrivacyConfig) -> Self {
+            let (entries, control) = live(VecDeque::with_capacity(config.query_log_max_entries));
             Self {
-                entries: Mutex::new(VecDeque::with_capacity(config.query_log_max_entries)),
+                entries,
+                control,
                 max_entries: config.query_log_max_entries,
                 retention: Duration::from_secs(config.query_log_retention_secs),
             }
         }
 
         fn append_event(&self, event: RecordingEvent) {
-            let mut entries = self.entries.lock().expect("query log lock");
             let cutoff = event
                 .ts_ms
                 .saturating_sub(self.retention.as_millis().min(u128::from(u64::MAX)) as u64);
-            while entries.front().is_some_and(|old| old.ts_ms < cutoff) {
-                entries.pop_front();
-            }
-            entries.push_back(event);
-            while entries.len() > self.max_entries {
-                entries.pop_front();
-            }
+            self.control.update(|current| {
+                let mut entries = current.clone();
+                while entries.front().is_some_and(|old| old.ts_ms < cutoff) {
+                    entries.pop_front();
+                }
+                entries.push_back(event.clone());
+                while entries.len() > self.max_entries {
+                    entries.pop_front();
+                }
+                entries
+            });
         }
 
         pub fn snapshot(&self) -> Vec<RecordingEvent> {
-            let mut entries = self.entries.lock().expect("query log lock");
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |duration| {
@@ -1844,16 +1849,21 @@ mod runtime {
                 });
             let cutoff =
                 now_ms.saturating_sub(self.retention.as_millis().min(u128::from(u64::MAX)) as u64);
-            while entries.front().is_some_and(|old| old.ts_ms < cutoff) {
-                entries.pop_front();
-            }
-            entries.iter().cloned().collect()
+            self.control.update(|current| {
+                let mut entries = current.clone();
+                while entries.front().is_some_and(|old| old.ts_ms < cutoff) {
+                    entries.pop_front();
+                }
+                entries
+            });
+            self.entries
+                .read(|entries| entries.iter().cloned().collect())
         }
 
         pub fn clear(&self) -> usize {
-            let mut entries = self.entries.lock().expect("query log lock");
-            let count = entries.len();
-            entries.clear();
+            let count = self.entries.read(VecDeque::len);
+            self.control
+                .replace(VecDeque::with_capacity(self.max_entries));
             count
         }
     }
