@@ -102,7 +102,7 @@ mod runtime {
         DnsAnswer, DnsAnswerRecord, DnsAnswerWithMetadata, DnsClientUpstream, DnsPipeReply,
         DnsPipeRequest,
     };
-    use proxima_primitives::pipe::CircuitBreaker as ProximaCircuitBreaker;
+    use proxima_primitives::pipe::AtomicCircuitBreaker as ProximaCircuitBreaker;
     use proxima_primitives::pipe::SendPipe;
     use proxima_primitives::pipe::bucket_table::BucketTable;
     use proxima_primitives::pipe::endpoint::PeerInfo;
@@ -2211,7 +2211,7 @@ mod runtime {
         upstream_slots: Option<Arc<Semaphore>>,
         cache: Live<DnsCache>,
         cache_control: LiveControl<DnsCache>,
-        breaker: Arc<Mutex<ProximaCircuitBreaker>>,
+        breaker: Arc<ProximaCircuitBreaker>,
         breaker_epoch: Instant,
         request_slots: Arc<Semaphore>,
         client_admission: ClientAdmissionTable,
@@ -2458,7 +2458,7 @@ mod runtime {
             let reference = PolicyStore::new(&config.policy.rules)?;
             let (cache, cache_control) = live(DnsCache::new(&config.cache));
             let max_inflight_requests = config.admission.max_inflight_requests;
-            let breaker = Arc::new(Mutex::new(ProximaCircuitBreaker::new(
+            let breaker = Arc::new(ProximaCircuitBreaker::new(
                 config
                     .upstream
                     .as_ref()
@@ -2474,7 +2474,7 @@ mod runtime {
                         }),
                 ),
                 1,
-            )));
+            ));
             let rules_configured =
                 !config.policy.rules.is_empty() || !config.policy.regex_rules.is_empty();
             let domain_rules_configured = !config.policy.rules.is_empty();
@@ -5014,12 +5014,7 @@ mod runtime {
                     return Ok(DnsPipeReply::typed(200, self.cap_answer(&query, answer)));
                 }
                 self.observe_cache("miss");
-                if !self
-                    .breaker
-                    .lock()
-                    .expect("breaker lock")
-                    .allow(self.breaker_now_nanos())
-                {
+                if !self.breaker.allow(self.breaker_now_nanos()) {
                     if let Some(answer) = self.cache_stale(&key) {
                         self.observe_cache("stale_hit");
                         self.observe(forwarding_action);
@@ -5038,15 +5033,12 @@ mod runtime {
                 let answer = match response {
                     Ok(response) => {
                         if let Err(cause) = self.validate_upstream_response(&query, &response) {
-                            self.breaker
-                                .lock()
-                                .expect("breaker lock")
-                                .on_failure(self.breaker_now_nanos());
+                            self.breaker.on_failure(self.breaker_now_nanos());
                             self.observe_failure(cause);
                             self.observe(forwarding_action);
                             return Ok(DnsPipeReply::typed(200, server_failure_answer()));
                         }
-                        self.breaker.lock().expect("breaker lock").on_success();
+                        self.breaker.on_success();
                         let answer = response.answer;
                         if matches!(answer.rcode, 0 | 3) {
                             self.observe_cache_ttl(&answer);
@@ -5055,10 +5047,7 @@ mod runtime {
                         answer
                     }
                     Err(error) => {
-                        self.breaker
-                            .lock()
-                            .expect("breaker lock")
-                            .on_failure(self.breaker_now_nanos());
+                        self.breaker.on_failure(self.breaker_now_nanos());
                         if let Some(answer) = self.cache_stale(&key) {
                             self.observe_cache("stale_hit");
                             self.observe(forwarding_action);
@@ -6557,7 +6546,7 @@ mod runtime {
 
         #[test]
         fn upstream_breaker_opens_after_bounded_failures_and_recovers() {
-            let mut breaker = ProximaCircuitBreaker::new(2, Duration::from_secs(30), 1);
+            let breaker = ProximaCircuitBreaker::new(2, Duration::from_secs(30), 1);
             assert!(breaker.allow(0));
             breaker.on_failure(0);
             assert!(breaker.allow(0));
