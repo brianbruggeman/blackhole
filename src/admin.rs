@@ -1379,6 +1379,8 @@ mod tests {
         let country_status: serde_json::Value =
             serde_json::from_slice(&country_status.payload).expect("country status JSON");
         assert_eq!(country_status["map_configured"], false);
+        assert_eq!(country_status["source_kind"], "none");
+        assert_eq!(country_status["freshness_contract"], "none");
         assert_eq!(country_status["entries"], 0);
         assert_eq!(
             country_status["source_fingerprint"],

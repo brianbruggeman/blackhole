@@ -270,9 +270,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Per-client query-rate buckets use Proxima's bounded lock-free keyed table;
   full tagged IPv4/IPv6 bytes are retained as keys and eviction remains bounded.
 - Authenticated bounded `GET /country/status` exposes country-policy deny/
-  observe controls, entry count, freshness, reload interval, and the active
-  bounded source-content fingerprint without exposing source paths or client
-  addresses.
+  observe controls, entry count, source kind, freshness contract, reload
+  interval, and the active bounded source-content fingerprint without exposing
+  source paths or client addresses.
 - Authenticated bounded `GET /privacy/status` exposes recording enablement and
   retention ceilings without exposing recording paths, query names, clients,
   credentials, or payloads.

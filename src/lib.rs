@@ -5931,8 +5931,17 @@ mod runtime {
                 .country_policy_config
                 .read()
                 .expect("country policy config lock");
+            let source_kind = config.map_path.as_deref().map_or("none", |source| {
+                if http_source_parts(source).is_some() {
+                    "hosted_http"
+                } else {
+                    "local_file"
+                }
+            });
             serde_json::json!({
                 "map_configured": policy.is_some(),
+                "source_kind": source_kind,
+                "freshness_contract": if source_kind == "local_file" { "local_mtime" } else { "none" },
                 "entries": policy.as_ref().map_or(0, |value| value.entries.len()),
                 "source_fingerprint": policy
                     .as_ref()
