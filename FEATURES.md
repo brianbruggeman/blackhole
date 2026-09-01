@@ -30,7 +30,8 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Bounded client identity labels can be mapped from exact IPv4/IPv6 addresses
   or non-overlapping IPv4/IPv6 CIDR scopes to policy rules without retaining
   client identity in telemetry, logs, or payload records; exact addresses win
-  over CIDR matches.
+  over CIDR matches. Identity mappings can be disabled without deleting their
+  configured address and network scope.
 - Bounded Pi-hole/AdGuard-compatible blocklist ingestion from hosts/domain files
   with comments, normalization, deduplication, apex-and-subdomain blocking,
   `@@` exceptions, and fail-closed startup reloads.

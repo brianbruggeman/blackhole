@@ -198,7 +198,8 @@ references them; dependent removals fail without changing the live snapshot.
 `POST /reload/client-identities` replaces all exact/CIDR client-identity mappings,
 while `POST /reload/client-identities/upsert` and
 `POST /reload/client-identities/remove` update them by exact name without
-publishing partial state; invalid or unknown updates fail closed.
+publishing partial state; each mapping can be disabled while retaining its
+metadata, and invalid or unknown updates fail closed.
 `POST /reload/rewrites/upsert` replaces or adds local A/AAAA rewrites by
 normalized DNS name, while `POST /reload/rewrites/remove` removes named
 rewrites atomically; `POST /reload/rewrites` replaces the complete rewrite
