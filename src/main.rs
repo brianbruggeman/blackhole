@@ -493,6 +493,7 @@ async fn main() -> Result<(), ProximaError> {
         return Ok(());
     }
     let capture_config = config.capture.clone();
+    let dhcp_config = config.dhcp.clone();
     let blocklist_reload_interval = config.policy.blocklist_reload_interval_secs;
     let blocklist_reload_enabled =
         blocklist_reload_interval != 0 && !config.policy.blocklists.is_empty();
@@ -617,6 +618,16 @@ async fn main() -> Result<(), ProximaError> {
         println!("blackhole query recording enabled ({path})");
     }
     let policy = Arc::new(policy);
+    let dhcp_server = if dhcp_config.enabled {
+        println!("blackhole DHCP listening on {}", dhcp_config.listen);
+        Some(
+            blackhole::dhcp::Server::start(dhcp_config).map_err(|error| {
+                ProximaError::Config(format!("cannot start DHCP listener: {error}"))
+            })?,
+        )
+    } else {
+        None
+    };
     let admin_server = if let Some((admin_bind, token)) = admin_endpoint {
         let handle = authenticated_handle(Arc::clone(&policy), token)?;
         let server = match Listener::http(admin_bind).handle(handle).serve().await {
@@ -686,6 +697,9 @@ async fn main() -> Result<(), ProximaError> {
             if let Some(capture) = capture.as_mut() {
                 let _ = capture.cleanup();
             }
+            if let Some(server) = dhcp_server {
+                let _ = server.shutdown();
+            }
             return Err(error);
         }
     };
@@ -698,6 +712,11 @@ async fn main() -> Result<(), ProximaError> {
     source_lifecycle
         .shutdown(std::time::Duration::from_secs(2))
         .await;
+    if let Some(server) = dhcp_server {
+        server.shutdown().map_err(|error| {
+            ProximaError::Config(format!("DHCP listener shutdown failed: {error}"))
+        })?;
+    }
     if let Some(capture) = capture.as_mut() {
         capture.cleanup()?;
     }

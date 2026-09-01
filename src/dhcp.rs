@@ -2,6 +2,14 @@
 
 use std::collections::BTreeMap;
 use std::net::Ipv4Addr;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use crate::DhcpConfig;
 
 pub const MAX_DHCP_PACKET: usize = 1500;
 const FIXED_HEADER: usize = 236;
@@ -213,6 +221,127 @@ pub struct Pool {
     end: u32,
 }
 
+/// Handle for the opt-in DHCP adapter thread.
+pub struct Server {
+    stop: Arc<AtomicBool>,
+    thread: Option<JoinHandle<std::io::Result<()>>>,
+    address: std::net::SocketAddr,
+}
+
+impl Server {
+    pub fn start(config: DhcpConfig) -> std::io::Result<Self> {
+        let socket = std::net::UdpSocket::bind(&config.listen)?;
+        let address = socket.local_addr()?;
+        socket.set_broadcast(true)?;
+        socket.set_read_timeout(Some(Duration::from_millis(250)))?;
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread_stop = Arc::clone(&stop);
+        let thread = thread::Builder::new()
+            .name("blackhole-dhcp".into())
+            .spawn(move || serve_socket(socket, config, thread_stop))
+            .map_err(std::io::Error::other)?;
+        Ok(Self {
+            stop,
+            thread: Some(thread),
+            address,
+        })
+    }
+
+    #[must_use]
+    pub fn local_addr(&self) -> std::net::SocketAddr {
+        self.address
+    }
+
+    pub fn shutdown(mut self) -> std::io::Result<()> {
+        self.stop.store(true, Ordering::Release);
+        self.thread
+            .take()
+            .expect("DHCP thread present")
+            .join()
+            .map_err(|_| std::io::Error::other("DHCP thread panicked"))?
+    }
+}
+
+fn serve_socket(
+    socket: std::net::UdpSocket,
+    config: DhcpConfig,
+    stop: Arc<AtomicBool>,
+) -> std::io::Result<()> {
+    socket.set_broadcast(true)?;
+    let server = config
+        .server
+        .parse::<Ipv4Addr>()
+        .expect("validated DHCP server address");
+    let subnet_mask = config
+        .subnet_mask
+        .parse::<Ipv4Addr>()
+        .expect("validated DHCP subnet mask");
+    let pool = Pool::new(
+        config
+            .pool_start
+            .parse()
+            .expect("validated DHCP pool start"),
+        config.pool_end.parse().expect("validated DHCP pool end"),
+    )
+    .expect("validated DHCP pool");
+    let router = config
+        .router
+        .as_deref()
+        .map(|value| value.parse::<Ipv4Addr>().expect("validated DHCP router"));
+    let dns = config
+        .dns
+        .as_deref()
+        .map(|value| value.parse::<Ipv4Addr>().expect("validated DHCP DNS"));
+    let reply_config = ReplyConfig {
+        server,
+        subnet_mask,
+        router,
+        dns,
+        lease_secs: config.lease_secs,
+    };
+    let mut leases = BTreeMap::new();
+    let mut packet = [0u8; MAX_DHCP_PACKET];
+    let mut output = [0u8; MAX_DHCP_PACKET];
+    while !stop.load(Ordering::Acquire) {
+        let (length, peer) = match socket.recv_from(&mut packet) {
+            Ok(result) => result,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::TimedOut => continue,
+            Err(error) => return Err(error),
+        };
+        let Ok(request) = Request::parse(&packet[..length]) else {
+            continue;
+        };
+        let message_type = match request.message_type {
+            MessageType::Discover => MessageType::Offer,
+            MessageType::Request => MessageType::Ack,
+            MessageType::Decline | MessageType::Release => continue,
+            MessageType::Offer | MessageType::Ack | MessageType::Nak | MessageType::Inform => {
+                continue;
+            }
+        };
+        let now_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        leases.retain(|_, (_, expiry)| *expiry > now_secs);
+        if leases.len() >= config.max_leases && !leases.contains_key(&request.client) {
+            continue;
+        }
+        let Some(address) = pool.allocate(&mut leases, request.client, now_secs, config.lease_secs)
+        else {
+            continue;
+        };
+        let Ok(response_length) =
+            encode_reply(&request, message_type, address, reply_config, &mut output)
+        else {
+            continue;
+        };
+        socket.send_to(&output[..response_length], peer)?;
+    }
+    Ok(())
+}
+
 impl Pool {
     pub fn new(start: Ipv4Addr, end: Ipv4Addr) -> Option<Self> {
         let start = u32::from(start);
@@ -252,6 +381,7 @@ impl Pool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::SocketAddr;
 
     fn discover() -> Vec<u8> {
         let mut packet = vec![0u8; 240];
@@ -322,5 +452,27 @@ mod tests {
             pool.allocate(&mut leases, [12, 13, 14, 15, 16, 17], 51, 30),
             Some(first)
         );
+    }
+
+    #[test]
+    fn loopback_server_turns_discover_into_offer() {
+        let mut config = DhcpConfig::default();
+        config.listen = "127.0.0.1:0".into();
+        let server = Server::start(config).expect("server");
+        let client = std::net::UdpSocket::bind("127.0.0.1:0").expect("client");
+        client
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .expect("timeout");
+        client
+            .send_to(&discover(), server.local_addr())
+            .expect("discover");
+        let mut response = [0u8; MAX_DHCP_PACKET];
+        let (length, peer): (usize, SocketAddr) = client.recv_from(&mut response).expect("offer");
+        assert_eq!(peer, server.local_addr());
+        assert_eq!(response[0], 2);
+        assert_eq!(&response[16..20], &[192, 0, 2, 100]);
+        assert_eq!(&response[240..243], &[OPTION_MESSAGE_TYPE, 1, 2]);
+        assert!(length < MAX_DHCP_PACKET);
+        server.shutdown().expect("shutdown");
     }
 }
