@@ -341,12 +341,16 @@ async fn restore_persisted_abuse(
     path: &Path,
     max_bytes: u64,
 ) -> Result<usize, ProximaError> {
-    let metadata = std::fs::metadata(path).map_err(|error| {
-        ProximaError::Record(format!(
-            "inspect abuse recording {}: {error}",
-            path.display()
-        ))
-    })?;
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => {
+            return Err(ProximaError::Record(format!(
+                "inspect abuse recording {}: {error}",
+                path.display()
+            )));
+        }
+    };
     if !metadata.is_file() {
         return Err(ProximaError::Record(format!(
             "abuse recording {} is not a regular file",
@@ -415,12 +419,16 @@ async fn restore_persisted_denylist(
     path: &Path,
     max_bytes: u64,
 ) -> Result<usize, ProximaError> {
-    let metadata = std::fs::metadata(path).map_err(|error| {
-        ProximaError::Record(format!(
-            "inspect denylist recording {}: {error}",
-            path.display()
-        ))
-    })?;
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => {
+            return Err(ProximaError::Record(format!(
+                "inspect denylist recording {}: {error}",
+                path.display()
+            )));
+        }
+    };
     if !metadata.is_file() {
         return Err(ProximaError::Record(format!(
             "denylist recording {} is not a regular file",
@@ -620,6 +628,22 @@ mod tests {
         assert_eq!(events, 2);
         assert_eq!(actions.get("reject"), Some(&1));
         assert_eq!(incidents, 1);
+    }
+
+    #[test]
+    fn missing_recording_is_empty_on_first_persisted_startup() {
+        let path = temporary_path("missing-restore").join("incidents.jsonl");
+        let policy = Policy::new(Config::default()).expect("valid default policy");
+        assert_eq!(
+            futures::executor::block_on(restore_persisted_abuse(&policy, &path, 4_096))
+                .expect("missing abuse recording is empty"),
+            0
+        );
+        assert_eq!(
+            futures::executor::block_on(restore_persisted_denylist(&policy, &path, 4_096))
+                .expect("missing denylist recording is empty"),
+            0
+        );
     }
 
     #[test]
