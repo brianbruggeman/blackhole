@@ -482,6 +482,12 @@ mod runtime {
         /// Maximum age of a metadata entry in seconds.
         #[serde(default = "default_query_log_retention_secs")]
         pub query_log_retention_secs: u64,
+        /// Optional Proxima JSONL recording destination for the same
+        /// metadata-only decision events. The file is append-only; operators
+        /// must provision rotation and deletion according to their retention
+        /// policy before enabling it.
+        #[serde(default)]
+        pub query_recording_path: Option<String>,
     }
 
     impl Default for PrivacyConfig {
@@ -490,6 +496,7 @@ mod runtime {
                 query_log_enabled: false,
                 query_log_max_entries: default_query_log_entries(),
                 query_log_retention_secs: default_query_log_retention_secs(),
+                query_recording_path: None,
             }
         }
     }
@@ -1698,6 +1705,16 @@ mod runtime {
             {
                 return Err(policy::PolicyError::InvalidAdmission {
                     reason: "enabled query log bounds are invalid".into(),
+                });
+            }
+            if config
+                .privacy
+                .query_recording_path
+                .as_deref()
+                .is_some_and(|path| path.is_empty() || path.len() > 4_096)
+            {
+                return Err(policy::PolicyError::InvalidAdmission {
+                    reason: "query recording path must be between 1 and 4096 bytes".into(),
                 });
             }
             if config.policy.blocklist_reload_interval_secs > MAX_BLOCKLIST_RELOAD_INTERVAL_SECS {
@@ -6018,6 +6035,10 @@ mod runtime {
             let mut config = Config::default();
             config.privacy.query_log_enabled = true;
             config.privacy.query_log_max_entries = 65_537;
+            assert!(Policy::new(config).is_err());
+
+            let mut config = Config::default();
+            config.privacy.query_recording_path = Some(String::new());
             assert!(Policy::new(config).is_err());
         }
     }

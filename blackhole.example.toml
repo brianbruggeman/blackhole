@@ -143,6 +143,9 @@ reject_private_upstream_addresses = true
 query_log_enabled = false
 query_log_max_entries = 1024
 query_log_retention_secs = 86400
+# Optional append-only Proxima JSONL destination for the same metadata-only
+# events. Provision rotation/deletion before enabling this destination.
+# query_recording_path = "/var/lib/blackhole/query-decisions.jsonl"
 
 [country_policy]
 # Optional operator-supplied classification map. Each line is COUNTRY CIDR.

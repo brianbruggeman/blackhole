@@ -44,3 +44,8 @@ by entry count, honors positive record TTLs, applies the configured negative
 TTL to empty negative answers, and may serve stale data only within the
 configured stale window during an upstream failure. The upstream circuit
 breaker limits repeated failures; an open circuit has no network side effect.
+
+Decision recording is opt-in. The authenticated `/logs` surface reads the bounded
+in-memory metadata log; `privacy.query_recording_path` additionally appends the same
+metadata-only events through Proxima's JSONL recording sink. The file is not rotated or
+deleted by Blackhole, so operators must configure retention before enabling it.

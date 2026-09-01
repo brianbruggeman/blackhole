@@ -16,6 +16,10 @@ use bytes::Bytes;
 #[cfg(feature = "std")]
 use proxima::pipe::into_handle;
 #[cfg(feature = "std")]
+use proxima::recording::{AccumulatingSink, FormatKind, LazyFanOut, SinkSpec, deferred_runtime};
+#[cfg(feature = "std")]
+use proxima::runtime::PrimeRuntime;
+#[cfg(feature = "std")]
 use proxima::{H1ClientUpstream, Request, Response, SendPipe};
 #[cfg(feature = "std")]
 use proxima::{Listener, ListenerBuilderEntry, ProximaError};
@@ -328,6 +332,7 @@ async fn main() -> Result<(), ProximaError> {
     let country_reload_interval = config.country_policy.reload_interval_secs;
     let country_reload_enabled =
         country_reload_interval != 0 && config.country_policy.map_path.is_some();
+    let query_recording_path = config.privacy.query_recording_path.clone();
     let mut capture = install_capture(&capture_config, bind.port())?;
     let upstream = config.upstream.clone();
     let mut policy = Policy::new(config)
@@ -412,6 +417,20 @@ async fn main() -> Result<(), ProximaError> {
                 policy = policy.with_tcp_only();
             }
         }
+    }
+    if let Some(path) = query_recording_path {
+        let spigot = deferred_runtime();
+        let durable = Arc::new(LazyFanOut::new(
+            vec![SinkSpec::new(path.clone(), FormatKind::Json)],
+            Arc::clone(&spigot),
+        ));
+        spigot
+            .set(Arc::new(PrimeRuntime::new(1).map_err(|error| {
+                ProximaError::Config(format!("cannot start recording runtime: {error}"))
+            })?))
+            .map_err(|_| ProximaError::Config("recording runtime already initialized".into()))?;
+        policy = policy.with_recording_sink(Arc::new(AccumulatingSink::new(durable, 32)));
+        println!("blackhole query recording enabled ({path})");
     }
     let policy = Arc::new(policy);
     let admin_server = if let Some((admin_bind, token)) = admin_endpoint {
