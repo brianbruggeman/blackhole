@@ -51,8 +51,9 @@ blocklists = []
 # Optional cancellable background reload interval; zero disables polling.
 blocklist_reload_interval_secs = 0
 
-# Optional local DNS rewrites. A rewrite answers matching A/AAAA queries when
-# the selected policy action is pass or observe. An explicit rule action wins.
+# Optional local DNS rewrites. A rewrite answers matching A/AAAA/CNAME queries
+# when the selected policy action is pass or observe. Set exactly one record
+# family; an explicit rule action wins.
 [[policy.rewrites]]
 name = "router.home.arpa"
 ipv4 = "192.0.2.1"

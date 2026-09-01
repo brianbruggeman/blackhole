@@ -2350,6 +2350,7 @@ mod tests {
             name: "router.example".into(),
             ipv4: Some("192.0.2.1".parse().expect("address")),
             ipv6: None,
+            cname: None,
             ttl: 30,
         }];
         config.policy.rules = vec![crate::RuleConfig {

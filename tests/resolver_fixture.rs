@@ -366,6 +366,7 @@ async fn listener_serves_local_rewrite_on_the_real_udp_path() {
         name: "router.home.arpa".into(),
         ipv4: Some(Ipv4Addr::new(192, 0, 2, 53)),
         ipv6: None,
+        cname: None,
         ttl: 30,
     }];
     let policy = Arc::new(Policy::new(config).expect("valid rewrite policy"));

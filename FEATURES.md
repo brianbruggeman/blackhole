@@ -38,8 +38,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   cancellation, bounded `$denyallow` exceptions, fail-closed startup reloads,
   and retained per-source enable/disable state; unknown or malformed filter
   modifiers are rejected.
-- Bounded local A/AAAA rewrites with explicit policy precedence and fail-closed
-  validation for malformed, duplicate, or oversized configuration.
+- Bounded local A/AAAA/CNAME rewrites with explicit policy precedence and
+  fail-closed validation for malformed, duplicate, mixed-record, or oversized
+  configuration.
 - Named service-blocking profiles compile into the authoritative rule table,
   with bounded domains, optional IPv4/IPv6 client-network scopes, stable
   generated IDs, independent qtype/qclass filters, optional adapter-owned

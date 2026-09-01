@@ -107,8 +107,9 @@ Blocklist files accept hosts/domain entries and bounded AdGuard filters;
 block regardless of source order, and `$denyallow=domain|domain` permits
 listed domains and their subdomains for that blocking filter. Unknown or
 malformed filter modifiers fail closed. Local
-A/AAAA rewrites are bounded and apply to `pass`/`observe` queries;
-explicit policy actions take precedence. The `[capture]` section is disabled
+A/AAAA/CNAME rewrites are bounded and apply to `pass`/`observe` queries;
+explicit policy actions take precedence. A rewrite contains exactly one
+record family: `ipv4`, `ipv6`, or `cname`. The `[capture]` section is disabled
 by default; when enabled, it installs and recovers only the platform-native,
 journal-owned DNS redirect rules.
 Configured blocklists may be refreshed by Proxima's cancellable background
@@ -231,7 +232,7 @@ while `POST /reload/client-identities/upsert` and
 `POST /reload/client-identities/remove` update them by exact name without
 publishing partial state; each mapping can be disabled while retaining its
 metadata, and invalid or unknown updates fail closed.
-`POST /reload/rewrites/upsert` replaces or adds local A/AAAA rewrites by
+`POST /reload/rewrites/upsert` replaces or adds local A/AAAA/CNAME rewrites by
 normalized DNS name, while `POST /reload/rewrites/remove` removes named
 rewrites atomically; `POST /reload/rewrites` replaces the complete rewrite
 table. Invalid and unknown updates fail without publication.

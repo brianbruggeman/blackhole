@@ -1269,6 +1269,8 @@ mod runtime {
         pub ipv4: Option<Ipv4Addr>,
         #[serde(default)]
         pub ipv6: Option<Ipv6Addr>,
+        #[serde(default)]
+        pub cname: Option<String>,
         #[serde(default = "default_ttl")]
         pub ttl: u32,
     }
@@ -2305,10 +2307,16 @@ mod runtime {
                     reason: "name must be a non-empty ASCII DNS name".into(),
                 });
             }
-            if config.ipv4.is_none() && config.ipv6.is_none() {
+            if config.ipv4.is_none() && config.ipv6.is_none() && config.cname.is_none() {
                 return Err(policy::PolicyError::InvalidRewrite {
                     name: config.name.clone(),
-                    reason: "at least one of ipv4 or ipv6 is required".into(),
+                    reason: "at least one of ipv4, ipv6, or cname is required".into(),
+                });
+            }
+            if config.cname.is_some() && (config.ipv4.is_some() || config.ipv6.is_some()) {
+                return Err(policy::PolicyError::InvalidRewrite {
+                    name: config.name.clone(),
+                    reason: "cname cannot be combined with ipv4 or ipv6".into(),
                 });
             }
             let record_name = format!("{name}.");
@@ -2332,7 +2340,7 @@ mod runtime {
                 );
             }
             if let Some(address) = config.ipv6 {
-                let key = (name, 28);
+                let key = (name.clone(), 28);
                 if entries.contains_key(&key) {
                     return Err(policy::PolicyError::InvalidRewrite {
                         name: config.name.clone(),
@@ -2342,11 +2350,38 @@ mod runtime {
                 entries.insert(
                     key,
                     DnsAnswer::ok(vec![DnsAnswerRecord {
-                        name: record_name,
+                        name: record_name.clone(),
                         rtype: 28,
                         rclass: 1,
                         ttl: config.ttl,
                         rdata: proxima_protocols::dns::encode::ipv6_rdata(address).to_vec(),
+                    }]),
+                );
+            }
+            if let Some(target) = config.cname.as_deref() {
+                let target = normalize(target);
+                if target.is_empty() || !valid_dns_name(&target) {
+                    return Err(policy::PolicyError::InvalidRewrite {
+                        name: config.name.clone(),
+                        reason: "cname must be a non-empty ASCII DNS name".into(),
+                    });
+                }
+                let mut rdata = Vec::new();
+                proxima_protocols::dns::encode::encode_name(&target, &mut rdata).map_err(|_| {
+                    policy::PolicyError::InvalidRewrite {
+                        name: config.name.clone(),
+                        reason: "cname exceeds DNS wire limits".into(),
+                    }
+                })?;
+                let key = (name, 5);
+                entries.insert(
+                    key,
+                    DnsAnswer::ok(vec![DnsAnswerRecord {
+                        name: record_name,
+                        rtype: 5,
+                        rclass: 1,
+                        ttl: config.ttl,
+                        rdata,
                     }]),
                 );
             }
@@ -5129,8 +5164,15 @@ mod runtime {
             }
             let decision = self.decision(query, None);
             if !self.rules_configured.load(Ordering::Acquire) {
+                if self.matches(&query.name) {
+                    return self
+                        .evaluate_legacy(query)
+                        .map(|answer| self.cap_answer(query, answer));
+                }
                 return self
-                    .evaluate_legacy(query)
+                    .rewrites
+                    .read(|rewrites| rewrites.answer(query))
+                    .or_else(|| Some(DnsAnswer::ok(Vec::new())))
                     .map(|answer| self.cap_answer(query, answer));
             }
             let answer = match decision
@@ -5680,6 +5722,7 @@ mod runtime {
                     "name": rewrite.name,
                     "ipv4": rewrite.ipv4,
                     "ipv6": rewrite.ipv6,
+                    "cname": rewrite.cname,
                     "ttl": rewrite.ttl,
                 })).collect::<Vec<_>>(),
                 "country_policy": self
@@ -5873,6 +5916,7 @@ mod runtime {
                         "name": rewrite.name,
                         "ipv4": rewrite.ipv4,
                         "ipv6": rewrite.ipv6,
+                        "cname": rewrite.cname,
                         "ttl": rewrite.ttl,
                     })
                 })
@@ -8210,12 +8254,14 @@ mod runtime {
                     name: "router.home.arpa".into(),
                     ipv4: Some(Ipv4Addr::new(192, 0, 2, 1)),
                     ipv6: Some(Ipv6Addr::LOCALHOST),
+                    cname: None,
                     ttl: 30,
                 },
                 RewriteConfig {
                     name: "blocked.home.arpa".into(),
                     ipv4: Some(Ipv4Addr::new(192, 0, 2, 2)),
                     ipv6: None,
+                    cname: None,
                     ttl: 30,
                 },
             ];
@@ -8261,12 +8307,63 @@ mod runtime {
         }
 
         #[test]
+        fn local_cname_rewrite_encodes_target_and_rejects_mixed_records() {
+            let mut config = Config::default();
+            config.policy.rewrites = vec![RewriteConfig {
+                name: "alias.home.arpa".into(),
+                ipv4: None,
+                ipv6: None,
+                cname: Some("router.home.arpa".into()),
+                ttl: 45,
+            }];
+            let policy = Policy::new(config).expect("valid CNAME rewrite");
+            let answer = policy
+                .evaluate(&proxima_dns::DnsQuery {
+                    id: 1,
+                    recursion_desired: true,
+                    name: "alias.home.arpa.".into(),
+                    qtype: 5,
+                    qclass: 1,
+                })
+                .expect("CNAME answer");
+            assert_eq!(answer.records[0].rtype, 5);
+            assert_eq!(answer.records[0].ttl, 45);
+            assert_eq!(
+                answer.records[0].rdata,
+                [
+                    vec![6],
+                    b"router".to_vec(),
+                    vec![4],
+                    b"home".to_vec(),
+                    vec![4],
+                    b"arpa".to_vec(),
+                    vec![0]
+                ]
+                .concat()
+            );
+
+            let mut mixed = Config::default();
+            mixed.policy.rewrites = vec![RewriteConfig {
+                name: "mixed.home.arpa".into(),
+                ipv4: Some(Ipv4Addr::new(192, 0, 2, 1)),
+                ipv6: None,
+                cname: Some("router.home.arpa".into()),
+                ttl: 30,
+            }];
+            assert!(matches!(
+                Policy::new(mixed),
+                Err(policy::PolicyError::InvalidRewrite { .. })
+            ));
+        }
+
+        #[test]
         fn local_rewrites_fail_closed_when_invalid_or_oversized() {
             let mut invalid = Config::default();
             invalid.policy.rewrites = vec![RewriteConfig {
                 name: "not a dns name".into(),
                 ipv4: None,
                 ipv6: None,
+                cname: None,
                 ttl: 30,
             }];
             assert!(matches!(
@@ -8285,6 +8382,7 @@ mod runtime {
                     name: name.into(),
                     ipv4: Some(Ipv4Addr::new(192, 0, 2, 1)),
                     ipv6: None,
+                    cname: None,
                     ttl: 30,
                 }];
                 assert!(
@@ -8302,6 +8400,7 @@ mod runtime {
                     name: format!("host{index}.home.arpa"),
                     ipv4: Some(Ipv4Addr::new(192, 0, 2, 1)),
                     ipv6: None,
+                    cname: None,
                     ttl: 30,
                 })
                 .collect();
