@@ -244,3 +244,31 @@ the production arm: chunked scanning is slower, and memchr has materially
 higher tail variance. The edge path has `cov=0.200058`, so this row is an
 observed reference rather than a performance verdict; no zero-copy or
 production-grade claim is made.
+
+## Row 10 — current release reference after roadmap documentation cleanup
+
+`MEASURED` on 2026-09-01, Linux `x86_64`, rustc `1.98.0`, release build,
+source commit `dc1d8b9`, GitHub Proxima revision `03ea2c7d`, and load average
+`0.84`. The running harness used `N=25` samples per workload:
+
+```text
+build p50_ns=55243815 p95_ns=55750253 p99_ns=55838527 cov=0.007710 allocs=250025 alloc_bytes=33722250
+match p50_ns=48531 p95_ns=49909 p99_ns=51081 cov=0.012692 allocs=2500 alloc_bytes=57500
+edge_parse_match p50_ns=49185 p95_ns=62100 p99_ns=82814 cov=0.135783 allocs=100 alloc_bytes=1375
+parse_short p50_ns=51 p95_ns=62 p99_ns=140 cov=0.317302 allocs=0 alloc_bytes=0
+parse_long p50_ns=238 p95_ns=285 p99_ns=312 cov=0.070676 allocs=0 alloc_bytes=0
+parse_adversarial p50_ns=80 p95_ns=84 p99_ns=125 cov=0.106251 allocs=0 alloc_bytes=0
+parse_mixed p50_ns=82 p95_ns=254 p99_ns=264 cov=0.647334 allocs=0 alloc_bytes=0
+name_scan_scalar p50_ns=43 p95_ns=58 p99_ns=78 cov=0.165294 allocs=0 alloc_bytes=0
+name_scan_chunked p50_ns=86 p95_ns=98 p99_ns=122 cov=0.096716 allocs=0 alloc_bytes=0
+name_scan_memchr p50_ns=20 p95_ns=58 p99_ns=1698 cov=3.665237 allocs=0 alloc_bytes=0
+owned p50_ns=121 p95_ns=167 p99_ns=309 cov=0.285290 allocs=50 alloc_bytes=400
+encode_response p50_ns=107 p95_ns=275 p99_ns=329 cov=0.421902 allocs=50 alloc_bytes=1450
+boundary_bytes=MEASURED policy_canonicalize=60600 borrowed_to_owned=300 tcp_frame_buffer=0 encode_output=0 transport_write=0 rss_kib=7324
+```
+
+Throughput is `DERIVED` from the measured durations and operation counts.
+The borrowed parser and scan arms measured zero allocations. Scalar remains
+the production arm: chunked scanning is slower, and memchr has materially
+higher tail variance. This is an observed reference only; no zero-copy or
+production-grade claim is made.
