@@ -3687,7 +3687,13 @@ mod runtime {
                     )
                 }
             });
-            if let Some(action) = action {
+            // The borrowed listener records the action before handing the
+            // already-selected action to this owned facade. Record here only
+            // for the normal owned-pipe entry point so one DNS request emits
+            // one decision event.
+            if selected_action.is_none()
+                && let Some(action) = action
+            {
                 self.record_decision(action, &query).await;
             }
             if matches!(action, Some(Action::Pass | Action::Observe) | None) {
@@ -6085,6 +6091,45 @@ mod runtime {
             assert_eq!(payload["qtype"], 1);
             assert_eq!(payload["qclass"], 1);
             assert!(!payload.to_string().contains("secret.example"));
+        }
+
+        #[test]
+        fn borrowed_listener_handoff_records_selected_action_once() {
+            let mut config = Config::default();
+            config.privacy.query_log_enabled = true;
+            config.privacy.query_log_max_entries = 4;
+            let policy = Policy::new(config).expect("valid query log config");
+            let query = proxima_dns::DnsQuery {
+                id: 9,
+                recursion_desired: true,
+                name: "example.".into(),
+                qtype: 1,
+                qclass: 1,
+            };
+            let request = DnsPipeRequest {
+                method: proxima_primitives::pipe::method::Method::from_wire(
+                    bytes::Bytes::from_static(b"DNS"),
+                ),
+                path: bytes::Bytes::from_static(b"/"),
+                query: proxima_primitives::pipe::header_list::HeaderList::new(),
+                metadata: proxima_primitives::pipe::header_list::HeaderList::new(),
+                payload: query.clone(),
+                stream: None,
+                context: RequestContext::default(),
+            };
+
+            futures::executor::block_on(async {
+                // This is the exact listener-to-owned-facade handoff: the
+                // listener records its borrowed decision, then supplies the
+                // selected action to call_owned.
+                policy.record_decision(Action::Nxdomain, &query).await;
+                policy
+                    .call_owned(request, Action::Nxdomain)
+                    .await
+                    .expect("selected action call");
+            });
+
+            assert_eq!(policy.query_log().expect("query log").snapshot().len(), 1);
         }
 
         #[test]
