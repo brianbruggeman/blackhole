@@ -98,7 +98,8 @@ and `POST /logs/clear`, `POST /cache/clear`, `POST /reload/blocklists`, bounded
 `POST /reload/country`, bounded `POST /reload/policy` (a JSON array of complete rule objects), bounded
 `POST /reload/policy/add` (a non-empty JSON array appended atomically to the current domain rules), and bounded
 `POST /reload/policy/remove` (a JSON array of stable rule IDs removed atomically), and bounded
-`POST /reload/regex` (a JSON array of regex rule objects), plus bounded privacy-safe
+`POST /reload/regex` (a JSON array of regex rule objects), bounded `GET /profiles`
+and `GET /client-groups` metadata views, plus bounded privacy-safe
 query-decision inspection at `GET /logs` and deletion at `POST /logs/clear` when
 enabled. Send the token
 as a Bearer credential; `/rules` returns only bounded policy metadata and no

@@ -21,12 +21,14 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <p><button id="clear-logs">Clear privacy log</button></p>
 <h2>Status</h2><pre id="status">loading…</pre>
 <h2>Rules</h2><pre id="rules">loading…</pre>
+<h2>Service profiles</h2><pre id="profiles">loading…</pre>
+<h2>Client groups</h2><pre id="groups">loading…</pre>
 <h2>Privacy log</h2><pre id="logs">loading…</pre>
 <script>
 const load = (path, target) => fetch(path).then(response => response.json()).then(value => {
   document.querySelector(target).textContent = JSON.stringify(value, null, 2);
 });
-const refresh = () => Promise.all([load('/status','#status'), load('/rules','#rules'), load('/logs','#logs')]);
+const refresh = () => Promise.all([load('/status','#status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/logs','#logs')]);
 document.querySelector('#clear-logs').onclick = () => fetch('/logs/clear', {method:'POST'}).then(refresh);
 refresh();
 </script>
@@ -73,6 +75,8 @@ impl SendPipe for AdminHandler {
             ("GET", "/health") => Ok(Response::ok("{\"status\":\"ok\"}")),
             ("GET", "/status") => Ok(Response::ok(self.policy.admin_status())),
             ("GET", "/rules") => Ok(Response::ok(self.policy.admin_rules())),
+            ("GET", "/profiles") => Ok(Response::ok(self.policy.admin_profiles())),
+            ("GET", "/client-groups") => Ok(Response::ok(self.policy.admin_client_groups())),
             ("GET", "/logs") => Ok(Response::ok(self.policy.admin_query_log())),
             ("POST", "/cache/clear") => Ok(Response::ok(format!(
                 "{{\"status\":\"cleared\",\"entries\":{}}}",
@@ -183,6 +187,8 @@ impl SendPipe for AdminHandler {
                 | "/health"
                 | "/status"
                 | "/rules"
+                | "/profiles"
+                | "/client-groups"
                 | "/logs"
                 | "/cache/clear"
                 | "/logs/clear"
@@ -324,16 +330,42 @@ mod tests {
                 client_cidrs: Vec::new(),
             })
             .collect();
+        config.policy.profiles = vec![crate::ServiceProfileConfig {
+            id: 400,
+            name: "family".into(),
+            domains: vec!["ads.example".into()],
+            action: crate::Action::Nxdomain,
+            groups: vec!["home".into()],
+            priority: 10,
+            client_cidrs: vec![],
+            qtype: None,
+            qclass: None,
+        }];
+        config.policy.client_groups = vec![crate::ClientGroupConfig {
+            name: "home".into(),
+            client_cidrs: vec!["192.0.2.0/24".into()],
+        }];
         let handler = AdminHandler::new(Arc::new(Policy::new(config).expect("valid rules")));
         let response = block_on(handler.call(request("GET", "/rules"))).expect("rules response");
         assert_eq!(response.status, 200);
         assert!(response.payload.len() <= 64 * 1024);
         let body: serde_json::Value =
             serde_json::from_slice(&response.payload).expect("rules JSON");
-        assert_eq!(body["total"], 81);
+        assert_eq!(body["total"], 82);
         assert_eq!(body["truncated"], true);
         assert_eq!(body["rules"][0]["kind"], "domain");
         assert_eq!(body["rules"][0]["action"], "nxdomain");
+        let profiles = block_on(handler.call(request("GET", "/profiles"))).expect("profiles");
+        let profiles: serde_json::Value =
+            serde_json::from_slice(&profiles.payload).expect("profiles JSON");
+        assert_eq!(profiles["total"], 1);
+        assert_eq!(profiles["profiles"][0]["name"], "family");
+        let groups =
+            block_on(handler.call(request("GET", "/client-groups"))).expect("client groups");
+        let groups: serde_json::Value =
+            serde_json::from_slice(&groups.payload).expect("client groups JSON");
+        assert_eq!(groups["total"], 1);
+        assert_eq!(groups["client_groups"][0]["name"], "home");
     }
 
     #[test]

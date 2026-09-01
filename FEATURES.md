@@ -92,6 +92,9 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - The authenticated admin control plane includes a bounded status UI for
   status, rule metadata, and privacy-log inspection/clearing; it contains no
   packet payloads and uses the existing Proxima HTTP pipe.
+- Authenticated bounded `GET /profiles` and `GET /client-groups` routes expose
+  configured service-profile and client-network metadata without exposing
+  runtime client identity.
 - Authenticated cache deletion clears all bounded positive and negative DNS
   answers and reports only the number of entries removed.
 - Optional bounded privacy-safe query-decision logs use Proxima's recording
