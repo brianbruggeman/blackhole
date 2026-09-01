@@ -22,7 +22,8 @@ below are future capabilities, grouped by the dependency layer they extend.
 
 - Extend the authenticated blocklist and policy administration with
   incremental background reload and richer management operations beyond the
-  current read-only status and complete-snapshot reload routes.
+  current bounded atomic domain-rule append, read-only status, and
+  complete-snapshot reload routes.
 - Extend named client groups with richer per-client identity and network
   policy controls and authenticated administration.
 - Extend adaptive amplification controls for repeated abusive patterns beyond
