@@ -2131,6 +2131,67 @@ mod runtime {
             Ok(published)
         }
 
+        /// Atomically replace or add named client groups while preserving the
+        /// configured profiles. The resulting profile expansion is validated
+        /// before any live snapshot or group metadata is changed.
+        pub fn upsert_client_groups(
+            &self,
+            updates: &[ClientGroupConfig],
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
+            let started = Instant::now();
+            if updates.is_empty() {
+                return Err(policy::PolicyError::InvalidProfile {
+                    name: "<client-groups>".into(),
+                    reason: "at least one client group is required".into(),
+                });
+            }
+            let mut seen = BTreeSet::new();
+            for group in updates {
+                let name = group.name.trim().to_ascii_lowercase();
+                if !seen.insert(name) {
+                    return Err(policy::PolicyError::InvalidProfile {
+                        name: group.name.clone(),
+                        reason: "group name must be unique within an upsert".into(),
+                    });
+                }
+            }
+            let mut groups = self
+                .client_groups
+                .read()
+                .expect("client groups lock")
+                .clone();
+            for update in updates {
+                if let Some(existing) = groups
+                    .iter_mut()
+                    .find(|group| group.name.trim().eq_ignore_ascii_case(update.name.trim()))
+                {
+                    *existing = update.clone();
+                } else {
+                    groups.push(update.clone());
+                }
+            }
+            let profiles = self.profiles.read().expect("profiles lock").clone();
+            let generated = compile_profiles(&profiles, &groups)?;
+            let explicit = self
+                .explicit_rules
+                .lock()
+                .expect("explicit rules lock")
+                .clone();
+            let mut combined = explicit.clone();
+            combined.extend(generated);
+            let mut base_rules = self.base_rules.lock().expect("base rules lock");
+            let published = self.publish_rules_locked(
+                &combined,
+                &explicit,
+                &mut base_rules,
+                "client_groups_upsert",
+                started,
+            )?;
+            *self.client_groups.write().expect("client groups lock") = groups;
+            Ok(published)
+        }
+
         /// Atomically replace all operator-managed policy tables while
         /// retaining the current blocklist snapshot. Every generated rule,
         /// regex, and cross-table ID is validated before publication.

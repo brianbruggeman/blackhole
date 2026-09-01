@@ -24,6 +24,11 @@ struct ProfileReload {
 }
 
 #[derive(Debug, serde::Deserialize)]
+struct ClientGroupUpsert {
+    client_groups: Vec<ClientGroupConfig>,
+}
+
+#[derive(Debug, serde::Deserialize)]
 struct PolicyBundle {
     #[serde(default)]
     rules: Vec<RuleConfig>,
@@ -162,6 +167,28 @@ impl SendPipe for AdminHandler {
                     ))),
                 }
             }
+            ("POST", "/reload/client-groups/upsert") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let update = match serde_json::from_slice::<ClientGroupUpsert>(&request.payload) {
+                    Ok(update) => update,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                match self.policy.upsert_client_groups(&update.client_groups) {
+                    Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
             ("GET", "/logs") => Ok(Response::ok(self.policy.admin_query_log())),
             ("POST", "/cache/clear") => Ok(Response::ok(format!(
                 "{{\"status\":\"cleared\",\"entries\":{}}}",
@@ -278,6 +305,7 @@ impl SendPipe for AdminHandler {
                 | "/profiles"
                 | "/client-groups"
                 | "/reload/profiles"
+                | "/reload/client-groups/upsert"
                 | "/reload/policy-bundle"
                 | "/logs"
                 | "/cache/clear"
@@ -507,6 +535,61 @@ mod tests {
         let profiles: serde_json::Value =
             serde_json::from_slice(&profiles.payload).expect("profiles JSON");
         assert_eq!(profiles["total"], 0);
+    }
+
+    #[test]
+    fn client_group_upsert_republishes_profiles_atomically() {
+        let mut config = crate::Config::default();
+        config.policy.profiles = vec![crate::ServiceProfileConfig {
+            id: 700,
+            name: "family".into(),
+            domains: vec!["ads.example".into()],
+            action: crate::Action::Nxdomain,
+            groups: vec!["home".into()],
+            priority: 0,
+            client_cidrs: Vec::new(),
+            qtype: None,
+            qclass: None,
+        }];
+        config.policy.client_groups = vec![crate::ClientGroupConfig {
+            name: "home".into(),
+            client_cidrs: vec!["192.0.2.0/24".into()],
+        }];
+        let policy = Arc::new(Policy::new(config).expect("valid group policy"));
+        let handler = AdminHandler::new(Arc::clone(&policy));
+        let update = Request::builder()
+            .method("POST")
+            .path("/reload/client-groups/upsert")
+            .payload(
+                r#"{"client_groups":[{"name":"HOME","client_cidrs":["198.51.100.0/24"]},{"name":"guest","client_cidrs":["203.0.113.0/24"]}]}"#,
+            )
+            .build()
+            .expect("group upsert request");
+        let response = block_on(handler.call(update)).expect("group upsert response");
+        assert_eq!(response.status, 200);
+        let groups =
+            block_on(handler.call(request("GET", "/client-groups"))).expect("groups response");
+        let groups: serde_json::Value =
+            serde_json::from_slice(&groups.payload).expect("groups JSON");
+        assert_eq!(groups["total"], 2);
+
+        let invalid = Request::builder()
+            .method("POST")
+            .path("/reload/client-groups/upsert")
+            .payload(r#"{"client_groups":[{"name":"guest","client_cidrs":[]}]}"#)
+            .build()
+            .expect("invalid group upsert request");
+        let response = block_on(handler.call(invalid)).expect("invalid group response");
+        assert_eq!(response.status, 422);
+        let groups = block_on(handler.call(request("GET", "/client-groups")))
+            .expect("groups remain response");
+        let groups: serde_json::Value =
+            serde_json::from_slice(&groups.payload).expect("groups remain JSON");
+        assert_eq!(groups["total"], 2);
+        assert_eq!(
+            groups["client_groups"][0]["client_cidrs"][0],
+            "198.51.100.0/24"
+        );
     }
 
     #[test]
