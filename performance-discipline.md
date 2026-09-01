@@ -300,3 +300,32 @@ The borrowed parser and scan arms measured zero allocations. Scalar remains
 the production arm: chunked scanning is slower, and memchr has materially
 higher tail variance. This is an observed reference only; no zero-copy or
 production-grade claim is made.
+
+## Row 12 — current three-run release reference
+
+`MEASURED` on 2026-09-01, Linux `x86_64`, rustc `1.98.0`, release build,
+source commit `ab492fe`, GitHub Proxima revision
+`03596bc908be7ae76179464f85ad867b311e2a65`, and load averages `2.69`,
+`2.43`, and `2.48`. Three fresh processes used `N=25` samples per workload.
+The observed p50/p95/p99 ranges were:
+
+```text
+build_ns=48684938..55468491 / 50486410..56507277 / 51036126..58251598 cov=0.010377..0.012550 allocs=250025 alloc_bytes=33722250
+match_ns=44551..45045 / 46296..47160 / 46786..48268 cov=0.015165..0.017504 allocs=2500 alloc_bytes=57500
+edge_parse_match_ns=45983..46125 / 61055..63750 / 77820..85011 cov=0.146625..0.169315 allocs=100 alloc_bytes=1375
+parse_long_ns=228 / 262..281 / 279..300 cov=0.051067..0.075071 allocs=0 alloc_bytes=0
+name_scan_scalar_ns=42..43 / 57..59 / 78..121 cov=0.165373..0.337318 allocs=0 alloc_bytes=0
+name_scan_chunked_ns=85 / 94..99 / 137..153 cov=0.124484..0.156948 allocs=0 alloc_bytes=0
+name_scan_memchr_ns=21 / 41..52 / 1131..1226 cov=3.269259..3.351425 allocs=0 alloc_bytes=0
+owned_ns=117..119 / 150..169 / 289..320 cov=0.268092..0.310736 allocs=50 alloc_bytes=400
+encode_response_ns=107..110 / 266..291 / 303..422 cov=0.395957..0.510889 allocs=50 alloc_bytes=1450
+rss_kib=7304..7328
+boundary_bytes=MEASURED policy_canonicalize=60600 borrowed_to_owned=300 tcp_frame_buffer=0 encode_output=0 transport_write=0
+```
+
+Throughput is `DERIVED` by the executable from measured durations and
+operation counts. The pure harness has no real-client single-request
+latency, server CPU percentage, or error-rate workload, so those axes remain
+`UNMEASURED`; this row is not an end-to-end production gate. The scalar scan
+remains the production arm: chunked scanning is slower and memchr retains a
+large tail and high CoV. No zero-copy or production-grade claim follows.
