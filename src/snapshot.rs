@@ -1,4 +1,9 @@
 //! Immutable policy publication over Proxima's lock-free `Live<T>` primitive.
+//!
+//! `Live<T>` is a publication cell, not a Proxima `Pipe`: it has no `In`, `Out`,
+//! `Err`, or async `call`. The resolver samples the read half; authenticated
+//! reload code validates and swaps through the control half. Actual request
+//! dataflow remains in the Proxima pipe/listener path.
 
 use crate::policy::{PolicyError, ReferencePolicy, RuleConfig};
 use proxima_core::live::{Live, LiveControl, live};
@@ -11,6 +16,8 @@ pub enum ReloadState {
 }
 
 /// Read/control halves for immutable policy snapshots.
+///
+/// This is shared state publication, not a pipe or a second dataflow model.
 pub struct PolicyStore {
     current: Live<ReferencePolicy>,
     control: LiveControl<ReferencePolicy>,
