@@ -80,7 +80,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <style>body{font:15px system-ui,sans-serif;max-width:70rem;margin:2rem auto;padding:0 1rem}pre{background:#f3f3f3;padding:1rem;overflow:auto}button{padding:.4rem .7rem}</style>
 <h1>Blackhole DNS</h1>
 <p>Authenticated operator control plane. DNS names and packet payloads are not shown here.</p>
-<p><button id="clear-logs">Clear privacy log</button> <button id="clear-abuse">Clear temporary abuse state</button> <button id="reload-blocklists">Reload blocklists</button> <button id="reload-country">Reload country map</button> <button id="reload-admission">Reload admission JSON</button> <button id="reload-bundle">Publish full config</button></p>
+<p><button id="clear-logs">Clear privacy log</button> <button id="clear-cache">Clear DNS cache</button> <button id="clear-abuse">Clear temporary abuse state</button> <button id="reload-blocklists">Reload blocklists</button> <button id="reload-country">Reload country map</button> <button id="reload-admission">Reload admission JSON</button> <button id="reload-bundle">Publish full config</button></p>
 <p id="operation-status" role="status"></p>
 <h2>Status</h2><pre id="status">loading…</pre>
 <h2>Admission limits</h2><textarea id="admission-config" rows="16" cols="80">loading…</textarea><pre id="admission-status">loading…</pre>
@@ -108,6 +108,7 @@ const operate = (path, options) => fetch(path, options).then(async response => {
 }).catch(error => { document.querySelector('#operation-status').textContent = `${path}: ${error.message}`; throw error; });
 const refresh = () => Promise.all([load('/status','#status'), load('/admission/status','#admission-status'), load('/abuse/status','#abuse-status'), load('/policy-bundle','#policy-bundle'), load('/country/status','#country-status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/client-identities','#identities'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
 document.querySelector('#clear-logs').onclick = () => operate('/logs/clear', {method:'POST'}).then(refresh);
+document.querySelector('#clear-cache').onclick = () => operate('/cache/clear', {method:'POST'}).then(refresh);
 document.querySelector('#clear-abuse').onclick = () => operate('/abuse/clear', {method:'POST'}).then(refresh);
 document.querySelector('#reload-blocklists').onclick = () => operate('/reload/blocklists', {method:'POST'}).then(refresh);
 document.querySelector('#reload-country').onclick = () => operate('/reload/country', {method:'POST'}).then(refresh);
@@ -864,6 +865,11 @@ mod tests {
             ui.payload
                 .windows(b"/abuse/clear".len())
                 .any(|window| window == b"/abuse/clear")
+        );
+        assert!(
+            ui.payload
+                .windows(b"/cache/clear".len())
+                .any(|window| window == b"/cache/clear")
         );
         assert!(
             ui.payload
