@@ -4147,7 +4147,6 @@ mod runtime {
             client: Option<std::net::IpAddr>,
             client_identity: Option<&str>,
         ) -> Action {
-            let _reload = self.reload_lock.read().expect("reload lock");
             let resolved_identity = client_identity
                 .map(str::to_owned)
                 .or_else(|| self.client_identity_for(client));
