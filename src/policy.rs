@@ -58,6 +58,7 @@ pub struct Decision {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PolicyError {
     EmptyDomain { id: u32 },
+    InvalidDomainName { id: u32, domain: String },
     InvalidWildcard { id: u32, domain: String },
     InvalidClientCidr { id: u32, value: String },
     DuplicateRule { id: u32 },
@@ -78,6 +79,12 @@ impl core::fmt::Display for PolicyError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::EmptyDomain { id } => write!(formatter, "rule {id} has an empty domain"),
+            Self::InvalidDomainName { id, domain } => {
+                write!(
+                    formatter,
+                    "rule {id} has an unsupported domain name: {domain}"
+                )
+            }
             Self::InvalidWildcard { id, domain } => {
                 write!(formatter, "rule {id} has an invalid wildcard: {domain}")
             }
@@ -202,6 +209,12 @@ impl ReferencePolicy {
             let canonical = normalize(&config.domain);
             if canonical.len() > MAX_DOMAIN_BYTES {
                 return Err(PolicyError::DomainTooLong { id: config.id });
+            }
+            if !canonical.is_ascii() {
+                return Err(PolicyError::InvalidDomainName {
+                    id: config.id,
+                    domain: config.domain.clone(),
+                });
             }
             let wildcard = canonical.starts_with("*.");
             let domain = if wildcard {
@@ -583,6 +596,16 @@ mod tests {
         assert!(matches!(
             ReferencePolicy::new(&invalid),
             Err(PolicyError::InvalidWildcard { .. })
+        ));
+    }
+
+    #[test]
+    fn unicode_rule_names_are_rejected_until_idna_policy_exists() {
+        let unicode = rule(9, "münich.example", Action::Drop);
+        assert!(matches!(
+            ReferencePolicy::new(&[unicode]),
+            Err(PolicyError::InvalidDomainName { id: 9, domain })
+                if domain == "münich.example"
         ));
     }
 
