@@ -111,6 +111,8 @@ max_response_bytes = 4096
 max_response_amplification = 4
 # Bound all policy requests, not only upstream exchanges.
 max_inflight_requests = 1024
+# Global queries-per-second ceiling; it also applies to unidentified callers.
+max_queries_per_second = 10000
 # Bound concurrent requests attributed to one client address.
 max_inflight_per_client = 64
 # Temporarily shed a client after repeated rate-limit or response-budget violations.

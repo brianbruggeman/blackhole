@@ -299,6 +299,7 @@ mod runtime {
     }
 
     const MAX_CLIENT_RATE_ENTRIES: usize = 4096;
+    const MAX_GLOBAL_QUERIES_PER_SECOND: usize = 1_000_000;
 
     impl Drop for ClientPermit {
         fn drop(&mut self) {
@@ -338,6 +339,8 @@ mod runtime {
         pub max_response_amplification: usize,
         #[serde(default = "default_max_inflight_requests")]
         pub max_inflight_requests: usize,
+        #[serde(default = "default_max_queries_per_second")]
+        pub max_queries_per_second: usize,
         #[serde(default = "default_max_inflight_per_client")]
         pub max_inflight_per_client: usize,
         #[serde(default = "default_max_queries_per_client_per_second")]
@@ -371,6 +374,7 @@ mod runtime {
                 max_response_bytes: default_max_response_bytes(),
                 max_response_amplification: default_max_response_amplification(),
                 max_inflight_requests: default_max_inflight_requests(),
+                max_queries_per_second: default_max_queries_per_second(),
                 max_inflight_per_client: default_max_inflight_per_client(),
                 max_queries_per_client_per_second: default_max_queries_per_client_per_second(),
                 max_response_bytes_per_client_per_second:
@@ -828,6 +832,10 @@ mod runtime {
     }
     fn default_max_queries_per_client_per_second() -> usize {
         100
+    }
+
+    fn default_max_queries_per_second() -> usize {
+        10_000
     }
     fn default_max_response_bytes_per_client_per_second() -> usize {
         1_048_576
@@ -1417,6 +1425,7 @@ mod runtime {
         request_slots: Arc<Semaphore>,
         client_admission: Arc<Mutex<HashMap<IpAddr, usize>>>,
         client_rates: Arc<Mutex<HashMap<IpAddr, ClientRate>>>,
+        global_rate: Arc<Mutex<ClientRate>>,
         client_response_budgets: Arc<Mutex<HashMap<IpAddr, ClientResponseBudget>>>,
         client_abuse: Arc<Mutex<HashMap<IpAddr, ClientAbuse>>>,
         network_abuse: Arc<Mutex<HashMap<AbuseNetworkKey, ClientAbuse>>>,
@@ -1589,6 +1598,15 @@ mod runtime {
                     reason: "max_inflight_requests must be non-zero".into(),
                 });
             }
+            if config.admission.max_queries_per_second == 0
+                || config.admission.max_queries_per_second > MAX_GLOBAL_QUERIES_PER_SECOND
+            {
+                return Err(policy::PolicyError::InvalidAdmission {
+                    reason: format!(
+                        "max_queries_per_second must be between 1 and {MAX_GLOBAL_QUERIES_PER_SECOND}"
+                    ),
+                });
+            }
             if config.admission.max_inflight_per_client == 0 {
                 return Err(policy::PolicyError::InvalidAdmission {
                     reason: "max_inflight_per_client must be non-zero".into(),
@@ -1696,6 +1714,10 @@ mod runtime {
                 request_slots: Arc::new(Semaphore::new(max_inflight_requests)),
                 client_admission: Arc::new(Mutex::new(HashMap::new())),
                 client_rates: Arc::new(Mutex::new(HashMap::new())),
+                global_rate: Arc::new(Mutex::new(ClientRate {
+                    window_started: Instant::now(),
+                    requests: 0,
+                })),
                 client_response_budgets: Arc::new(Mutex::new(HashMap::new())),
                 client_abuse: Arc::new(Mutex::new(HashMap::new())),
                 network_abuse: Arc::new(Mutex::new(HashMap::new())),
@@ -2243,6 +2265,21 @@ mod runtime {
                     requests: 1,
                 },
             );
+            true
+        }
+
+        fn allow_global_rate(&self) -> bool {
+            let now = Instant::now();
+            let mut rate = self.global_rate.lock().expect("global rate lock");
+            if now.duration_since(rate.window_started) >= Duration::from_secs(1) {
+                rate.window_started = now;
+                rate.requests = 1;
+                return true;
+            }
+            if rate.requests >= self.config.admission.max_queries_per_second {
+                return false;
+            }
+            rate.requests += 1;
             true
         }
 
@@ -2960,6 +2997,11 @@ mod runtime {
                 if self.record_client_abuse(client) {
                     self.observe_failure("client_abuse_breaker_open");
                 }
+                self.observe(Action::Reject);
+                return Ok(DnsPipeReply::typed(200, server_failure_answer()));
+            }
+            if !self.allow_global_rate() {
+                self.observe_failure("global_rate_overflow");
                 self.observe(Action::Reject);
                 return Ok(DnsPipeReply::typed(200, server_failure_answer()));
             }
@@ -4632,6 +4674,14 @@ mod runtime {
             assert!(
                 Policy::new({
                     let mut config = Config::default();
+                    config.admission.max_queries_per_second = 0;
+                    config
+                })
+                .is_err()
+            );
+            assert!(
+                Policy::new({
+                    let mut config = Config::default();
                     config.admission.max_inflight_per_client = 0;
                     config
                 })
@@ -4677,6 +4727,16 @@ mod runtime {
             assert!(policy.allow_client_rate(client));
             assert!(!policy.allow_client_rate(client));
             assert!(policy.allow_client_rate(None));
+        }
+
+        #[test]
+        fn global_rate_limit_sheds_anonymous_and_identified_requests() {
+            let mut config = Config::default();
+            config.admission.max_queries_per_second = 2;
+            let policy = Policy::new(config).expect("valid admission config");
+            assert!(policy.allow_global_rate());
+            assert!(policy.allow_global_rate());
+            assert!(!policy.allow_global_rate());
         }
 
         #[test]

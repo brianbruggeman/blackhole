@@ -63,6 +63,8 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - A bounded network abuse breaker that temporarily sheds the configured IPv4
   or IPv6 client network after repeated aggregate violations, without affecting
   unrelated networks or unidentified callers.
+- A bounded global queries-per-second ceiling that sheds excess traffic,
+  including unidentified callers, as a DDoS stopgap.
 - A bounded per-client encoded-response-byte budget that sheds identified
   clients after their configured one-second egress budget is exhausted,
   without applying a shared identity to unidentified callers.
