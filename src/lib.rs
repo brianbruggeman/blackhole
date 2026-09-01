@@ -683,12 +683,26 @@ mod runtime {
         #[setting(default = false)]
         #[serde(default)]
         pub persist_incidents: bool,
+        /// Disable the global breaker when zero; otherwise open it after this
+        /// many aggregate violations in the configured window.
+        #[setting(default = 0)]
+        #[serde(default)]
+        pub max_global_abuse_violations: usize,
+        #[setting(default = 10)]
+        #[serde(default = "default_global_abuse_window_secs")]
+        pub global_abuse_window_secs: u64,
+        #[setting(default = 30)]
+        #[serde(default = "default_global_abuse_cooldown_secs")]
+        pub global_abuse_cooldown_secs: u64,
     }
 
     impl Default for DdosConfig {
         fn default() -> Self {
             Self {
                 persist_incidents: false,
+                max_global_abuse_violations: 0,
+                global_abuse_window_secs: default_global_abuse_window_secs(),
+                global_abuse_cooldown_secs: default_global_abuse_cooldown_secs(),
             }
         }
     }
@@ -1420,6 +1434,14 @@ mod runtime {
 
     fn default_max_client_abuse_violations() -> usize {
         8
+    }
+
+    fn default_global_abuse_window_secs() -> u64 {
+        10
+    }
+
+    fn default_global_abuse_cooldown_secs() -> u64 {
+        30
     }
 
     fn default_client_abuse_window_secs() -> u64 {
@@ -2340,6 +2362,7 @@ mod runtime {
         global_response_budget: AtomicWindowBudget,
         client_abuse: KeyedWindowBudgetTable,
         network_abuse: KeyedWindowBudgetTable,
+        global_abuse: AtomicWindowBucket,
     }
 
     struct RegexRule {
@@ -2501,6 +2524,8 @@ mod runtime {
             if config.admission.max_client_abuse_violations == 0
                 || config.admission.client_abuse_window_secs == 0
                 || config.admission.client_abuse_cooldown_secs == 0
+                || config.admission.ddos.global_abuse_window_secs == 0
+                || config.admission.ddos.global_abuse_cooldown_secs == 0
             {
                 return Err(policy::PolicyError::InvalidAdmission {
                     reason: "client abuse limits must be non-zero".into(),
@@ -2682,6 +2707,7 @@ mod runtime {
                 global_response_budget: AtomicWindowBudget::new(),
                 client_abuse: KeyedWindowBudgetTable::new(),
                 network_abuse: KeyedWindowBudgetTable::new(),
+                global_abuse: AtomicWindowBucket::new(),
             };
             if let Some(upstream) = policy.config.upstream.as_ref() {
                 policy.validate_upstream(upstream)?;
@@ -2769,6 +2795,8 @@ mod runtime {
                 || admission.max_client_abuse_violations == 0
                 || admission.client_abuse_window_secs == 0
                 || admission.client_abuse_cooldown_secs == 0
+                || admission.ddos.global_abuse_window_secs == 0
+                || admission.ddos.global_abuse_cooldown_secs == 0
             {
                 return Err(policy::PolicyError::InvalidAdmission {
                     reason: "admission limits are invalid or zero".into(),
@@ -4212,6 +4240,35 @@ mod runtime {
                 .allow(self.breaker_epoch, admission.max_queries_per_second, 1)
         }
 
+        fn allow_global_abuse(&self) -> bool {
+            let ddos = &self.admission_config().ddos;
+            if ddos.max_global_abuse_violations == 0 {
+                return true;
+            }
+            self.global_abuse.abuse_allows(
+                self.breaker_epoch,
+                Duration::from_secs(ddos.global_abuse_window_secs),
+            )
+        }
+
+        pub(crate) fn record_global_abuse(&self, cause: &'static str) -> bool {
+            let ddos = &self.admission_config().ddos;
+            if ddos.max_global_abuse_violations == 0 {
+                return false;
+            }
+            let opened = self.global_abuse.record_abuse(
+                self.breaker_epoch,
+                Duration::from_secs(ddos.global_abuse_window_secs),
+                Duration::from_secs(ddos.global_abuse_cooldown_secs),
+                ddos.max_global_abuse_violations,
+            );
+            if opened {
+                self.observe_failure("global_abuse_breaker_open");
+                self.observe_failure(cause);
+            }
+            opened
+        }
+
         /// Bound encoded DNS egress per identified client over a one-second
         /// window. This is deliberately enforced at the listener after
         /// encoding, so the budget measures actual wire bytes rather than an
@@ -4894,6 +4951,9 @@ mod runtime {
                 "network_abuse_cooldown_secs": admission.network_abuse_cooldown_secs,
                 "network_abuse_ipv4_prefix": admission.network_abuse_ipv4_prefix,
                 "network_abuse_ipv6_prefix": admission.network_abuse_ipv6_prefix,
+                "max_global_abuse_violations": admission.ddos.max_global_abuse_violations,
+                "global_abuse_window_secs": admission.ddos.global_abuse_window_secs,
+                "global_abuse_cooldown_secs": admission.ddos.global_abuse_cooldown_secs,
             })
             .to_string()
         }
@@ -5489,8 +5549,14 @@ mod runtime {
                 self.observe(Action::Reject);
                 return Ok(DnsPipeReply::typed(200, server_failure_answer()));
             }
+            if !self.allow_global_abuse() {
+                self.observe_failure("global_abuse_breaker_open");
+                self.observe(Action::Reject);
+                return Ok(DnsPipeReply::typed(200, server_failure_answer()));
+            }
             if !self.allow_global_rate() {
                 self.observe_failure("global_rate_overflow");
+                self.record_global_abuse("global_rate_overflow");
                 self.observe(Action::Reject);
                 return Ok(DnsPipeReply::typed(200, server_failure_answer()));
             }
@@ -8010,6 +8076,21 @@ mod runtime {
             assert!(policy.allow_global_rate());
             assert!(policy.allow_global_rate());
             assert!(!policy.allow_global_rate());
+        }
+
+        #[test]
+        fn global_abuse_breaker_sheds_all_callers_after_threshold() {
+            let mut config = Config::default();
+            config.admission.ddos.max_global_abuse_violations = 2;
+            config.admission.ddos.global_abuse_window_secs = 60;
+            config.admission.ddos.global_abuse_cooldown_secs = 60;
+            let policy = Policy::new(config).expect("valid global abuse config");
+            assert!(policy.allow_global_abuse());
+            assert!(!policy.record_global_abuse("global_rate_overflow"));
+            assert!(policy.allow_global_abuse());
+            assert!(policy.record_global_abuse("global_response_budget"));
+            assert!(!policy.allow_global_abuse());
+            assert!(!policy.allow_global_abuse());
         }
 
         #[test]

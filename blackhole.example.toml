@@ -154,6 +154,11 @@ network_abuse_ipv6_prefix = 64
 # sink. Requires privacy.query_recording_path to be configured.
 [admission.ddos]
 persist_incidents = false
+# Set non-zero to shed all callers after repeated aggregate rate/egress
+# violations. Zero disables the global abuse breaker.
+max_global_abuse_violations = 0
+global_abuse_window_secs = 10
+global_abuse_cooldown_secs = 30
 # Bound encoded DNS response bytes sent to one identified client per second.
 max_response_bytes_per_client_per_second = 1048576
 # Bound encoded DNS response bytes sent to one identified /24 or /64 network
