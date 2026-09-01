@@ -285,33 +285,37 @@ mod runtime {
         requests: usize,
     }
 
-    /// Lock-free global fixed-window counter. The upper half stores elapsed
-    /// seconds since the policy was created and the lower half stores the
-    /// requests admitted in that window. A single CAS makes rollover and the
-    /// first request of the new window one decision.
-    struct GlobalRate(AtomicU64);
+    /// Lock-free fixed-window budget. The upper half stores elapsed seconds
+    /// since the policy was created and the lower half stores the admitted
+    /// amount in that window. A single CAS makes rollover and the first
+    /// admission of the new window one decision.
+    struct AtomicWindowBudget(AtomicU64);
 
-    impl GlobalRate {
+    impl AtomicWindowBudget {
         fn new() -> Self {
             Self(AtomicU64::new(0))
         }
 
-        fn allow(&self, epoch: Instant, limit: usize) -> bool {
-            if limit == 0 {
+        fn allow(&self, epoch: Instant, limit: usize, amount: usize) -> bool {
+            if limit == 0 || amount > limit {
                 return false;
             }
             let window = epoch.elapsed().as_secs() & u32::MAX as u64;
             let limit = limit.min(u32::MAX as usize) as u64;
+            let amount = amount.min(u32::MAX as usize) as u64;
+            if amount > limit {
+                return false;
+            }
             loop {
                 let current = self.0.load(Ordering::Acquire);
                 let current_window = current >> 32;
                 let current_count = current & u32::MAX as u64;
                 let next = if current_window != window {
-                    (window << 32) | 1
-                } else if current_count >= limit {
+                    (window << 32) | amount
+                } else if current_count.saturating_add(amount) > limit {
                     return false;
                 } else {
-                    current + 1
+                    current + amount
                 };
                 if self
                     .0
@@ -1966,10 +1970,10 @@ mod runtime {
         request_slots: Arc<Semaphore>,
         client_admission: Arc<Mutex<HashMap<IpAddr, usize>>>,
         client_rates: Arc<Mutex<HashMap<IpAddr, ClientRate>>>,
-        global_rate: GlobalRate,
+        global_rate: AtomicWindowBudget,
         client_response_budgets: Arc<Mutex<HashMap<IpAddr, ClientResponseBudget>>>,
         network_response_budgets: Arc<Mutex<HashMap<AbuseNetworkKey, ClientResponseBudget>>>,
-        global_response_budget: Arc<Mutex<ClientResponseBudget>>,
+        global_response_budget: AtomicWindowBudget,
         client_abuse: Arc<Mutex<HashMap<IpAddr, ClientAbuse>>>,
         network_abuse: Arc<Mutex<HashMap<AbuseNetworkKey, ClientAbuse>>>,
     }
@@ -2335,13 +2339,10 @@ mod runtime {
                 request_slots: Arc::new(Semaphore::new(max_inflight_requests)),
                 client_admission: Arc::new(Mutex::new(HashMap::new())),
                 client_rates: Arc::new(Mutex::new(HashMap::new())),
-                global_rate: GlobalRate::new(),
+                global_rate: AtomicWindowBudget::new(),
                 client_response_budgets: Arc::new(Mutex::new(HashMap::new())),
                 network_response_budgets: Arc::new(Mutex::new(HashMap::new())),
-                global_response_budget: Arc::new(Mutex::new(ClientResponseBudget {
-                    window_started: Instant::now(),
-                    bytes: 0,
-                })),
+                global_response_budget: AtomicWindowBudget::new(),
                 client_abuse: Arc::new(Mutex::new(HashMap::new())),
                 network_abuse: Arc::new(Mutex::new(HashMap::new())),
             };
@@ -3713,7 +3714,7 @@ mod runtime {
         fn allow_global_rate(&self) -> bool {
             let admission = self.admission_config();
             self.global_rate
-                .allow(self.breaker_epoch, admission.max_queries_per_second)
+                .allow(self.breaker_epoch, admission.max_queries_per_second, 1)
         }
 
         /// Bound encoded DNS egress per identified client over a one-second
@@ -3774,25 +3775,9 @@ mod runtime {
         /// identify a client, preventing aggregate amplification from
         /// bypassing identity-scoped limits.
         pub(crate) fn allow_global_response_bytes(&self, bytes: usize) -> bool {
-            let now = Instant::now();
             let limit = self.admission_config().max_response_bytes_per_second;
-            if bytes > limit {
-                return false;
-            }
-            let mut budget = self
-                .global_response_budget
-                .lock()
-                .expect("global response budget lock");
-            if now.duration_since(budget.window_started) >= Duration::from_secs(1) {
-                budget.window_started = now;
-                budget.bytes = bytes;
-                return true;
-            }
-            if budget.bytes.saturating_add(bytes) > limit {
-                return false;
-            }
-            budget.bytes = budget.bytes.saturating_add(bytes);
-            true
+            self.global_response_budget
+                .allow(self.breaker_epoch, limit, bytes)
         }
 
         /// Bound encoded DNS egress for an identified client network over a
