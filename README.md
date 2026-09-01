@@ -199,3 +199,15 @@ Validate the installed configuration with
 `blackhole --check /usr/local/etc/blackhole/blackhole.toml` before running
 `launchctl bootstrap system` on the plist. The launch daemon neither installs
 nor removes PF rules.
+
+After building the release binary, the checked-in launchd installer can create
+the `_blackhole` account, install the binary/configuration/plist with bounded
+ownership, validate the configuration and plist, and roll back an interrupted
+upgrade:
+
+```sh
+cargo build --release --features std --bin blackhole
+sudo BLACKHOLE_BINARY="$PWD/target/release/blackhole" \
+  BLACKHOLE_CONFIG="$PWD/blackhole.example.toml" \
+  ./deploy/launchd/install.sh
+```

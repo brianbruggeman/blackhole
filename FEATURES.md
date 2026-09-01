@@ -199,6 +199,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   a macOS launchd service runs directly as a dedicated unprivileged account
   with bounded process resources and leaves PF capture separately authorized;
   firewall capture remains a separate opt-in operation.
+- Transactional Linux systemd and macOS launchd installers validate release
+  inputs, preserve ownership, and roll back installed service files when an
+  upgrade fails; launchd service state is restored when applicable.
 - Linux builds expose an explicit `nft` command capability; macOS builds
   expose the corresponding `pfctl` capability without including either
   privileged backend in the policy core.
