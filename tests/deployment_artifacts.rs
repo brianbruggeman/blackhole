@@ -7,6 +7,7 @@ const SYSTEMD_UNIT: &str = "deploy/systemd/blackhole.service";
 const SYSTEMD_TMPFILES: &str = "deploy/systemd/blackhole.conf";
 const SYSTEMD_INSTALLER: &str = "deploy/systemd/install.sh";
 const LAUNCHD_INSTALLER: &str = "deploy/launchd/install.sh";
+const PACKAGE_BUILDER: &str = "deploy/package/build.sh";
 
 #[test]
 fn launchd_service_is_unprivileged_and_direct() {
@@ -126,11 +127,33 @@ fn launchd_installer_is_transactional_and_platform_native() {
 #[cfg(unix)]
 #[test]
 fn installers_are_executable() {
-    for path in [SYSTEMD_INSTALLER, LAUNCHD_INSTALLER] {
+    for path in [SYSTEMD_INSTALLER, LAUNCHD_INSTALLER, PACKAGE_BUILDER] {
         let mode = fs::metadata(path)
             .unwrap_or_else(|error| panic!("read metadata for {path}: {error}"))
             .permissions()
             .mode();
         assert_ne!(mode & 0o111, 0, "installer is not executable: {path}");
     }
+}
+
+#[test]
+fn package_builder_contains_provenance_and_bounded_inputs() {
+    let builder = fs::read_to_string(PACKAGE_BUILDER).expect("read package builder");
+    for required in [
+        "set -eu",
+        "usage: $0 BINARY OUTPUT_DIR",
+        "mktemp -d",
+        "PROVENANCE.txt",
+        "SHA256SUMS",
+        "blackhole.example.toml",
+        "blackhole.service",
+        "com.brianbruggeman.blackhole.plist",
+        "tar -C",
+    ] {
+        assert!(
+            builder.contains(required),
+            "missing package step: {required}"
+        );
+    }
+    assert!(!builder.contains("rm -rf /"));
 }

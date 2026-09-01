@@ -180,6 +180,10 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   live policy bundle and provides authenticated blocklist reload and complete
   full-configuration publication controls, contains no packet payloads, and uses
   the existing Proxima HTTP pipe.
+- `deploy/package/build.sh` creates a bounded release archive from an explicit
+  executable and output directory, including configuration, service assets,
+  source/toolchain/lock provenance, and a SHA-256 manifest. Native package
+  manager artifacts and host upgrade automation remain outside this artifact.
 - Authenticated bounded `GET /admission/status` exposes configured query,
   response, amplification, and abuse limits without exposing counters, client
   identities, credentials, or payloads.

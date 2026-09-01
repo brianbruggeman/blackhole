@@ -279,3 +279,15 @@ sudo BLACKHOLE_BINARY="$PWD/target/release/blackhole" \
   BLACKHOLE_CONFIG="$PWD/blackhole.example.toml" \
   ./deploy/launchd/install.sh
 ```
+
+For a reproducible release bundle, build the binary and run the checked-in
+packager with explicit paths:
+
+```sh
+cargo build --release --features std --bin blackhole
+deploy/package/build.sh target/release/blackhole dist
+```
+
+The resulting archive contains the binary, example configuration, systemd and
+launchd assets, `PROVENANCE.txt`, and `SHA256SUMS`. Native package-manager
+artifacts and host upgrade automation are not implied by this bundle.
