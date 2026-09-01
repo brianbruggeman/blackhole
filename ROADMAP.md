@@ -45,8 +45,6 @@ below are future capabilities, grouped by the dependency layer they extend.
 
 ## Incumbent parity and extensions
 
-- Add bounded connection/stream reuse around the current opt-in Proxima QUIC
-  upstream adapter; keep the default Prime build QUIC-free.
 - Add bounded query logs and privacy controls for retention, redaction, access,
   and deletion.
 - Extend the current bounded authenticated status page into a full optional
