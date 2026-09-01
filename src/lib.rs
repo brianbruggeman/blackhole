@@ -5394,6 +5394,14 @@ mod runtime {
             .to_string()
         }
 
+        pub(crate) fn clear_stats(&self) -> u64 {
+            let mut removed = 0_u64;
+            for count in &self.decision_counts {
+                removed = removed.saturating_add(count.swap(0, Ordering::Relaxed));
+            }
+            removed
+        }
+
         /// Return bounded admission and amplification limits without exposing
         /// client keys, counters, or other request metadata.
         pub(crate) fn admin_admission_status(&self) -> String {

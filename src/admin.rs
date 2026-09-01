@@ -85,7 +85,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <style>body{font:15px system-ui,sans-serif;max-width:70rem;margin:2rem auto;padding:0 1rem}pre{background:#f3f3f3;padding:1rem;overflow:auto}button{padding:.4rem .7rem}</style>
 <h1>Blackhole DNS</h1>
 <p>Authenticated operator control plane. DNS names and packet payloads are not shown here.</p>
-<p><button id="clear-logs">Clear privacy log</button> <button id="clear-cache">Clear DNS cache</button> <button id="clear-abuse">Clear temporary abuse state</button> <button id="reload-blocklists">Reload blocklists</button> <button id="reload-country">Reload country map</button> <button id="reload-admission">Reload admission JSON</button> <button id="reload-bundle">Publish full config</button></p>
+<p><button id="clear-logs">Clear privacy log</button> <button id="clear-stats">Clear decision statistics</button> <button id="clear-cache">Clear DNS cache</button> <button id="clear-abuse">Clear temporary abuse state</button> <button id="reload-blocklists">Reload blocklists</button> <button id="reload-country">Reload country map</button> <button id="reload-admission">Reload admission JSON</button> <button id="reload-bundle">Publish full config</button></p>
 <p id="operation-status" role="status"></p>
 <h2>Status</h2><pre id="status">loading…</pre>
 <h2>Decision statistics</h2><pre id="stats">loading…</pre>
@@ -147,6 +147,7 @@ const operate = (path, options) => fetch(path, options).then(async response => {
 }).catch(error => { document.querySelector('#operation-status').textContent = `${path}: ${error.message}`; throw error; });
 const refresh = () => Promise.all([load('/status','#status'), load('/stats','#stats'), load('/admission/status','#admission-status'), load('/abuse/status','#abuse-status'), load('/policy-bundle','#policy-bundle'), load('/blocklists','#blocklists'), load('/country/status','#country-status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/client-identities','#identities'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
 document.querySelector('#clear-logs').onclick = () => operate('/logs/clear', {method:'POST'}).then(refresh);
+document.querySelector('#clear-stats').onclick = () => operate('/stats/clear', {method:'POST'}).then(refresh);
 document.querySelector('#clear-cache').onclick = () => operate('/cache/clear', {method:'POST'}).then(refresh);
 document.querySelector('#clear-abuse').onclick = () => operate('/abuse/clear', {method:'POST'}).then(refresh);
 document.querySelector('#reload-blocklists').onclick = () => operate('/reload/blocklists', {method:'POST'}).then(refresh);
@@ -198,6 +199,10 @@ impl SendPipe for AdminHandler {
             ("GET", "/health") => Ok(Response::ok("{\"status\":\"ok\"}")),
             ("GET", "/status") => Ok(Response::ok(self.policy.admin_status())),
             ("GET", "/stats") => Ok(Response::ok(self.policy.admin_stats())),
+            ("POST", "/stats/clear") => Ok(Response::ok(format!(
+                "{{\"status\":\"cleared\",\"entries\":{}}}",
+                self.policy.clear_stats()
+            ))),
             ("GET", "/admission/status") => Ok(Response::ok(self.policy.admin_admission_status())),
             ("GET", "/abuse/status") => Ok(Response::ok(self.policy.admin_abuse_status())),
             ("POST", "/abuse/clear") => Ok(Response::ok(format!(
@@ -854,6 +859,7 @@ impl SendPipe for AdminHandler {
                 | "/health"
                 | "/status"
                 | "/stats"
+                | "/stats/clear"
                 | "/admission/status"
                 | "/abuse/status"
                 | "/abuse/clear"
@@ -962,6 +968,11 @@ mod tests {
             ui.payload
                 .windows(b"/stats".len())
                 .any(|window| window == b"/stats")
+        );
+        assert!(
+            ui.payload
+                .windows(b"/stats/clear".len())
+                .any(|window| window == b"/stats/clear")
         );
         assert!(
             ui.payload
@@ -1074,6 +1085,13 @@ mod tests {
         let stats: serde_json::Value = serde_json::from_slice(&stats.payload).expect("stats JSON");
         assert_eq!(stats["total"], 0);
         assert_eq!(stats["actions"]["pass"], 0);
+        let cleared =
+            block_on(handler.call(request("POST", "/stats/clear"))).expect("stats clear response");
+        assert_eq!(cleared.status, 200);
+        assert_eq!(
+            cleared.payload,
+            Bytes::from_static(b"{\"status\":\"cleared\",\"entries\":0}")
+        );
         let policy_status =
             block_on(handler.call(request("GET", "/policy/status"))).expect("policy status");
         assert_eq!(policy_status.status, 200);
