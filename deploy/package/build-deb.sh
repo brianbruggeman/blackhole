@@ -71,6 +71,9 @@ Maintainer: Brian Bruggeman
 Description: policy-driven DNS sinkhole and honeypot
  Blackhole is a privacy-first DNS resolver with bounded policy and forwarding.
 EOF
+cat > "$staging/control/conffiles" <<'EOF'
+/etc/blackhole/blackhole.toml
+EOF
 cat > "$staging/control/postinst" <<'EOF'
 #!/bin/sh
 set -eu
@@ -142,7 +145,7 @@ chmod 0755 "$staging/control/postinst" "$staging/control/prerm"
 
 tar -C "$staging/control" --sort=name --mtime='UTC 1970-01-01' \
     --owner=0 --group=0 --numeric-owner -czf "$staging/control.tar.gz" \
-    control postinst prerm
+    conffiles control postinst prerm
 tar -C "$staging/data" --sort=name --mtime='UTC 1970-01-01' \
     --owner=0 --group=0 --numeric-owner -czf "$staging/data.tar.gz" .
 printf '2.0\n' > "$staging/debian-binary"

@@ -210,6 +210,8 @@ fn deb_builder_contains_native_package_contract() {
         "blackhole.conf",
         "cat > \"$staging/control/postinst\"",
         "cat > \"$staging/control/prerm\"",
+        "cat > \"$staging/control/conffiles\"",
+        "/etc/blackhole/blackhole.toml",
         "systemctl enable --now blackhole.service",
         "systemctl disable --now blackhole.service",
         "ps -p 1 -o comm=",
@@ -240,7 +242,8 @@ fn deb_smoke_exercises_a_disposable_root_transaction() {
     let script = fs::read_to_string(DEB_SMOKE).expect("read Debian package smoke script");
     assert!(script.starts_with("#!/bin/sh\nset -eu\n"));
     assert!(script.contains("dpkg --root=\"$root\" --unpack"));
-    assert!(script.matches("dpkg --root=\"$root\" --unpack").count() >= 2);
+    assert!(script.matches("--unpack \"$package\"").count() >= 2);
+    assert!(script.contains("--force-confold --unpack"));
     assert!(script.contains("dpkg-query --root=\"$root\""));
     assert!(script.contains("/var/lib/blackhole"));
 }

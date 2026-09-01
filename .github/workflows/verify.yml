@@ -55,6 +55,8 @@ jobs:
           ar p dist/blackhole_*.deb data.tar.gz | tar -xzf - -C package-check/data
           test -x package-check/control/postinst
           test -x package-check/control/prerm
+          test -f package-check/control/conffiles
+          grep -Fx '/etc/blackhole/blackhole.toml' package-check/control/conffiles
           test -x package-check/data/usr/local/bin/blackhole
           test -f package-check/data/etc/blackhole/blackhole.toml
           test -f package-check/data/etc/systemd/system/blackhole.service

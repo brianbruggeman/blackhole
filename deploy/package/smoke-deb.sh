@@ -35,10 +35,15 @@ cp /etc/passwd /etc/group /etc/shadow "$root/etc/"
 dpkg --root="$root" --unpack "$package"
 dpkg --root="$root" --configure blackhole
 
+# A local operator configuration is a Debian conffile and must survive an
+# upgrade transaction that carries a newer packaged default.
+printf 'operator-policy = "retain-me"\n' > "$root/etc/blackhole/blackhole.toml"
+
 # A second real transaction catches non-idempotent maintainer scripts and
 # exercises the package reapplication path used by an upgrade.
-dpkg --root="$root" --unpack "$package"
+dpkg --root="$root" --force-confold --unpack "$package"
 dpkg --root="$root" --configure blackhole
+grep -Fx 'operator-policy = "retain-me"' "$root/etc/blackhole/blackhole.toml" >/dev/null
 
 dpkg-query --root="$root" -W -f='${Status}\n' blackhole | grep -Fx \
     'install ok installed' >/dev/null
