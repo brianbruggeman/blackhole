@@ -118,6 +118,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - The authenticated control plane can atomically upsert domain rules by stable
   ID, preserving unspecified rules and rejecting duplicate update IDs without
   publication.
+- The authenticated control plane can atomically upsert and remove regex rules
+  by stable ID, preserving unspecified rules and rejecting invalid or unknown
+  updates without publication.
 - The authenticated admin control plane includes a bounded status UI for
   status, privacy status, rule metadata, and privacy-log inspection/clearing;
   it includes an authenticated blocklist reload control and contains no

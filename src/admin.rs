@@ -401,6 +401,50 @@ impl SendPipe for AdminHandler {
                     ))),
                 }
             }
+            ("POST", "/reload/regex/upsert") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let rules = match serde_json::from_slice::<Vec<RegexRuleConfig>>(&request.payload) {
+                    Ok(rules) => rules,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                match self.policy.upsert_regex_rules(&rules) {
+                    Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
+            ("POST", "/reload/regex/remove") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let ids = match serde_json::from_slice::<Vec<u32>>(&request.payload) {
+                    Ok(ids) => ids,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                match self.policy.remove_regex_rules(&ids) {
+                    Ok(_) => Ok(Response::ok("{\"status\":\"removed\"}")),
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
             (
                 _,
                 "/"
@@ -427,7 +471,9 @@ impl SendPipe for AdminHandler {
                 | "/reload/policy/add"
                 | "/reload/policy/upsert"
                 | "/reload/policy/remove"
-                | "/reload/regex",
+                | "/reload/regex"
+                | "/reload/regex/upsert"
+                | "/reload/regex/remove",
             ) => Ok(Response::new(405)),
             _ => Ok(Response::not_found()),
         }
@@ -1130,6 +1176,83 @@ mod tests {
         let response = block_on(handler.call(clear)).expect("clear response");
         assert_eq!(response.status, 200);
         assert_eq!(policy.action_for_view(query), crate::Action::Pass);
+    }
+
+    #[test]
+    fn regex_upsert_and_removal_are_atomic_by_stable_id() {
+        let mut config = crate::Config::default();
+        config.policy.regex_rules = vec![RegexRuleConfig {
+            id: 90,
+            pattern: "^old\\.example$".into(),
+            action: crate::Action::Drop,
+            priority: 0,
+            qtype: None,
+            qclass: None,
+            client: None,
+            client_cidrs: Vec::new(),
+        }];
+        let policy = Arc::new(Policy::new(config).expect("valid regex policy"));
+        let handler = AdminHandler::new(Arc::clone(&policy));
+        let update = Request::builder()
+            .method("POST")
+            .path("/reload/regex/upsert")
+            .payload(
+                r#"[{"id":90,"pattern":"^new\\.example$","action":"nxdomain"},{"id":91,"pattern":"^guest\\.example$","action":"reject"}]"#,
+            )
+            .build()
+            .expect("regex upsert request");
+        assert_eq!(
+            block_on(handler.call(update))
+                .expect("upsert response")
+                .status,
+            200
+        );
+
+        let mut wire = vec![0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0];
+        wire.extend_from_slice(b"\x03new\x07example\0\0\x01\0\x01");
+        let query = crate::query::QueryView::parse(&wire).expect("new query");
+        assert_eq!(policy.action_for_view(query), crate::Action::Nxdomain);
+
+        let invalid = Request::builder()
+            .method("POST")
+            .path("/reload/regex/upsert")
+            .payload(r#"[{"id":90,"pattern":"[","action":"drop"}]"#)
+            .build()
+            .expect("invalid regex upsert request");
+        assert_eq!(
+            block_on(handler.call(invalid))
+                .expect("invalid response")
+                .status,
+            422
+        );
+        assert_eq!(policy.action_for_view(query), crate::Action::Nxdomain);
+
+        let remove = Request::builder()
+            .method("POST")
+            .path("/reload/regex/remove")
+            .payload("[90]")
+            .build()
+            .expect("regex removal request");
+        assert_eq!(
+            block_on(handler.call(remove))
+                .expect("removal response")
+                .status,
+            200
+        );
+        assert_eq!(policy.action_for_view(query), crate::Action::Pass);
+
+        let unknown = Request::builder()
+            .method("POST")
+            .path("/reload/regex/remove")
+            .payload("[999]")
+            .build()
+            .expect("unknown removal request");
+        assert_eq!(
+            block_on(handler.call(unknown))
+                .expect("unknown response")
+                .status,
+            422
+        );
     }
 
     #[test]

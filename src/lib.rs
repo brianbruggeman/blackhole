@@ -2649,6 +2649,100 @@ mod runtime {
             Ok(ReloadState::Published)
         }
 
+        /// Atomically replace or add regex rules by stable ID. Existing IDs
+        /// are edited in place; new IDs are appended. A failed compilation
+        /// leaves the previous regex generation published.
+        pub fn upsert_regex_rules(
+            &self,
+            updates: &[RegexRuleConfig],
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
+            let started = Instant::now();
+            if updates.is_empty() {
+                return Err(policy::PolicyError::InvalidProfile {
+                    name: "<regex-upsert>".into(),
+                    reason: "at least one regex rule is required".into(),
+                });
+            }
+            let mut seen = BTreeSet::new();
+            for rule in updates {
+                if !seen.insert(rule.id) {
+                    return Err(policy::PolicyError::DuplicateRule { id: rule.id });
+                }
+            }
+            let current = self.regex_rule_configs();
+            let mut next = current;
+            for update in updates {
+                if let Some(existing) = next.iter_mut().find(|rule| rule.id == update.id) {
+                    *existing = update.clone();
+                } else {
+                    next.push(update.clone());
+                }
+            }
+            self.publish_regex_rules_locked(&next, "regex_upsert", started)
+        }
+
+        /// Remove regex rules by stable ID. Unknown IDs fail without changing
+        /// the published regex generation.
+        pub fn remove_regex_rules(&self, ids: &[u32]) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
+            let started = Instant::now();
+            if ids.is_empty() {
+                return Err(policy::PolicyError::InvalidProfile {
+                    name: "<regex-removal>".into(),
+                    reason: "at least one regex rule ID is required".into(),
+                });
+            }
+            let requested = ids.iter().copied().collect::<BTreeSet<_>>();
+            let current = self.regex_rule_configs();
+            let mut next = current.clone();
+            next.retain(|rule| !requested.contains(&rule.id));
+            if next.len() == current.len() {
+                return Err(policy::PolicyError::InvalidProfile {
+                    name: "<regex-removal>".into(),
+                    reason: "no requested regex rule ID exists".into(),
+                });
+            }
+            self.publish_regex_rules_locked(&next, "regex_remove", started)
+        }
+
+        fn regex_rule_configs(&self) -> Vec<RegexRuleConfig> {
+            self.regex_rules
+                .lock()
+                .expect("regex rules lock")
+                .iter()
+                .map(|rule| RegexRuleConfig {
+                    id: rule.id,
+                    pattern: rule.pattern.as_str().to_owned(),
+                    action: rule.action,
+                    priority: rule.priority,
+                    qtype: rule.qtype,
+                    qclass: rule.qclass,
+                    client: rule.client,
+                    client_cidrs: rule.client_cidrs.clone(),
+                })
+                .collect()
+        }
+
+        fn publish_regex_rules_locked(
+            &self,
+            configs: &[RegexRuleConfig],
+            reload_kind: &'static str,
+            started: Instant,
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let rule_ids = self.reference.rule_ids();
+            let compiled = compile_regex_rules(configs, rule_ids)?;
+            *self.regex_rules.lock().expect("regex rules lock") = compiled;
+            self.rules_configured.store(
+                self.domain_rules_configured.load(Ordering::Acquire) || !configs.is_empty(),
+                Ordering::Release,
+            );
+            self.cache.lock().expect("cache lock").clear();
+            self.policy_generation.fetch_add(1, Ordering::Relaxed);
+            self.observe_reload_latency(reload_kind, started);
+            Ok(ReloadState::Published)
+        }
+
         /// Attach Proxima's existing bounded DNS upstream pipe. Forwarding is
         /// deliberately opt-in; a `Forward` rule without an attached upstream is
         /// fail-closed at the transport edge.

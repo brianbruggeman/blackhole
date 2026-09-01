@@ -22,8 +22,8 @@ below are future capabilities, grouped by the dependency layer they extend.
 
 - Extend the authenticated blocklist and policy administration with richer
   management operations beyond the current bounded background blocklist
-  reload/source replacement, atomic domain-rule append/upsert/removal, read-only status, and
-  complete-snapshot reload routes.
+  reload/source replacement, atomic domain/regex-rule append/upsert/removal,
+  read-only status, and complete-snapshot reload routes.
 - Extend the authenticated profile and client-group metadata views with richer
   per-client identity and network policy controls beyond the current atomic
   profile replacement/upsert/removal and client-group upsert/removal
