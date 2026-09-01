@@ -41,13 +41,11 @@ below are future capabilities, grouped by the dependency layer they extend.
 
 ## Interception and deployment
 
-- Add privileged Linux nftables and macOS packet-filter smoke evidence for the
-  opt-in capture configuration and complete original-destination integration.
-- Keep client and original-destination metadata adapter-owned.
-- Support unprivileged DNS operation with privilege isolated to capture setup.
+- Complete original-destination integration for the opt-in capture
+  configuration.
 - Extend the current transactional systemd and launchd installers with
-  host-installed upgrade/rollback verification for the native package and
-  archive artifacts.
+  host-installed upgrade/rollback verification for the native package; the
+  archive installer and disposable-root transaction are already covered.
 
 ## Incumbent parity and extensions
 
