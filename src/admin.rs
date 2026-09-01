@@ -80,7 +80,8 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <style>body{font:15px system-ui,sans-serif;max-width:70rem;margin:2rem auto;padding:0 1rem}pre{background:#f3f3f3;padding:1rem;overflow:auto}button{padding:.4rem .7rem}</style>
 <h1>Blackhole DNS</h1>
 <p>Authenticated operator control plane. DNS names and packet payloads are not shown here.</p>
-<p><button id="clear-logs">Clear privacy log</button> <button id="clear-abuse">Clear temporary abuse state</button> <button id="reload-blocklists">Reload blocklists</button> <button id="reload-admission">Reload admission JSON</button> <button id="reload-bundle">Publish full config</button></p>
+<p><button id="clear-logs">Clear privacy log</button> <button id="clear-abuse">Clear temporary abuse state</button> <button id="reload-blocklists">Reload blocklists</button> <button id="reload-country">Reload country map</button> <button id="reload-admission">Reload admission JSON</button> <button id="reload-bundle">Publish full config</button></p>
+<p id="operation-status" role="status"></p>
 <h2>Status</h2><pre id="status">loading…</pre>
 <h2>Admission limits</h2><textarea id="admission-config" rows="16" cols="80">loading…</textarea><pre id="admission-status">loading…</pre>
 <h2>Adaptive abuse controls</h2><pre id="abuse-status">loading…</pre>
@@ -99,12 +100,19 @@ const load = (path, target) => fetch(path).then(response => response.json()).the
   else document.querySelector(target).textContent = JSON.stringify(value, null, 2);
   if (path === '/admission/status') document.querySelector('#admission-config').value = JSON.stringify(value, null, 2);
 });
+const operate = (path, options) => fetch(path, options).then(async response => {
+  const value = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(value.message || `HTTP ${response.status}`);
+  document.querySelector('#operation-status').textContent = `${path}: ${value.status || 'ok'}`;
+  return value;
+}).catch(error => { document.querySelector('#operation-status').textContent = `${path}: ${error.message}`; throw error; });
 const refresh = () => Promise.all([load('/status','#status'), load('/admission/status','#admission-status'), load('/abuse/status','#abuse-status'), load('/policy-bundle','#policy-bundle'), load('/country/status','#country-status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/client-identities','#identities'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
-document.querySelector('#clear-logs').onclick = () => fetch('/logs/clear', {method:'POST'}).then(refresh);
-document.querySelector('#clear-abuse').onclick = () => fetch('/abuse/clear', {method:'POST'}).then(refresh);
-document.querySelector('#reload-blocklists').onclick = () => fetch('/reload/blocklists', {method:'POST'}).then(refresh);
-document.querySelector('#reload-admission').onclick = () => fetch('/reload/admission', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#admission-config').value}).then(refresh);
-document.querySelector('#reload-bundle').onclick = () => fetch('/reload/config', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#policy-bundle').value}).then(refresh);
+document.querySelector('#clear-logs').onclick = () => operate('/logs/clear', {method:'POST'}).then(refresh);
+document.querySelector('#clear-abuse').onclick = () => operate('/abuse/clear', {method:'POST'}).then(refresh);
+document.querySelector('#reload-blocklists').onclick = () => operate('/reload/blocklists', {method:'POST'}).then(refresh);
+document.querySelector('#reload-country').onclick = () => operate('/reload/country', {method:'POST'}).then(refresh);
+document.querySelector('#reload-admission').onclick = () => operate('/reload/admission', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#admission-config').value}).then(refresh);
+document.querySelector('#reload-bundle').onclick = () => operate('/reload/config', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#policy-bundle').value}).then(refresh);
 refresh();
 </script>
 "#;
@@ -871,6 +879,21 @@ mod tests {
             ui.payload
                 .windows(b"/reload/blocklists".len())
                 .any(|window| window == b"/reload/blocklists")
+        );
+        assert!(
+            ui.payload
+                .windows(b"reload-country".len())
+                .any(|window| window == b"reload-country")
+        );
+        assert!(
+            ui.payload
+                .windows(b"/reload/country".len())
+                .any(|window| window == b"/reload/country")
+        );
+        assert!(
+            ui.payload
+                .windows(b"operation-status".len())
+                .any(|window| window == b"operation-status")
         );
         assert!(
             ui.payload
