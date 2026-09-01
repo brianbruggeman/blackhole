@@ -5533,7 +5533,7 @@ mod runtime {
             }
         }
 
-        fn observe(&self, action: Action) {
+        pub(crate) fn observe(&self, action: Action) {
             self.decision_counts[action_index(action)].fetch_add(1, Ordering::Relaxed);
             let Some(telemetry) = self.telemetry.as_ref() else {
                 return;

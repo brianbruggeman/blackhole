@@ -134,6 +134,7 @@ async fn decide<'a>(
         ProximaError::Config(error.to_string())
     })?;
     if matches!(action, crate::Action::Drop | crate::Action::Ignore) {
+        policy.observe(action);
         let _ = state.transition(Event::Drop(DropReason::PolicyFailure));
         return Ok(None);
     }
@@ -500,6 +501,50 @@ mod tests {
             causes.lock().expect("failure labels lock").as_slice(),
             ["query_wire_short"]
         );
+    }
+
+    #[test]
+    fn listener_preserves_drop_action_in_aggregate_stats() {
+        let mut config = Config::default();
+        config.policy.rules = vec![crate::RuleConfig {
+            id: 1,
+            domain: "drop.example".into(),
+            action: crate::Action::Drop,
+            priority: 0,
+            qtype: None,
+            qclass: None,
+            client: None,
+            client_cidr: None,
+            client_cidrs: Vec::new(),
+            client_identity: None,
+        }];
+        let policy = Policy::new(config).expect("valid drop policy");
+        let mut packet = Vec::new();
+        encode::encode_query(
+            1,
+            true,
+            encode::EncodeQuestion {
+                name: "drop.example.",
+                qtype: 1,
+                qclass: 1,
+            },
+            &mut packet,
+        )
+        .expect("encode drop query");
+
+        let result = futures::executor::block_on(decide(
+            &policy,
+            DecisionState::received(&packet),
+            &packet,
+            None,
+            false,
+        ))
+        .expect("drop is a normal no-response result");
+        assert!(result.is_none());
+        let stats: serde_json::Value =
+            serde_json::from_str(&policy.admin_stats()).expect("stats JSON");
+        assert_eq!(stats["actions"]["drop"], 1);
+        assert_eq!(stats["actions"]["ignore"], 0);
     }
 
     #[test]
