@@ -832,6 +832,7 @@ mod tests {
         }];
         config.policy.client_groups = vec![crate::ClientGroupConfig {
             name: "home".into(),
+            client_addresses: Vec::new(),
             client_cidrs: vec!["192.0.2.0/24".into()],
         }];
         let handler = AdminHandler::new(Arc::new(Policy::new(config).expect("valid rules")));
@@ -915,6 +916,7 @@ mod tests {
         }];
         config.policy.client_groups = vec![crate::ClientGroupConfig {
             name: "home".into(),
+            client_addresses: Vec::new(),
             client_cidrs: vec!["192.0.2.0/24".into()],
         }];
         let policy = Arc::new(Policy::new(config).expect("valid group policy"));
@@ -923,7 +925,7 @@ mod tests {
             .method("POST")
             .path("/reload/client-groups/upsert")
             .payload(
-                r#"{"client_groups":[{"name":"HOME","client_cidrs":["198.51.100.0/24"]},{"name":"guest","client_cidrs":["203.0.113.0/24"]}]}"#,
+                r#"{"client_groups":[{"name":"HOME","client_addresses":["192.0.2.53"],"client_cidrs":["198.51.100.0/24"]},{"name":"guest","client_cidrs":["203.0.113.0/24"]}]}"#,
             )
             .build()
             .expect("group upsert request");
@@ -934,6 +936,7 @@ mod tests {
         let groups: serde_json::Value =
             serde_json::from_slice(&groups.payload).expect("groups JSON");
         assert_eq!(groups["total"], 2);
+        assert_eq!(groups["client_groups"][0]["client_addresses"][0], "192.0.2.53");
 
         let invalid = Request::builder()
             .method("POST")
