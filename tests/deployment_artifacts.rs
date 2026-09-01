@@ -181,6 +181,12 @@ fn deb_builder_contains_native_package_contract() {
         "systemctl disable --now blackhole.service",
         "ps -p 1 -o comm=",
         "[ \"$init\" = systemd ]",
+        "DPKG_ROOT",
+        "root_path()",
+        "has_group()",
+        "has_user()",
+        "groupadd --system",
+        "useradd --system",
         "ar r",
         ".deb",
     ] {

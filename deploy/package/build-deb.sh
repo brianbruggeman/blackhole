@@ -75,16 +75,36 @@ cat > "$staging/control/postinst" <<'EOF'
 #!/bin/sh
 set -eu
 
-if ! getent group blackhole >/dev/null 2>&1; then
-    groupadd --system blackhole
+root=${DPKG_ROOT:-}
+root_path() { printf '%s%s' "$root" "$1"; }
+has_group() {
+    if [ -n "$root" ]; then
+        grep -q '^blackhole:' "$(root_path /etc/group)" 2>/dev/null
+    else
+        getent group blackhole >/dev/null 2>&1
+    fi
+}
+has_user() {
+    if [ -n "$root" ]; then
+        grep -q '^blackhole:' "$(root_path /etc/passwd)" 2>/dev/null
+    else
+        getent passwd blackhole >/dev/null 2>&1
+    fi
+}
+if ! has_group; then
+    groupadd --system ${root:+--root "$root"} blackhole
 fi
-if ! getent passwd blackhole >/dev/null 2>&1; then
-    useradd --system --gid blackhole --home-dir /var/lib/blackhole \
-        --shell /usr/sbin/nologin blackhole
+if ! has_user; then
+    useradd --system ${root:+--root "$root"} --gid blackhole \
+        --home-dir /var/lib/blackhole --shell /usr/sbin/nologin blackhole
 fi
-install -d -o blackhole -g blackhole -m 0750 /var/lib/blackhole
+install -d -o blackhole -g blackhole -m 0750 "$(root_path /var/lib/blackhole)"
 if command -v systemd-tmpfiles >/dev/null 2>&1; then
-    systemd-tmpfiles --create /etc/tmpfiles.d/blackhole.conf
+    if [ -n "$root" ]; then
+        systemd-tmpfiles --create --root="$root" /etc/tmpfiles.d/blackhole.conf
+    else
+        systemd-tmpfiles --create /etc/tmpfiles.d/blackhole.conf
+    fi
 fi
 init=$(ps -p 1 -o comm= 2>/dev/null || true)
 if [ "$init" = systemd ] && command -v systemctl >/dev/null 2>&1; then
@@ -96,6 +116,7 @@ cat > "$staging/control/prerm" <<'EOF'
 #!/bin/sh
 set -eu
 
+root=${DPKG_ROOT:-}
 init=$(ps -p 1 -o comm= 2>/dev/null || true)
 if [ "${1:-}" = remove ] && [ "$init" = systemd ] \
     && command -v systemctl >/dev/null 2>&1; then
