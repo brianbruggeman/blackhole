@@ -5,6 +5,8 @@
 //! crossing the Proxima listener and Blackhole protocol adapter.
 
 use blackhole::listener::{TcpProtocol, UdpProtocol};
+#[cfg(feature = "perf-instrument")]
+use blackhole::perf;
 use blackhole::{Action, Config, Policy, RewriteConfig};
 use bytes::Bytes;
 use futures::io::{AsyncReadExt, AsyncWriteExt};
@@ -207,6 +209,8 @@ async fn main() -> Result<(), ProximaError> {
         tcp_errors, 0,
         "real-client TCP listener errors must be zero"
     );
+    #[cfg(feature = "perf-instrument")]
+    println!("listener_boundary_bytes=MEASURED {:?}", perf::snapshot());
     server.stop();
     Ok(())
 }

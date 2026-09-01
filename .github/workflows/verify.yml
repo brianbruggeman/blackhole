@@ -220,7 +220,7 @@ jobs:
       - name: run real listener boundary gate
         env:
           BLACKHOLE_SOURCE_COMMIT: ${{ github.sha }}
-        run: cargo run --release --locked --example listener_performance > listener-performance-gate.txt
+        run: cargo run --release --locked --features perf-instrument --example listener_performance > listener-performance-gate.txt
       - name: record performance provenance
         run: |
           {
