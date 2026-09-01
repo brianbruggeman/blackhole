@@ -470,6 +470,7 @@ mod tests {
         assert_eq!(status["client_groups_configured"], 0);
         assert_eq!(status["upstream_configured"], false);
         assert_eq!(status["country_policy_configured"], false);
+        assert_eq!(status["country_reload_interval_secs"], 0);
         assert_eq!(status["cache_entries"], 0);
         let rules = block_on(handler.call(request("GET", "/rules"))).expect("rules response");
         assert_eq!(rules.status, 200);

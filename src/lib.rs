@@ -3301,6 +3301,7 @@ mod runtime {
                     .read()
                     .expect("country policy lock")
                     .is_some(),
+                "country_reload_interval_secs": self.config.country_policy.reload_interval_secs,
                 "cache_entries": cache.entries.len(),
                 "cache_capacity": cache.config.max_entries,
             })
@@ -3331,6 +3332,7 @@ mod runtime {
                 "country_entries": country_policy.as_ref().map_or(0, |policy| policy.entries.len()),
                 "country_deny_rules": country_policy.as_ref().map_or(0, |policy| policy.deny.len()),
                 "country_observe_rules": country_policy.as_ref().map_or(0, |policy| policy.observe.len()),
+                "country_reload_interval_secs": self.config.country_policy.reload_interval_secs,
                 "legacy_mode_active": !self.rules_configured.load(Ordering::Acquire),
                 "policy_generation": self.policy_generation.load(Ordering::Acquire),
             })
