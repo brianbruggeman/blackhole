@@ -63,6 +63,9 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   privacy-safe corpus location for minimized wire samples.
 - Proxima-native action counters, failure-cause counters, and request-latency
   histograms that preserve the complete action identity.
+- An optional Proxima recording-sink hook emits only bounded decision metadata
+  (`action`, `qtype`, and `qclass`); DNS names, client identity, credentials,
+  and wire payloads are excluded from recording events.
 - Atomic in-process rule-table reloads over Proxima's immutable `Live` snapshot
   primitive, with failed reloads retaining the last valid generation and
   successful policy reloads invalidating cached forwarding answers.

@@ -11,6 +11,10 @@ DNS edge and is a prerequisite for any future honeypot terminal.
 - Telemetry contains action identity, bounded failure causes, and latency
   histograms; it must not contain query names, record data, credentials, or
   packet bytes.
+- The optional Proxima recording sink receives only action, qtype, and qclass
+  metadata. Operators must attach Proxima's bounded recording sink and enforce
+  its retention and storage limits before enabling it; Blackhole never supplies
+  query names, client identity, credentials, or packet bytes to that sink.
 - The bounded fuzz corpus contains only synthetic/minimized wire samples and
   must not contain client identity or production payloads.
 - The capture ownership journal contains only the exact firewall plan needed

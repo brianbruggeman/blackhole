@@ -29,7 +29,9 @@ pub mod snapshot;
 
 #[cfg(feature = "std")]
 mod runtime {
-    use proxima::{Labels, TelemetryHandle};
+    use proxima::{
+        DynRecordingSink, InteractionId, Labels, ProtocolEvent, RecordingEvent, TelemetryHandle,
+    };
     use proxima_core::ProximaError;
     use proxima_dns::{
         DnsAnswer, DnsAnswerRecord, DnsClientUpstream, DnsPipeReply, DnsPipeRequest,
@@ -1146,6 +1148,7 @@ mod runtime {
         domain_rules_configured: AtomicBool,
         rules_configured: AtomicBool,
         telemetry: Option<TelemetryHandle>,
+        recording: Option<DynRecordingSink>,
         upstream: Option<DnsClientUpstream>,
         upstream_slots: Option<Arc<Semaphore>>,
         cache: Arc<Mutex<DnsCache>>,
@@ -1401,6 +1404,7 @@ mod runtime {
                 domain_rules_configured: AtomicBool::new(domain_rules_configured),
                 rules_configured: AtomicBool::new(rules_configured),
                 telemetry: None,
+                recording: None,
                 upstream: None,
                 upstream_slots: None,
                 cache,
@@ -1421,6 +1425,15 @@ mod runtime {
         #[must_use]
         pub fn with_telemetry(mut self, telemetry: TelemetryHandle) -> Self {
             self.telemetry = Some(telemetry);
+            self
+        }
+
+        /// Attach Proxima's existing recording sink. Blackhole emits only
+        /// action and DNS type metadata; names, client identity, and wire
+        /// payloads never enter the recording event.
+        #[must_use]
+        pub fn with_recording_sink(mut self, recording: DynRecordingSink) -> Self {
+            self.recording = Some(recording);
             self
         }
 
@@ -2144,6 +2157,32 @@ mod runtime {
             telemetry.counter_inc("blackhole.failures", &labels, 1);
         }
 
+        async fn record_decision(&self, action: Action, query: &proxima_dns::DnsQuery) {
+            let Some(recording) = self.recording.as_ref() else {
+                return;
+            };
+            let event = RecordingEvent {
+                id: InteractionId::new(),
+                ts_ms: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |duration| {
+                        duration.as_millis().min(u128::from(u64::MAX)) as u64
+                    }),
+                parent: None,
+                event: ProtocolEvent::Custom {
+                    kind: "blackhole.dns_decision".into(),
+                    payload: serde_json::json!({
+                        "action": action_label(action),
+                        "qtype": query.qtype,
+                        "qclass": query.qclass,
+                    }),
+                },
+            };
+            if recording.append(event).await.is_err() {
+                self.observe_failure("recording_append");
+            }
+        }
+
         pub(crate) fn admin_status(&self) -> String {
             let cache = self.cache.lock().expect("cache lock");
             serde_json::json!({
@@ -2319,6 +2358,9 @@ mod runtime {
                     )
                 }
             });
+            if let Some(action) = action {
+                self.record_decision(action, &query).await;
+            }
             if matches!(action, Some(Action::Pass | Action::Observe) | None) {
                 if let Some(answer) = self.rewrites.answer(&query) {
                     self.observe(action.unwrap_or(Action::Pass));
@@ -4236,6 +4278,55 @@ mod runtime {
                 *telemetry.kinds.lock().expect("reload telemetry lock"),
                 vec!["rules".to_owned(), "regex".to_owned()]
             );
+        }
+
+        #[test]
+        fn recording_sink_receives_only_dns_decision_metadata() {
+            use proxima::{RecordingEvent, RecordingSink};
+            use std::sync::{Arc, Mutex};
+
+            struct Collector(Arc<Mutex<Vec<RecordingEvent>>>);
+
+            impl RecordingSink for Collector {
+                fn append<'lifetime>(
+                    &'lifetime self,
+                    event: RecordingEvent,
+                ) -> proxima::RecordingAppendFuture<'lifetime> {
+                    let events = Arc::clone(&self.0);
+                    Box::pin(async move {
+                        events.lock().expect("recording lock").push(event);
+                        Ok(())
+                    })
+                }
+
+                fn flush<'lifetime>(&'lifetime self) -> proxima::RecordingAppendFuture<'lifetime> {
+                    Box::pin(async { Ok(()) })
+                }
+            }
+
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let policy = Policy::new(Config::default())
+                .expect("valid policy")
+                .with_recording_sink(Arc::new(Collector(Arc::clone(&events))));
+            let query = proxima_dns::DnsQuery {
+                id: 9,
+                recursion_desired: true,
+                name: "secret.example.".into(),
+                qtype: 1,
+                qclass: 1,
+            };
+            futures::executor::block_on(policy.record_decision(Action::Nxdomain, &query));
+
+            let events = events.lock().expect("recording lock");
+            assert_eq!(events.len(), 1);
+            let proxima::ProtocolEvent::Custom { kind, payload } = &events[0].event else {
+                panic!("expected custom decision event");
+            };
+            assert_eq!(kind, "blackhole.dns_decision");
+            assert_eq!(payload["action"], "nxdomain");
+            assert_eq!(payload["qtype"], 1);
+            assert_eq!(payload["qclass"], 1);
+            assert!(!payload.to_string().contains("secret.example"));
         }
     }
 }
