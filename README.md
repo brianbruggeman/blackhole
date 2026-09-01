@@ -161,6 +161,8 @@ authenticated `GET /health`, `GET /status`, bounded `GET /admission/status`,
 `GET /policy-bundle`,
 `GET /rules`, `GET /logs`,
 and `POST /logs/clear`, `POST /cache/clear`, `POST /reload/blocklists`, bounded
+`POST /reload/blocklists/replace`, `/reload/blocklists/add`, and
+`/reload/blocklists/remove` (atomic exact source-path management), bounded
 `POST /reload/admission` (a bounded JSON admission configuration; the global
 in-flight capacity remains startup-only), bounded
 `POST /reload/country`, bounded `POST /reload/policy` (a JSON array of complete rule objects), bounded
