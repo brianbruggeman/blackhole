@@ -7,7 +7,7 @@ default runtime path is Prime-backed, with the full Tokio capability set
 available through the opt-in compatibility feature. DNS over UDP and TCP share
 one bind.
 
-See [FEATURES.md](FEATURES.md) for the current prototype surface and
+See [FEATURES.md](FEATURES.md) for the current implemented surface and
 [ROADMAP.md](ROADMAP.md) for the intended product scope and parity targets with
 Pi-hole and AdGuard Home.
 See [contract.md](contract.md) for the wire meaning of each policy action.

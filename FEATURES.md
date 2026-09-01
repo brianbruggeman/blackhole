@@ -1,7 +1,7 @@
 # Blackhole features
 
-This is the current, deliberately small prototype surface. It records what is
-implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
+This is the current product surface. It records what is implemented and
+verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 
 ## Implemented
 
