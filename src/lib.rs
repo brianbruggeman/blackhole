@@ -2714,6 +2714,17 @@ mod runtime {
             self.publish_rewrites_locked(&next, "rewrites_remove", started)
         }
 
+        /// Atomically replace the complete local rewrite table. Invalid
+        /// entries leave the previously published table unchanged.
+        pub fn reload_rewrites(
+            &self,
+            configs: &[RewriteConfig],
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
+            let started = Instant::now();
+            self.publish_rewrites_locked(configs, "rewrites", started)
+        }
+
         fn publish_rewrites_locked(
             &self,
             configs: &[RewriteConfig],

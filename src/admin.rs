@@ -474,6 +474,29 @@ impl SendPipe for AdminHandler {
                     ))),
                 }
             }
+            ("POST", "/reload/rewrites") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let rewrites = match serde_json::from_slice::<Vec<RewriteConfig>>(&request.payload)
+                {
+                    Ok(rewrites) => rewrites,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                match self.policy.reload_rewrites(&rewrites) {
+                    Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
             ("POST", "/reload/rewrites/remove") => {
                 if request.payload.len() > MAX_POLICY_BODY_BYTES {
                     return Ok(Response::new(413));
@@ -526,6 +549,7 @@ impl SendPipe for AdminHandler {
                 | "/reload/regex"
                 | "/reload/regex/upsert"
                 | "/reload/regex/remove"
+                | "/reload/rewrites"
                 | "/reload/rewrites/upsert"
                 | "/reload/rewrites/remove",
             ) => Ok(Response::new(405)),
@@ -1331,6 +1355,29 @@ mod tests {
         }];
         let policy = Arc::new(Policy::new(config).expect("valid rewrite policy"));
         let handler = AdminHandler::new(Arc::clone(&policy));
+        let invalid_reload = Request::builder()
+            .method("POST")
+            .path("/reload/rewrites")
+            .payload(r#"[{"name":"broken.example"}]"#)
+            .build()
+            .expect("invalid rewrite reload request");
+        assert_eq!(
+            block_on(handler.call(invalid_reload))
+                .expect("invalid reload response")
+                .status,
+            422
+        );
+        let original = policy.evaluate(&proxima_dns::DnsQuery {
+            id: 1,
+            recursion_desired: true,
+            name: "router.example.".into(),
+            qtype: 1,
+            qclass: 1,
+        });
+        assert_eq!(
+            original.expect("original rewrite").records[0].rdata,
+            vec![192, 0, 2, 1]
+        );
         let update = Request::builder()
             .method("POST")
             .path("/reload/rewrites/upsert")

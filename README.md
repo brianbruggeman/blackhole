@@ -132,7 +132,8 @@ publication.
 references them; dependent removals fail without changing the live snapshot.
 `POST /reload/rewrites/upsert` replaces or adds local A/AAAA rewrites by
 normalized DNS name, while `POST /reload/rewrites/remove` removes named
-rewrites atomically; invalid and unknown updates fail without publication.
+rewrites atomically; `POST /reload/rewrites` replaces the complete rewrite
+table. Invalid and unknown updates fail without publication.
 `POST /reload/policy-bundle` replaces the domain, regex, profile, client-group,
 local-rewrite, and country-policy tables as one validated snapshot while
 retaining loaded blocklists. Its optional `mode`, `domains`, and
