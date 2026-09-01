@@ -3119,6 +3119,7 @@ mod runtime {
                 return Ok(ReloadState::Unchanged);
             }
             self.country_policy_control.replace(next);
+            self.policy_generation.fetch_add(1, Ordering::Relaxed);
             self.observe_reload_latency("country", started);
             Ok(ReloadState::Published)
         }
@@ -6745,6 +6746,11 @@ mod runtime {
                 policy.reload_country_policy_if_changed(),
                 Ok(ReloadState::Unchanged)
             );
+            let unchanged_status: serde_json::Value =
+                serde_json::from_str(&policy.admin_policy_status()).expect("status");
+            let unchanged_generation = unchanged_status["policy_generation"]
+                .as_u64()
+                .expect("generation");
             std::fs::write(
                 &path,
                 "US 192.0.2.0/24 US-CA AS64500\nCA 198.51.100.0/24 CA-ON 64501\nGB 203.0.113.0/24 GB-LND 64502\n",
@@ -6753,6 +6759,12 @@ mod runtime {
             assert_eq!(
                 policy.reload_country_policy_if_changed(),
                 Ok(ReloadState::Published)
+            );
+            let changed_status: serde_json::Value =
+                serde_json::from_str(&policy.admin_policy_status()).expect("status");
+            assert_eq!(
+                changed_status["policy_generation"].as_u64(),
+                Some(unchanged_generation + 1)
             );
             std::fs::write(&path, "not-a-country-map\n").expect("corrupt country map");
             assert!(policy.reload_country_policy().is_err());
