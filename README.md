@@ -94,7 +94,8 @@ token = "a-long-random-secret"
 
 It provides an authenticated bounded status UI at `GET /` that links the
 status, rule metadata, and privacy-log views. The same routes are available as
-authenticated `GET /health`, `GET /status`, bounded `GET /rules`, `GET /logs`,
+authenticated `GET /health`, `GET /status`, bounded `GET /policy/status`,
+`GET /rules`, `GET /logs`,
 and `POST /logs/clear`, `POST /cache/clear`, `POST /reload/blocklists`, bounded
 `POST /reload/country`, bounded `POST /reload/policy` (a JSON array of complete rule objects), bounded
 `POST /reload/policy/add` (a non-empty JSON array appended atomically to the current domain rules), and bounded

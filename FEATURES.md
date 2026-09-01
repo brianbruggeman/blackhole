@@ -91,6 +91,9 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   read-only health, bounded rule metadata, and non-sensitive status endpoints, authenticated blocklist
   and country-map reloads, bounded complete domain and regex rule-table
   reloads from JSON, and an atomic bounded domain-rule append operation.
+- Bounded authenticated `GET /policy/status` exposes effective rule, rewrite,
+  blocklist-source, profile, group, and country-entry counts without source
+  paths, query names, credentials, client identities, or packet payloads.
 - The authenticated control plane can also remove domain rules by stable ID;
   unknown IDs fail without changing the published snapshot.
 - The authenticated admin control plane includes a bounded status UI for
