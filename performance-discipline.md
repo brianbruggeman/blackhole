@@ -329,3 +329,26 @@ latency, server CPU percentage, or error-rate workload, so those axes remain
 `UNMEASURED`; this row is not an end-to-end production gate. The scalar scan
 remains the production arm: chunked scanning is slower and memchr retains a
 large tail and high CoV. No zero-copy or production-grade claim follows.
+
+## Row 13 — real UDP listener/client boundary
+
+`MEASURED` on 2026-09-01, Linux `x86_64`, rustc `1.98.0`, release build,
+source commit `8f6eac3`, GitHub Proxima revision
+`03596bc908be7ae76179464f85ad867b311e2a65`, and load average `1.31`. The
+`listener_performance` example sent `N=100` sequential requests from a real
+Prime UDP client through the Proxima listener and Blackhole UDP adapter after
+10 warmups:
+
+```text
+listener_udp samples=100 errors=0 first_error=None single_request_ns=80420
+listener_latency_ns p50=26041 p95=31105 p99=67502 min=22840 max=67502 cov=0.164629 n=100
+listener_throughput_ops_s=DERIVED 35610.67
+cpu_percent=MEASURED 0.0 cpu_clock_ticks_s=MEASURED 100 rss_kib=MEASURED 8988 loadavg=MEASURED 1.31
+```
+
+The listener workload measured zero errors and a single-request latency of
+80.4 microseconds. CPU time is sampled from process accounting at a 100 Hz
+clock and rounded to zero for this short run; it is therefore not evidence of
+idle CPU. This supplies the real-client latency, throughput, RSS, and error
+axes for the local UDP boundary. TCP, sustained offered-load CPU utilization,
+and cross-process client/server measurements remain outside this row.
