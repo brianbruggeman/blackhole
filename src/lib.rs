@@ -446,6 +446,10 @@ mod runtime {
     }
 
     impl RewriteTable {
+        fn len(&self) -> usize {
+            self.entries.len()
+        }
+
         fn answer(&self, query: &proxima_dns::DnsQuery) -> Option<DnsAnswer> {
             self.entries
                 .get(&(normalize(&query.name), query.qtype))
@@ -2880,6 +2884,34 @@ mod runtime {
                     .is_some(),
                 "cache_entries": cache.entries.len(),
                 "cache_capacity": cache.config.max_entries,
+            })
+            .to_string()
+        }
+
+        /// Return bounded effective-policy metadata without exposing source
+        /// paths, query names, client identities, credentials, or payloads.
+        pub(crate) fn admin_policy_status(&self) -> String {
+            let base_rules = self.base_rules.lock().expect("base rules lock");
+            let regex_rules = self.regex_rules.lock().expect("regex rules lock");
+            let blocklist_rules = self.blocklist_rules.lock().expect("blocklist rules lock");
+            let blocklist_paths = self.blocklist_paths.lock().expect("blocklist paths lock");
+            let profiles = self.profiles.read().expect("profiles lock");
+            let client_groups = self.client_groups.read().expect("client groups lock");
+            let rewrites = self.rewrites.read().expect("rewrites lock");
+            let country_policy = self.country_policy.read().expect("country policy lock");
+            serde_json::json!({
+                "rules_configured": self.rules_configured.load(Ordering::Acquire),
+                "domain_rules": base_rules.len(),
+                "regex_rules": regex_rules.len(),
+                "blocklist_sources": blocklist_paths.len(),
+                "blocklist_rules": blocklist_rules.len(),
+                "rewrites": rewrites.len(),
+                "profiles": profiles.len(),
+                "client_groups": client_groups.len(),
+                "country_entries": country_policy.as_ref().map_or(0, |policy| policy.entries.len()),
+                "country_deny_rules": country_policy.as_ref().map_or(0, |policy| policy.deny.len()),
+                "country_observe_rules": country_policy.as_ref().map_or(0, |policy| policy.observe.len()),
+                "legacy_mode_active": !self.rules_configured.load(Ordering::Acquire),
             })
             .to_string()
         }

@@ -115,6 +115,20 @@ async fn admin_http_listener_enforces_bearer_auth() {
     let status = String::from_utf8_lossy(&status);
     assert!(status.starts_with("HTTP/1.1 200"));
     assert!(status.contains("\"cache_entries\":0"));
+    let policy_status = request(
+        addr,
+        "GET",
+        "/policy/status",
+        Some("Bearer integration-secret"),
+        None,
+    )
+    .await
+    .expect("policy status response");
+    let policy_status = String::from_utf8_lossy(&policy_status);
+    assert!(policy_status.starts_with("HTTP/1.1 200"));
+    assert!(policy_status.contains("\"profiles\":1"));
+    assert!(policy_status.contains("\"blocklist_sources\":1"));
+    assert!(!policy_status.contains("initial_blocklist"));
     let profiles = request(
         addr,
         "GET",

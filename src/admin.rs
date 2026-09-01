@@ -103,6 +103,7 @@ impl SendPipe for AdminHandler {
             }
             ("GET", "/health") => Ok(Response::ok("{\"status\":\"ok\"}")),
             ("GET", "/status") => Ok(Response::ok(self.policy.admin_status())),
+            ("GET", "/policy/status") => Ok(Response::ok(self.policy.admin_policy_status())),
             ("GET", "/rules") => Ok(Response::ok(self.policy.admin_rules())),
             ("GET", "/profiles") => Ok(Response::ok(self.policy.admin_profiles())),
             ("GET", "/client-groups") => Ok(Response::ok(self.policy.admin_client_groups())),
@@ -270,6 +271,7 @@ impl SendPipe for AdminHandler {
                 "/"
                 | "/health"
                 | "/status"
+                | "/policy/status"
                 | "/rules"
                 | "/profiles"
                 | "/client-groups"
@@ -351,6 +353,14 @@ mod tests {
             serde_json::from_slice(&status.payload).expect("status JSON");
         assert_eq!(status["status"], "ok");
         assert_eq!(status["rules_configured"], false);
+        let policy_status =
+            block_on(handler.call(request("GET", "/policy/status"))).expect("policy status");
+        assert_eq!(policy_status.status, 200);
+        let policy_status: serde_json::Value =
+            serde_json::from_slice(&policy_status.payload).expect("policy status JSON");
+        assert_eq!(policy_status["domain_rules"], 0);
+        assert_eq!(policy_status["blocklist_sources"], 0);
+        assert_eq!(policy_status["legacy_mode_active"], true);
         assert_eq!(status["profiles_configured"], 0);
         assert_eq!(status["client_groups_configured"], 0);
         assert_eq!(status["upstream_configured"], false);
