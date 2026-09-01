@@ -87,8 +87,8 @@ async fn decide<'a>(
     })?;
     let view = match QueryView::parse(packet) {
         Ok(view) => view,
-        Err(_) => {
-            policy.observe_failure("malformed_query");
+        Err(error) => {
+            policy.observe_failure(error.telemetry_cause());
             let _ = state.transition(Event::Drop(DropReason::Malformed));
             return Ok(None);
         }

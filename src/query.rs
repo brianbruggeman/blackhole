@@ -30,6 +30,24 @@ pub enum QueryParseError {
     Oversized,
 }
 
+impl QueryParseError {
+    /// Stable low-cardinality cause labels for the runtime telemetry boundary.
+    /// Wire details stay in the error text; metrics must not use attacker-
+    /// controlled parser messages as label values.
+    #[must_use]
+    pub(crate) const fn telemetry_cause(&self) -> &'static str {
+        match self {
+            Self::Wire(ParseError::Short) => "query_wire_short",
+            Self::Wire(ParseError::Malformed(_)) => "query_wire_malformed",
+            Self::Response => "query_response",
+            Self::InvalidFlags => "query_invalid_flags",
+            Self::UnsupportedName => "query_unsupported_name",
+            Self::NotSingleQuestion => "query_question_count",
+            Self::Oversized => "query_oversized",
+        }
+    }
+}
+
 impl core::fmt::Display for QueryParseError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -215,6 +233,38 @@ mod tests {
         assert_eq!(
             QueryView::parse(&vec![0; MAX_QUERY_BYTES + 1]),
             Err(QueryParseError::Oversized)
+        );
+    }
+
+    #[test]
+    fn parser_failures_have_stable_telemetry_causes() {
+        assert_eq!(
+            QueryParseError::Wire(ParseError::Short).telemetry_cause(),
+            "query_wire_short"
+        );
+        assert_eq!(
+            QueryParseError::Wire(ParseError::Malformed("pointer")).telemetry_cause(),
+            "query_wire_malformed"
+        );
+        assert_eq!(
+            QueryParseError::Response.telemetry_cause(),
+            "query_response"
+        );
+        assert_eq!(
+            QueryParseError::InvalidFlags.telemetry_cause(),
+            "query_invalid_flags"
+        );
+        assert_eq!(
+            QueryParseError::UnsupportedName.telemetry_cause(),
+            "query_unsupported_name"
+        );
+        assert_eq!(
+            QueryParseError::NotSingleQuestion.telemetry_cause(),
+            "query_question_count"
+        );
+        assert_eq!(
+            QueryParseError::Oversized.telemetry_cause(),
+            "query_oversized"
         );
     }
 }
