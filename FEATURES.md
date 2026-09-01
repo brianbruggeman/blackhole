@@ -35,8 +35,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   validation for malformed, duplicate, or oversized configuration.
 - Named service-blocking profiles compile into the authoritative rule table,
   with bounded domains, optional IPv4/IPv6 client-network scopes, stable
-  generated IDs, independent qtype/qclass filters, and duplicate-name
-  rejection.
+  generated IDs, independent qtype/qclass filters, optional adapter-owned
+  client-identity targeting, and duplicate-name rejection. Identity and
+  network scopes are mutually exclusive and fail closed when combined.
 - Named client groups assign bounded exact IPv4/IPv6 client addresses and CIDR
   sets to service profiles; one profile may target multiple groups, with
   duplicate, unknown, or ambiguous scopes rejected before publication.

@@ -24,10 +24,9 @@ below are future capabilities, grouped by the dependency layer they extend.
   management operations beyond the current bounded background blocklist
   reload/source replacement, atomic domain/regex-rule append/upsert/removal,
   read-only status, and complete-snapshot reload routes.
-- Extend the authenticated profile and client-group metadata views with richer
-  per-client identity and network policy controls beyond the current atomic
-  profile replacement/upsert/removal and client-group upsert/removal
-  operations.
+- Extend the authenticated profile and client-group metadata views with
+  additional policy controls beyond atomic profile, identity, and network
+  scope replacement/upsert/removal operations.
 - Extend adaptive amplification controls for repeated abusive patterns beyond
   the current per-query response-ratio cap, aggregate/per-client admission
   limits, and bounded rate/response-budget abuse breaker.
