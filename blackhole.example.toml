@@ -125,6 +125,9 @@ negative_ttl_secs = 30
 [admission]
 # Reject DNS ANY queries and malformed/overlong names at the policy edge.
 reject_any = true
+# Operator denylist checked before policy matching and rate accounting. Use
+# /32 or /128 for one address; replacements are bounded and atomic.
+deny_client_cidrs = []
 max_name_bytes = 253
 # Bound records emitted by local and forwarded answers.
 max_response_records = 64
