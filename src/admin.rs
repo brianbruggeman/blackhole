@@ -69,9 +69,10 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <style>body{font:15px system-ui,sans-serif;max-width:70rem;margin:2rem auto;padding:0 1rem}pre{background:#f3f3f3;padding:1rem;overflow:auto}button{padding:.4rem .7rem}</style>
 <h1>Blackhole DNS</h1>
 <p>Authenticated operator control plane. DNS names and packet payloads are not shown here.</p>
-<p><button id="clear-logs">Clear privacy log</button> <button id="reload-blocklists">Reload blocklists</button> <button id="reload-admission">Reload admission JSON</button></p>
+<p><button id="clear-logs">Clear privacy log</button> <button id="reload-blocklists">Reload blocklists</button> <button id="reload-admission">Reload admission JSON</button> <button id="reload-bundle">Publish policy bundle</button></p>
 <h2>Status</h2><pre id="status">loading…</pre>
 <h2>Admission limits</h2><textarea id="admission-config" rows="16" cols="80">loading…</textarea><pre id="admission-status">loading…</pre>
+<h2>Policy bundle</h2><textarea id="policy-bundle" rows="12" cols="80">{"rules":[],"regex_rules":[],"profiles":[],"client_groups":[],"rewrites":[],"country_policy":{}}</textarea>
 <h2>Country policy</h2><pre id="country-status">loading…</pre>
 <h2>Privacy status</h2><pre id="privacy-status">loading…</pre>
 <h2>Rules</h2><pre id="rules">loading…</pre>
@@ -88,6 +89,7 @@ const refresh = () => Promise.all([load('/status','#status'), load('/admission/s
 document.querySelector('#clear-logs').onclick = () => fetch('/logs/clear', {method:'POST'}).then(refresh);
 document.querySelector('#reload-blocklists').onclick = () => fetch('/reload/blocklists', {method:'POST'}).then(refresh);
 document.querySelector('#reload-admission').onclick = () => fetch('/reload/admission', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#admission-config').value}).then(refresh);
+document.querySelector('#reload-bundle').onclick = () => fetch('/reload/policy-bundle', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#policy-bundle').value}).then(refresh);
 refresh();
 </script>
 "#;
