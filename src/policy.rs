@@ -77,6 +77,7 @@ pub enum PolicyError {
     InvalidAdmission { reason: String },
     InvalidDhcp { reason: String },
     InvalidBlocklist { path: String, reason: String },
+    InvalidConfigReload { reason: String },
     InvalidCountryMap { path: String, reason: String },
     InvalidRewrite { name: String, reason: String },
     InvalidProfile { name: String, reason: String },
@@ -118,6 +119,9 @@ impl core::fmt::Display for PolicyError {
             Self::InvalidDhcp { reason } => write!(formatter, "invalid dhcp: {reason}"),
             Self::InvalidBlocklist { path, reason } => {
                 write!(formatter, "invalid blocklist {path}: {reason}")
+            }
+            Self::InvalidConfigReload { reason } => {
+                write!(formatter, "invalid configuration reload: {reason}")
             }
             Self::InvalidCountryMap { path, reason } => {
                 write!(formatter, "invalid country map {path}: {reason}")
