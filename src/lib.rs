@@ -3774,6 +3774,22 @@ mod runtime {
             .to_string()
         }
 
+        /// Return country-policy controls and bounded map metadata without
+        /// exposing the source path or any client address.
+        pub(crate) fn admin_country_status(&self) -> String {
+            let country_policy = self.country_policy.read().expect("country policy lock");
+            let policy = country_policy.as_ref();
+            serde_json::json!({
+                "map_configured": policy.is_some(),
+                "entries": policy.map_or(0, |value| value.entries.len()),
+                "deny": self.config.country_policy.deny,
+                "observe": self.config.country_policy.observe,
+                "max_age_secs": self.config.country_policy.max_age_secs,
+                "reload_interval_secs": self.config.country_policy.reload_interval_secs,
+            })
+            .to_string()
+        }
+
         pub(crate) fn clear_query_log(&self) -> usize {
             self.query_log
                 .as_ref()

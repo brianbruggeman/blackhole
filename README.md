@@ -107,9 +107,10 @@ token = "a-long-random-secret"
 ```
 
 It provides an authenticated bounded status UI at `GET /` that links the
-status, admission-limit, privacy status, rule metadata, and privacy-log views, with a button for
+status, admission-limit, country-policy, privacy status, rule metadata, and privacy-log views, with a button for
 reloading configured blocklists. The same routes are available as
 authenticated `GET /health`, `GET /status`, bounded `GET /admission/status`,
+`GET /country/status`,
 `GET /policy/status`,
 `GET /rules`, `GET /logs`,
 and `POST /logs/clear`, `POST /cache/clear`, `POST /reload/blocklists`, bounded
