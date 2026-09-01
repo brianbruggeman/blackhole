@@ -4646,9 +4646,11 @@ mod runtime {
                 Some(Action::Nxdomain) => Some(DnsAnswer::name_error()),
                 Some(Action::Reject) => Some(refused_answer()),
                 Some(Action::Sink) => Some(DnsAnswer::ok(Vec::new())),
-                Some(Action::Honeypot) => {
-                    Some(honeypot(&query.name, query.qtype, &self.config.honeypot))
-                }
+                Some(Action::Honeypot) => Some(synthetic_honeypot_answer(
+                    &query.name,
+                    query.qtype,
+                    &self.config.honeypot,
+                )),
                 Some(Action::Pass | Action::Observe) => self
                     .rewrites
                     .read(|rewrites| rewrites.answer(query))
@@ -4665,7 +4667,11 @@ mod runtime {
             match *self.legacy_mode.snapshot() {
                 Mode::Ignore => None,
                 Mode::Nxdomain => Some(DnsAnswer::name_error()),
-                Mode::Honeypot => Some(honeypot(&query.name, query.qtype, &self.config.honeypot)),
+                Mode::Honeypot => Some(synthetic_honeypot_answer(
+                    &query.name,
+                    query.qtype,
+                    &self.config.honeypot,
+                )),
             }
         }
 
@@ -5583,9 +5589,11 @@ mod runtime {
                     Some(Action::Ignore | Action::Drop) => None,
                     Some(Action::Nxdomain) => Some(DnsAnswer::name_error()),
                     Some(Action::Reject) => Some(refused_answer()),
-                    Some(Action::Honeypot) => {
-                        Some(honeypot(&query.name, query.qtype, &self.config.honeypot))
-                    }
+                    Some(Action::Honeypot) => Some(synthetic_honeypot_answer(
+                        &query.name,
+                        query.qtype,
+                        &self.config.honeypot,
+                    )),
                     Some(Action::Sink) => Some(DnsAnswer::ok(Vec::new())),
                     Some(Action::Pass | Action::Observe) | None => Some(DnsAnswer::ok(Vec::new())),
                     Some(Action::Forward) => unreachable!("forwarding handled above"),
@@ -5665,7 +5673,12 @@ mod runtime {
         }
     }
 
-    fn honeypot(name: &str, qtype: u16, config: &HoneypotConfig) -> DnsAnswer {
+    /// Build the bounded DNS-only honeypot answer.
+    ///
+    /// This deliberately has no access to request payloads, client metadata,
+    /// storage, or transport state. A future payload terminal must be a
+    /// separate opt-in component and cannot be reached through this action.
+    fn synthetic_honeypot_answer(name: &str, qtype: u16, config: &HoneypotConfig) -> DnsAnswer {
         let record = match qtype {
             1 => Some(DnsAnswerRecord {
                 name: name.into(),
@@ -8171,6 +8184,19 @@ mod runtime {
                 })
                 .expect("answer");
             assert!(answer.records.len() <= 1);
+        }
+
+        #[test]
+        fn honeypot_is_dns_only_and_has_no_payload_terminal() {
+            let config = HoneypotConfig::default();
+            for qtype in [1, 28, 5, 16, 255] {
+                let answer = synthetic_honeypot_answer("sink.example.", qtype, &config);
+                assert!(answer.records.len() <= 1, "qtype={qtype}");
+                assert!(answer.records.iter().all(|record| {
+                    (record.rtype == 1 && record.rdata.len() == 4)
+                        || (record.rtype == 28 && record.rdata.len() == 16)
+                }));
+            }
         }
 
         #[test]
