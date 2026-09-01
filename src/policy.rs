@@ -231,6 +231,22 @@ impl ReferencePolicy {
                     domain: config.domain.clone(),
                 });
             }
+            if domain != "."
+                && !domain.split('.').all(|label| {
+                    !label.is_empty()
+                        && label.len() <= 63
+                        && !label.starts_with('-')
+                        && !label.ends_with('-')
+                        && label
+                            .bytes()
+                            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+                })
+            {
+                return Err(PolicyError::InvalidDomainName {
+                    id: config.id,
+                    domain: config.domain.clone(),
+                });
+            }
             if rules.iter().any(|rule: &Rule| rule.id == config.id) {
                 return Err(PolicyError::DuplicateRule { id: config.id });
             }
@@ -607,6 +623,25 @@ mod tests {
             Err(PolicyError::InvalidDomainName { id: 9, domain })
                 if domain == "münich.example"
         ));
+    }
+
+    #[test]
+    fn malformed_dns_labels_are_rejected() {
+        let invalid_domains = vec![
+            (10, "two..labels.example".to_owned()),
+            (11, "-leading.example".to_owned()),
+            (12, "trailing-.example".to_owned()),
+            (13, "a".repeat(64)),
+        ];
+        for (id, domain) in invalid_domains {
+            let invalid = rule(id, &domain, Action::Drop);
+            assert!(matches!(
+                ReferencePolicy::new(&[invalid]),
+                Err(PolicyError::InvalidDomainName { id: error_id, .. })
+                    if error_id == id
+            ));
+        }
+        assert!(ReferencePolicy::new(&[rule(14, "*.example", Action::Drop)]).is_ok());
     }
 
     #[test]
