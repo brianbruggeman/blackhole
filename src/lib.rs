@@ -800,7 +800,7 @@ mod runtime {
         }
     }
 
-    #[derive(Debug, Default)]
+    #[derive(Debug, Clone, Default)]
     struct RewriteTable {
         entries: HashMap<(String, u16), DnsAnswer>,
     }
@@ -2191,7 +2191,8 @@ mod runtime {
         legacy_mode: RwLock<Mode>,
         default_action: RwLock<Action>,
         rewrite_configs: RwLock<Vec<RewriteConfig>>,
-        rewrites: RwLock<RewriteTable>,
+        rewrites: Live<RewriteTable>,
+        rewrite_control: LiveControl<RewriteTable>,
         reference: PolicyStore,
         regex_rules: Mutex<Vec<RegexRule>>,
         domain_rules_configured: AtomicBool,
@@ -2489,6 +2490,7 @@ mod runtime {
             let (client_identities, client_identity_control) = live(client_identities);
             let (country_policy, country_policy_control) = live(country_policy);
             let (admission, admission_control) = live(admission);
+            let (rewrites, rewrite_control) = live(rewrites);
             let policy = Self {
                 config,
                 base_rules: Mutex::new(base_rules),
@@ -2506,7 +2508,8 @@ mod runtime {
                 legacy_mode: RwLock::new(legacy_mode),
                 default_action: RwLock::new(default_action),
                 rewrite_configs: RwLock::new(rewrite_configs),
-                rewrites: RwLock::new(rewrites),
+                rewrites,
+                rewrite_control,
                 reference,
                 regex_rules: Mutex::new(regex_rules),
                 domain_rules_configured: AtomicBool::new(domain_rules_configured),
@@ -3382,7 +3385,7 @@ mod runtime {
             *self.profiles.write().expect("profiles lock") = profiles.to_vec();
             *self.client_groups.write().expect("client groups lock") = client_groups.to_vec();
             self.client_identity_control.replace(client_identities);
-            *self.rewrites.write().expect("rewrites lock") = rewrites;
+            self.rewrite_control.replace(rewrites);
             *self.rewrite_configs.write().expect("rewrite configs lock") = rewrite_configs.to_vec();
             self.country_policy_control.replace(country_policy);
             if let Some(domains) = normalized_legacy_domains {
@@ -3514,7 +3517,7 @@ mod runtime {
             started: Instant,
         ) -> Result<ReloadState, policy::PolicyError> {
             let compiled = compile_rewrites(configs)?;
-            *self.rewrites.write().expect("rewrites lock") = compiled;
+            self.rewrite_control.replace(compiled);
             *self.rewrite_configs.write().expect("rewrite configs lock") = configs.to_vec();
             self.cache_control.update(|cache| {
                 let mut next = cache.clone();
@@ -4269,9 +4272,7 @@ mod runtime {
                 }
                 Some(Action::Pass | Action::Observe) => self
                     .rewrites
-                    .read()
-                    .expect("rewrites lock")
-                    .answer(query)
+                    .read(|rewrites| rewrites.answer(query))
                     .or_else(|| Some(DnsAnswer::ok(Vec::new()))),
                 None => Some(DnsAnswer::ok(Vec::new())),
             };
@@ -4528,7 +4529,7 @@ mod runtime {
                 .iter()
                 .filter(|rule| rule.client_identity.is_some())
                 .count();
-            let rewrites = self.rewrites.read().expect("rewrites lock");
+            let rewrites = self.rewrites.snapshot();
             let country_policy = self.country_policy.snapshot();
             serde_json::json!({
                 "rules_configured": self.rules_configured.load(Ordering::Acquire),
@@ -4996,7 +4997,7 @@ mod runtime {
                 self.record_decision(action, &query).await;
             }
             if matches!(action, Some(Action::Pass | Action::Observe) | None) {
-                if let Some(answer) = self.rewrites.read().expect("rewrites lock").answer(&query) {
+                if let Some(answer) = self.rewrites.read(|rewrites| rewrites.answer(&query)) {
                     self.observe(action.unwrap_or(Action::Pass));
                     return Ok(DnsPipeReply::typed(200, self.cap_answer(&query, answer)));
                 }
