@@ -493,7 +493,7 @@ pub mod native {
         }
 
         fn verify(&mut self, plan: &Self::Plan) -> Result<(), String> {
-            self.apply(&["list", "table", "inet", &plan.table], None)
+            self.apply(&["list", "chain", "inet", &plan.table, &plan.chain], None)
         }
 
         fn remove(&mut self, plan: &Self::Plan) -> Result<(), String> {
