@@ -113,6 +113,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   the matching client and network breakers through Proxima's lock-free keyed
   state, and persists the revocation before applying it when durability is
   enabled.
+- Authenticated bounded incident approval promotes selected exact incident
+  clients to the managed `/32` or `/128` denylist, using the same atomic and
+  durable operator-control path.
 - Authenticated bounded `GET /abuse/incidents` provides a redacted review
   projection of retained incident causes, actions, expiry timestamps, and
   active/expired state; client addresses remain available only to the durable

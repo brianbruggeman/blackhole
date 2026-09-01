@@ -274,6 +274,59 @@ impl SendPipe for AdminHandler {
                     clients.len()
                 )))
             }
+            ("POST", "/abuse/incidents/approve") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let clients = match serde_json::from_slice::<Vec<String>>(&request.payload) {
+                    Ok(clients) if !clients.is_empty() && clients.len() <= 256 => clients,
+                    Ok(_) => return Ok(Response::new(422)),
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                let cidrs = match clients
+                    .iter()
+                    .map(|client| {
+                        client.parse::<IpAddr>().map(|client| match client {
+                            IpAddr::V4(client) => format!("{client}/32"),
+                            IpAddr::V6(client) => format!("{client}/128"),
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                {
+                    Ok(cidrs) => cidrs,
+                    Err(error) => {
+                        return Ok(Response::new(422).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&format!("invalid incident client: {error}"))
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                let previous = self.policy.admission_config();
+                if let Err(error) = self.policy.add_deny_client_cidrs(&cidrs) {
+                    return Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    )));
+                }
+                if let Err(error) = self.policy.persist_denylist_change("add", &cidrs).await {
+                    let _ = self.policy.reload_admission(&previous);
+                    return Ok(Response::new(503).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error).unwrap_or_else(|_| "null".into())
+                    )));
+                }
+                Ok(Response::ok(format!(
+                    "{{\"status\":\"approved\",\"entries\":{}}}",
+                    cidrs.len()
+                )))
+            }
             ("POST", "/abuse/denylist/add") | ("POST", "/abuse/denylist/remove") => {
                 if request.payload.len() > MAX_POLICY_BODY_BYTES {
                     return Ok(Response::new(413));
@@ -976,6 +1029,7 @@ impl SendPipe for AdminHandler {
                 | "/abuse/denylist"
                 | "/abuse/clear"
                 | "/abuse/revoke"
+                | "/abuse/incidents/approve"
                 | "/abuse/denylist/add"
                 | "/abuse/denylist/remove"
                 | "/reload/admission"
@@ -1593,6 +1647,31 @@ mod tests {
             .expect("invalid incident revoke");
         let response = block_on(handler.call(invalid)).expect("invalid revoke response");
         assert_eq!(response.status, 422);
+    }
+
+    #[test]
+    fn incident_approval_promotes_exact_clients_to_the_managed_denylist() {
+        let handler = AdminHandler::new(Arc::new(
+            Policy::new(crate::Config::default()).expect("default policy"),
+        ));
+        let approve = Request::builder()
+            .method("POST")
+            .path("/abuse/incidents/approve")
+            .payload(r#"["192.0.2.10","2001:db8::10"]"#)
+            .build()
+            .expect("valid incident approval");
+        let response = block_on(handler.call(approve)).expect("approval response");
+        assert_eq!(response.status, 200);
+        assert_eq!(
+            response.payload,
+            Bytes::from_static(b"{\"status\":\"approved\",\"entries\":2}")
+        );
+        let denylist =
+            block_on(handler.call(request("GET", "/abuse/denylist"))).expect("denylist response");
+        assert_eq!(
+            serde_json::from_slice::<Vec<String>>(&denylist.payload).expect("denylist JSON"),
+            vec!["192.0.2.10/32", "2001:db8::10/128"]
+        );
     }
 
     #[test]

@@ -226,6 +226,8 @@ the configured client CIDRs), bounded
 `POST /abuse/denylist/add` and `/abuse/denylist/remove` (atomic bounded
 operator-managed additions and revocations), bounded
 `POST /abuse/revoke` (atomic bounded temporary-incident revocation), bounded
+`POST /abuse/incidents/approve` (atomic exact-client incident approval into the
+managed denylist), bounded
 `GET /abuse/incidents` (redacted bounded incident review), bounded
 `GET /abuse/incidents/export` (bounded durable incident export), bounded
 `POST /reload/country`, bounded `POST /reload/policy` (a JSON array of complete rule objects), bounded
