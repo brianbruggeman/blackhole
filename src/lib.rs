@@ -1150,6 +1150,24 @@ mod runtime {
         30
     }
 
+    fn valid_tls_server_name(name: &str) -> bool {
+        if name.is_empty() || name.len() > 253 || !name.is_ascii() {
+            return false;
+        }
+        if name.parse::<std::net::IpAddr>().is_ok() {
+            return true;
+        }
+        name.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        })
+    }
+
     impl Config {
         pub fn from_file(path: &std::path::Path) -> Result<Self, Box<dyn std::error::Error>> {
             let metadata = std::fs::metadata(path)?;
@@ -1659,10 +1677,10 @@ mod runtime {
                 && upstream
                     .tls_server_name
                     .as_deref()
-                    .is_none_or(str::is_empty)
+                    .is_none_or(|name| !valid_tls_server_name(name))
             {
                 return Err(policy::PolicyError::InvalidUpstream {
-                    reason: "tls_server_name is required for TLS upstreams".into(),
+                    reason: "tls_server_name must be a valid ASCII DNS name or IP literal".into(),
                 });
             }
             let broadcast = matches!(resolver_ip, std::net::IpAddr::V4(ip) if ip.is_broadcast());
@@ -3050,6 +3068,21 @@ mod runtime {
                 ..Config::default()
             };
             assert!(Policy::new(config).is_ok());
+
+            for server_name in ["resolver example", "-resolver.example", "résolveur.example"] {
+                let config = Config {
+                    upstream: Some(UpstreamConfig {
+                        transport: UpstreamTransport::Tls,
+                        tls_server_name: Some(server_name.into()),
+                        ..UpstreamConfig::default()
+                    }),
+                    ..Config::default()
+                };
+                assert!(matches!(
+                    Policy::new(config),
+                    Err(policy::PolicyError::InvalidUpstream { .. })
+                ));
+            }
 
             let config = Config {
                 upstream: Some(UpstreamConfig {
