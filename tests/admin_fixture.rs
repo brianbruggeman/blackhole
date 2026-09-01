@@ -119,6 +119,39 @@ async fn admin_http_listener_enforces_bearer_auth() {
     let status = String::from_utf8_lossy(&status);
     assert!(status.starts_with("HTTP/1.1 200"));
     assert!(status.contains("\"cache_entries\":0"));
+    let add_denylist = request(
+        addr,
+        "POST",
+        "/abuse/denylist/add",
+        Some("Bearer integration-secret"),
+        Some(r#"["192.0.2.10/32"]"#),
+    )
+    .await
+    .expect("denylist add response");
+    let add_denylist = String::from_utf8_lossy(&add_denylist);
+    assert!(add_denylist.starts_with("HTTP/1.1 200"));
+    let denylist = request(
+        addr,
+        "GET",
+        "/abuse/denylist",
+        Some("Bearer integration-secret"),
+        None,
+    )
+    .await
+    .expect("denylist export response");
+    let denylist = String::from_utf8_lossy(&denylist);
+    assert!(denylist.starts_with("HTTP/1.1 200"));
+    assert!(denylist.contains("192.0.2.10/32"));
+    let invalid_denylist = request(
+        addr,
+        "POST",
+        "/abuse/denylist/add",
+        Some("Bearer integration-secret"),
+        Some(r#"["not-a-cidr"]"#),
+    )
+    .await
+    .expect("invalid denylist response");
+    assert!(String::from_utf8_lossy(&invalid_denylist).starts_with("HTTP/1.1 422"));
     let policy_status = request(
         addr,
         "GET",
