@@ -104,6 +104,8 @@ async fn decide<'a>(
             _ => None,
         },
     );
+    let query = view.to_owned();
+    policy.record_decision(action, &query).await;
     state = state.transition(Event::Matched(action)).map_err(|error| {
         policy.observe_failure("fsm_transition");
         ProximaError::Config(error.to_string())
@@ -119,7 +121,6 @@ async fn decide<'a>(
         })?;
     }
 
-    let query = view.to_owned();
     let request = request(query.clone(), tcp, peer.clone());
     let answer = policy
         .call_owned(request, action)

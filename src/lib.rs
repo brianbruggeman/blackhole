@@ -2171,7 +2171,7 @@ mod runtime {
             telemetry.counter_inc("blackhole.failures", &labels, 1);
         }
 
-        async fn record_decision(&self, action: Action, query: &proxima_dns::DnsQuery) {
+        pub(crate) async fn record_decision(&self, action: Action, query: &proxima_dns::DnsQuery) {
             let Some(recording) = self.recording.as_ref() else {
                 return;
             };
