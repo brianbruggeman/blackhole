@@ -9604,6 +9604,37 @@ mod runtime {
         }
 
         #[test]
+        fn aggregate_decision_statistics_preserve_actions_and_reset_atomically() {
+            let policy = Policy::new(Config::default()).expect("valid policy");
+            for action in [
+                Action::Pass,
+                Action::Ignore,
+                Action::Drop,
+                Action::Reject,
+                Action::Nxdomain,
+                Action::Sink,
+                Action::Honeypot,
+                Action::Forward,
+                Action::Observe,
+            ] {
+                policy.observe(action);
+            }
+            let stats: serde_json::Value =
+                serde_json::from_str(&policy.admin_stats()).expect("stats JSON");
+            assert_eq!(stats["total"], 9);
+            for action in [
+                "pass", "ignore", "drop", "reject", "nxdomain", "sink", "honeypot", "forward",
+                "observe",
+            ] {
+                assert_eq!(stats["actions"][action], 1);
+            }
+            assert_eq!(policy.clear_stats(), 9);
+            let cleared: serde_json::Value =
+                serde_json::from_str(&policy.admin_stats()).expect("cleared stats JSON");
+            assert_eq!(cleared["total"], 0);
+        }
+
+        #[test]
         fn proxima_jsonl_recording_path_persists_metadata_only() {
             use proxima::RecordingSink;
             use proxima::{AccumulatingSink, FormatKind, LazyFanOut, SinkSpec};
