@@ -2,6 +2,7 @@
 //! script. It records allocator activity around the current scalar path so a
 //! SIMD or WASM change cannot be described as zero-copy by inspection.
 
+use blackhole::edge::EdgePolicy;
 #[cfg(feature = "perf-instrument")]
 use blackhole::perf;
 use blackhole::policy::{Action, QueryContext, ReferencePolicy, RuleConfig};
@@ -82,6 +83,7 @@ fn main() {
     });
 
     let policy = ReferencePolicy::new(&configs).expect("generated rules are valid");
+    let edge_policy = EdgePolicy::new(&configs).expect("generated edge policy is valid");
 
     let query = QueryContext {
         name: "host5000.shared.example.",
@@ -100,6 +102,18 @@ fn main() {
             start.elapsed().as_nanos() / matches_per_sample as u128,
             snapshot().bytes - before.bytes,
         )
+    });
+
+    let edge_packet = wire_query("host5000.shared.example.");
+    let edge_matching = measure(sample_count, || {
+        let before = snapshot();
+        let start = Instant::now();
+        black_box(
+            edge_policy
+                .decide(&edge_packet, None)
+                .expect("edge query is valid"),
+        );
+        (start.elapsed().as_nanos(), snapshot().bytes - before.bytes)
     });
 
     // Proxima's borrowed parser is intentionally measured separately: it
@@ -190,6 +204,7 @@ fn main() {
     println!("gate=b14 implementation=scalar-reference rules=10000 samples={sample_count}");
     report("build", &build, configs.len());
     report("match", &matching, sample_count * matches_per_sample);
+    report("edge_parse_match", &edge_matching, sample_count);
     report("parse_short", &parsing_short, sample_count);
     report("parse_long", &parsing_long, sample_count);
     report("parse_adversarial", &parsing_adversarial, sample_count);
