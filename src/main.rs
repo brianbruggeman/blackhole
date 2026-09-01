@@ -77,15 +77,54 @@ fn validate_query_recording_path(path: &str) -> Result<(), ProximaError> {
             parent.display()
         )));
     }
-    if let Ok(metadata) = std::fs::metadata(destination)
-        && !metadata.is_file()
-    {
-        return Err(ProximaError::Config(format!(
-            "query recording destination {} is not a regular file",
-            destination.display()
-        )));
+    match std::fs::metadata(destination) {
+        Ok(metadata) if !metadata.is_file() => {
+            return Err(ProximaError::Config(format!(
+                "query recording destination {} is not a regular file",
+                destination.display()
+            )));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(ProximaError::Config(format!(
+                "query recording destination {} is unavailable: {error}",
+                destination.display()
+            )));
+        }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_query_recording_path;
+    use std::path::PathBuf;
+
+    fn temporary_path(suffix: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "blackhole-recording-path-{}-{}-{suffix}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        ))
+    }
+
+    #[test]
+    fn recording_path_requires_an_existing_parent_directory() {
+        let path = temporary_path("missing").join("decisions.jsonl");
+        assert!(validate_query_recording_path(path.to_str().expect("UTF-8 path")).is_err());
+    }
+
+    #[test]
+    fn recording_path_rejects_a_directory_destination() {
+        let path = temporary_path("directory");
+        std::fs::create_dir(&path).expect("temporary directory");
+        assert!(validate_query_recording_path(path.to_str().expect("UTF-8 path")).is_err());
+        std::fs::remove_dir(&path).expect("remove temporary directory");
+    }
 }
 
 #[cfg(feature = "std")]
