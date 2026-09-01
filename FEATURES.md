@@ -84,6 +84,8 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   read-only health, bounded rule metadata, and non-sensitive status endpoints, authenticated blocklist
   and country-map reloads, bounded complete domain and regex rule-table
   reloads from JSON, and an atomic bounded domain-rule append operation.
+- The authenticated control plane can also remove domain rules by stable ID;
+  unknown IDs fail without changing the published snapshot.
 - The authenticated admin control plane includes a bounded static status page;
   it contains no query data and uses the existing Proxima HTTP pipe.
 - A tested policy/FSM/snapshot core that does not require privileged capture
