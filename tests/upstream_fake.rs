@@ -1,13 +1,18 @@
 use std::collections::VecDeque;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 
 use blackhole::policy::Action;
 use blackhole::{Config, Policy, RuleConfig, UpstreamConfig};
+use bytes::Bytes;
 use proxima::pipe::SendPipe;
+use proxima::pipe::into_handle;
+use proxima_core::ProximaError;
 use proxima_dns::DnsResolverConfig;
+use proxima_primitives::pipe::request::{Request, Response};
 use proxima_primitives::stream::{DatagramFactory, DatagramSocket};
 use proxima_protocols::dns::{Flags, encode, parse_message};
 
@@ -261,12 +266,82 @@ fn request() -> proxima_dns::DnsPipeRequest {
     }
 }
 
+struct FakeDoh {
+    calls: Arc<AtomicUsize>,
+}
+
+impl SendPipe for FakeDoh {
+    type In = Request<Bytes>;
+    type Out = Response<Bytes>;
+    type Err = ProximaError;
+
+    fn call(
+        &self,
+        request: Request<Bytes>,
+    ) -> impl std::future::Future<Output = Result<Response<Bytes>, ProximaError>> + Send {
+        let calls = Arc::clone(&self.calls);
+        async move {
+            assert_eq!(request.method.as_bytes(), b"POST");
+            assert_eq!(request.path.as_ref(), b"/dns-query");
+            calls.fetch_add(1, Ordering::SeqCst);
+
+            let message = parse_message(request.payload.as_ref())
+                .map_err(|_| ProximaError::Upstream("fake DoH received malformed query".into()))?;
+            let question = message
+                .questions()
+                .next()
+                .ok_or_else(|| ProximaError::Upstream("fake DoH received no question".into()))?
+                .map_err(|_| ProximaError::Upstream("fake DoH question was malformed".into()))?;
+            let name = question.name.to_dotted();
+            let rdata = encode::ipv4_rdata(Ipv4Addr::new(93, 184, 216, 34));
+            let record = encode::AnswerRecord {
+                name: &name,
+                rtype: 1,
+                rclass: question.qclass,
+                ttl: 30,
+                rdata: &rdata,
+            };
+            let mut response = Vec::new();
+            encode::encode_response(
+                message.header.id,
+                Flags::for_response(true, false, true, 0),
+                encode::EncodeQuestion {
+                    name: &name,
+                    qtype: question.qtype,
+                    qclass: question.qclass,
+                },
+                &[record],
+                &mut response,
+            )
+            .map_err(|_| ProximaError::Upstream("fake DoH response encoding failed".into()))?;
+            Ok(Response::ok(response))
+        }
+    }
+}
+
 #[proxima::test]
 async fn fake_upstream_success_flows_through_policy() {
     let (policy, _) = policy(ReplyMode::Valid);
     let answer = policy.call(request()).await.unwrap();
     assert_eq!(answer.payload.rcode, 0);
     assert_eq!(answer.payload.records.len(), 1);
+}
+
+#[proxima::test]
+async fn doh_upstream_flows_through_policy_and_cache() {
+    let (policy, socket) = policy(ReplyMode::Timeout);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let policy = policy.with_doh_upstream(into_handle(FakeDoh {
+        calls: Arc::clone(&calls),
+    }));
+
+    let first = policy.call(request()).await.expect("DoH exchange");
+    let second = policy.call(request()).await.expect("cached DoH exchange");
+    assert_eq!(first.payload.rcode, 0);
+    assert_eq!(first.payload.records.len(), 1);
+    assert_eq!(second.payload.records.len(), 1);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(socket.state.lock().expect("fake state").sent.is_empty());
 }
 
 #[proxima::test]
