@@ -20,6 +20,8 @@ jobs:
       - uses: taiki-e/install-action@nextest
       - run: cargo nextest run --workspace
       - run: cargo test --test resolver_fixture -- --nocapture
+      - run: cargo test --features perf-instrument --test resolver_fixture listener_forwards_allowed_query_to_loopback_upstream -- --nocapture
+      - run: cargo test --test resolver_fixture listener_retries_a_truncated_upstream_reply_over_tcp -- --nocapture
       - run: cargo test --doc
       - run: cargo check --no-default-features --target thumbv7m-none-eabi
       - run: cargo check --features tokio-compat --all-targets
