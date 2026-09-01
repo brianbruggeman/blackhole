@@ -10,6 +10,7 @@ const SYSTEMD_SMOKE: &str = "deploy/systemd/smoke.sh";
 const LAUNCHD_INSTALLER: &str = "deploy/launchd/install.sh";
 const PACKAGE_BUILDER: &str = "deploy/package/build.sh";
 const DEB_BUILDER: &str = "deploy/package/build-deb.sh";
+const DEB_SMOKE: &str = "deploy/package/smoke-deb.sh";
 
 #[test]
 fn launchd_service_is_unprivileged_and_direct() {
@@ -225,4 +226,14 @@ fn deb_builder_contains_native_package_contract() {
         );
     }
     assert!(!builder.contains("dpkg -i"));
+}
+
+#[test]
+fn deb_smoke_exercises_a_disposable_root_transaction() {
+    let script = fs::read_to_string(DEB_SMOKE).expect("read Debian package smoke script");
+    assert!(script.starts_with("#!/bin/sh\nset -eu\n"));
+    assert!(script.contains("dpkg --root=\"$root\" --unpack"));
+    assert!(script.matches("dpkg --root=\"$root\" --unpack").count() >= 2);
+    assert!(script.contains("dpkg-query --root=\"$root\""));
+    assert!(script.contains("/var/lib/blackhole"));
 }

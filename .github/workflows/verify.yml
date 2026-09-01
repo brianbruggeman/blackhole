@@ -40,6 +40,7 @@ jobs:
           sh -n deploy/launchd/install.sh
           sh -n deploy/package/build.sh
           sh -n deploy/package/build-deb.sh
+          sh -n deploy/package/smoke-deb.sh
       - name: build release packages
         run: |
           cargo build --locked --release --features std --bin blackhole
@@ -65,6 +66,8 @@ jobs:
         run: cargo build --locked --example capture_smoke
       - name: run systemd install and rollback smoke
         run: sudo -n env BLACKHOLE_BINARY="$PWD/target/release/blackhole" BLACKHOLE_CONFIG="$PWD/blackhole.example.toml" deploy/systemd/smoke.sh
+      - name: run Debian package install smoke
+        run: sudo -n deploy/package/smoke-deb.sh "$(find dist -name 'blackhole_*.deb' -print -quit)"
       - name: run privileged capture smoke
         run: sudo -n target/debug/examples/capture_smoke
 
@@ -80,6 +83,7 @@ jobs:
           sh -n deploy/launchd/install.sh
           sh -n deploy/package/build.sh
           sh -n deploy/package/build-deb.sh
+          sh -n deploy/package/smoke-deb.sh
       - name: validate launchd service
         run: plutil -lint deploy/launchd/com.brianbruggeman.blackhole.plist
       - name: record macOS toolchain
