@@ -20,6 +20,97 @@ fn test_listener_addr() -> SocketAddr {
     probe.local_addr().expect("reserved listener address")
 }
 
+#[proxima::test]
+async fn listener_preserves_distinct_terminal_actions_on_udp() {
+    let actions = [
+        ("reject.example.", Action::Reject),
+        ("nxdomain.example.", Action::Nxdomain),
+        ("sink.example.", Action::Sink),
+        ("honeypot.example.", Action::Honeypot),
+        ("drop.example.", Action::Drop),
+        ("ignore.example.", Action::Ignore),
+    ];
+    let mut config = Config::default();
+    config.server.listen = "127.0.0.1:0".into();
+    config.policy.rules = actions
+        .iter()
+        .enumerate()
+        .map(|(index, (domain, action))| RuleConfig {
+            id: index as u32 + 1,
+            domain: (*domain).into(),
+            action: *action,
+            priority: 0,
+            qtype: None,
+            qclass: None,
+            client: None,
+            client_cidr: None,
+            client_cidrs: Vec::new(),
+            client_identity: None,
+        })
+        .collect();
+    let policy = Arc::new(Policy::new(config).expect("valid action policy"));
+    let listener_addr = test_listener_addr();
+    let server = Listener::builder()
+        .bind(listener_addr)
+        .any()
+        .protocol(UdpProtocol::new(Arc::clone(&policy)))
+        .handle(into_handle(Passthrough))
+        .serve()
+        .await
+        .expect("serve listener");
+
+    let client = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind action client");
+    client
+        .set_read_timeout(Some(std::time::Duration::from_millis(150)))
+        .expect("set action client timeout");
+    for (index, (domain, action)) in actions.iter().enumerate() {
+        let mut query = Vec::new();
+        encode::encode_query(
+            index as u16 + 1,
+            true,
+            encode::EncodeQuestion {
+                name: domain,
+                qtype: 1,
+                qclass: 1,
+            },
+            &mut query,
+        )
+        .expect("encode action query");
+        client
+            .send_to(&query, listener_addr)
+            .expect("send action query");
+
+        let mut response = [0u8; 4096];
+        let received = client.recv_from(&mut response);
+        match action {
+            Action::Drop | Action::Ignore => assert!(
+                received.is_err(),
+                "{action:?} unexpectedly produced a UDP response"
+            ),
+            Action::Reject | Action::Nxdomain | Action::Sink | Action::Honeypot => {
+                let (length, _) = received.expect("terminal action response");
+                let message = parse_message(&response[..length]).expect("parse action response");
+                assert_eq!(message.header.id, index as u16 + 1);
+                match action {
+                    Action::Reject => assert_eq!(message.header.flags.rcode(), 5),
+                    Action::Nxdomain => assert_eq!(message.header.flags.rcode(), 3),
+                    Action::Sink => {
+                        assert_eq!(message.header.flags.rcode(), 0);
+                        assert_eq!(message.answers().count(), 0);
+                    }
+                    Action::Honeypot => {
+                        assert_eq!(message.header.flags.rcode(), 0);
+                        assert_eq!(message.answers().count(), 1);
+                    }
+                    _ => unreachable!("response action already matched"),
+                }
+            }
+            _ => unreachable!("action matrix contains only terminal actions"),
+        }
+    }
+    drop(server);
+}
+
 struct Passthrough;
 
 impl SendPipe for Passthrough {
