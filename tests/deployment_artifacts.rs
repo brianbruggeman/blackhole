@@ -241,9 +241,14 @@ fn deb_builder_contains_native_package_contract() {
 fn deb_smoke_exercises_a_disposable_root_transaction() {
     let script = fs::read_to_string(DEB_SMOKE).expect("read Debian package smoke script");
     assert!(script.starts_with("#!/bin/sh\nset -eu\n"));
+    assert!(script.contains("usage: $0 DEB [UPGRADE_DEB]"));
+    assert!(script.contains("upgrade_package=${2:-$package}"));
     assert!(script.contains("dpkg --root=\"$root\" --unpack"));
-    assert!(script.matches("--unpack \"$package\"").count() >= 2);
+    assert!(script.contains("dpkg-deb --field \"$package\" Version"));
+    assert!(script.contains("dpkg --compare-versions \"$new_version\" gt \"$old_version\""));
+    assert!(script.contains("--unpack \"$upgrade_package\""));
     assert!(script.contains("--force-confold --unpack"));
+    assert!(script.contains("installed_version=$(dpkg-query"));
     assert!(script.contains("dpkg-query --root=\"$root\""));
     assert!(script.contains("/var/lib/blackhole"));
 }
