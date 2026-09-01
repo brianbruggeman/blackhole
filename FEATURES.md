@@ -45,7 +45,8 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   configuration, and disabled profiles generate no rules.
 - Named client groups assign bounded exact IPv4/IPv6 client addresses and CIDR
   sets to service profiles; one profile may target multiple groups, with
-  duplicate, unknown, or ambiguous scopes rejected before publication.
+  duplicate, unknown, or ambiguous scopes rejected before publication. Groups
+  can be disabled without deleting their configured address and network scope.
 - Synthetic IPv4/IPv6 honeypot answers with configurable TTL.
 - Configured upstream pass-through for `pass` and `observe`, after local
   rewrites; explicit `forward` remains a distinct fail-closed action.

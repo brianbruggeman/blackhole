@@ -64,6 +64,7 @@ async fn admin_http_listener_enforces_bearer_auth() {
     config.policy.blocklists = vec![initial_blocklist.to_string_lossy().into_owned()];
     config.policy.client_groups = vec![ClientGroupConfig {
         name: "home".into(),
+        enabled: true,
         client_addresses: Vec::new(),
         client_cidrs: vec!["192.0.2.0/24".into()],
     }];

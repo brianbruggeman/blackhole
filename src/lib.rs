@@ -1289,10 +1289,17 @@ mod runtime {
     #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
     pub struct ClientGroupConfig {
         pub name: String,
+        /// Keep the group configured while excluding it from profile scopes.
+        #[serde(default = "default_group_enabled")]
+        pub enabled: bool,
         #[serde(default)]
         pub client_addresses: Vec<IpAddr>,
         #[serde(default)]
         pub client_cidrs: Vec<String>,
+    }
+
+    fn default_group_enabled() -> bool {
+        true
     }
 
     #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -2011,7 +2018,10 @@ mod runtime {
                 });
             }
             if group_map
-                .insert(name.to_ascii_lowercase(), scopes)
+                .insert(
+                    name.to_ascii_lowercase(),
+                    if group.enabled { scopes } else { Vec::new() },
+                )
                 .is_some()
             {
                 return Err(policy::PolicyError::InvalidProfile {
@@ -5210,6 +5220,7 @@ mod runtime {
                 })).collect::<Vec<_>>(),
                 "client_groups": client_groups.iter().map(|group| serde_json::json!({
                     "name": group.name,
+                    "enabled": group.enabled,
                     "client_addresses": group.client_addresses,
                     "client_cidrs": group.client_cidrs,
                 })).collect::<Vec<_>>(),
@@ -5315,10 +5326,14 @@ mod runtime {
                                     .find(|group| group.name.eq_ignore_ascii_case(name))
                             })
                             .map(|group| {
-                                group
-                                    .client_addresses
-                                    .len()
-                                    .saturating_add(usize::from(!group.client_cidrs.is_empty()))
+                                if group.enabled {
+                                    group
+                                        .client_addresses
+                                        .len()
+                                        .saturating_add(usize::from(!group.client_cidrs.is_empty()))
+                                } else {
+                                    0
+                                }
                             })
                             .sum()
                     };
@@ -5355,6 +5370,7 @@ mod runtime {
                 .map(|group| {
                     serde_json::json!({
                         "name": group.name,
+                        "enabled": group.enabled,
                         "client_addresses": group.client_addresses,
                         "client_cidrs": group.client_cidrs,
                     })
@@ -7796,11 +7812,13 @@ mod runtime {
             config.policy.client_groups = vec![
                 ClientGroupConfig {
                     name: "family".into(),
+                    enabled: true,
                     client_addresses: Vec::new(),
                     client_cidrs: vec!["192.0.2.0/24".into(), "2001:db8:1::/64".into()],
                 },
                 ClientGroupConfig {
                     name: "guest".into(),
+                    enabled: true,
                     client_addresses: Vec::new(),
                     client_cidrs: vec!["198.51.100.0/24".into()],
                 },
@@ -7843,10 +7861,54 @@ mod runtime {
         }
 
         #[test]
+        fn disabled_client_group_retains_metadata_but_expands_no_rules() {
+            let mut config = Config::default();
+            config.policy.client_groups = vec![ClientGroupConfig {
+                name: "family".into(),
+                enabled: false,
+                client_addresses: Vec::new(),
+                client_cidrs: vec!["192.0.2.0/24".into()],
+            }];
+            config.policy.profiles = vec![ServiceProfileConfig {
+                id: 50_001,
+                name: "family-blocks".into(),
+                enabled: true,
+                domains: vec!["ads.example".into()],
+                action: Action::Nxdomain,
+                groups: vec!["family".into()],
+                client_identity: None,
+                priority: 10,
+                client_cidrs: Vec::new(),
+                qtype: None,
+                qclass: None,
+            }];
+            let policy = Policy::new(config).expect("valid disabled client group");
+            let query = proxima_dns::DnsQuery {
+                id: 7,
+                recursion_desired: true,
+                name: "ads.example.".into(),
+                qtype: 1,
+                qclass: 1,
+            };
+            assert!(
+                policy
+                    .decision(&query, Some("192.0.2.53".parse().unwrap()))
+                    .is_none()
+            );
+            let groups: serde_json::Value =
+                serde_json::from_str(&policy.admin_client_groups()).expect("group status");
+            assert_eq!(groups["client_groups"][0]["enabled"], false);
+            let profiles: serde_json::Value =
+                serde_json::from_str(&policy.admin_profiles()).expect("profile status");
+            assert_eq!(profiles["profiles"][0]["expanded_rule_count"], 0);
+        }
+
+        #[test]
         fn client_groups_match_exact_addresses_and_cidrs_without_broadening_exact_scope() {
             let mut config = Config::default();
             config.policy.client_groups = vec![ClientGroupConfig {
                 name: "named-clients".into(),
+                enabled: true,
                 client_addresses: vec!["192.0.2.53".parse().unwrap()],
                 client_cidrs: vec!["198.51.100.0/24".into()],
             }];
@@ -7916,6 +7978,7 @@ mod runtime {
             let mut ambiguous = Config::default();
             ambiguous.policy.client_groups = vec![ClientGroupConfig {
                 name: "family".into(),
+                enabled: true,
                 client_addresses: Vec::new(),
                 client_cidrs: vec!["192.0.2.0/24".into()],
             }];
@@ -7940,6 +8003,7 @@ mod runtime {
             let mut duplicate_address = Config::default();
             duplicate_address.policy.client_groups = vec![ClientGroupConfig {
                 name: "family".into(),
+                enabled: true,
                 client_addresses: vec![
                     "192.0.2.53".parse().unwrap(),
                     "192.0.2.53".parse().unwrap(),

@@ -422,6 +422,7 @@ async fn listener_enforces_service_profile_on_the_real_udp_path() {
     let mut config = Config::default();
     config.policy.client_groups = vec![blackhole::ClientGroupConfig {
         name: "loopback".into(),
+        enabled: true,
         client_addresses: Vec::new(),
         client_cidrs: vec!["127.0.0.0/8".into()],
     }];

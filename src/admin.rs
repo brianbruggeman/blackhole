@@ -1416,6 +1416,7 @@ mod tests {
         }];
         config.policy.client_groups = vec![crate::ClientGroupConfig {
             name: "home".into(),
+            enabled: true,
             client_addresses: Vec::new(),
             client_cidrs: vec!["192.0.2.0/24".into()],
         }];
@@ -1509,6 +1510,7 @@ mod tests {
         }];
         config.policy.client_groups = vec![crate::ClientGroupConfig {
             name: "home".into(),
+            enabled: true,
             client_addresses: Vec::new(),
             client_cidrs: vec!["192.0.2.0/24".into()],
         }];
