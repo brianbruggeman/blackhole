@@ -1,12 +1,10 @@
 #![cfg(feature = "std")]
 
 use blackhole::admin::{authenticated_handle, validate_bind};
-#[cfg(target_os = "macos")]
-use blackhole::linux_capture::FileOwnershipStore;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use blackhole::linux_capture::{CaptureController, FileOwnershipStore};
 #[cfg(target_os = "linux")]
-use blackhole::linux_capture::{
-    CaptureController, FileOwnershipStore, NftRulePlan, native::NftCommandBackend,
-};
+use blackhole::linux_capture::{NftRulePlan, native::NftCommandBackend};
 #[cfg(feature = "std")]
 use blackhole::listener::{TcpProtocol, UdpProtocol};
 #[cfg(target_os = "macos")]
