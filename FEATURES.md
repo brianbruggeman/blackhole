@@ -82,8 +82,10 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   the last good snapshot after a failed refresh.
 - A committed libFuzzer target for the borrowed DNS query boundary, with a
   privacy-safe corpus location for minimized wire samples.
-- Proxima-native action counters, failure-cause counters, and request-latency
-  histograms that preserve the complete action identity.
+- Proxima-native action counters, bounded failure-cause counters, and
+  request-latency histograms that preserve the complete action identity;
+  listener parser failures retain stable causes for wire-short, malformed-wire,
+  response, flags, unsupported-name, question-count, and oversized inputs.
 - An optional Proxima recording-sink hook emits only bounded decision metadata
   (`action`, `qtype`, and `qclass`); DNS names, client identity, credentials,
   and wire payloads are excluded from recording events. The convenience API
