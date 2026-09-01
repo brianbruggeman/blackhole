@@ -1744,7 +1744,10 @@ mod runtime {
         ) -> Result<ReloadState, policy::PolicyError> {
             let started = Instant::now();
             let mut base_rules = self.base_rules.lock().expect("base rules lock");
-            self.publish_rules_locked(rules, &mut base_rules, "rules", started)
+            let generated = self.current_profile_rules()?;
+            let mut combined = rules.to_vec();
+            combined.extend(generated);
+            self.publish_rules_locked(&combined, rules, &mut base_rules, "rules", started)
         }
 
         /// Append validated rules to the current authoritative table and
@@ -1757,9 +1760,21 @@ mod runtime {
         ) -> Result<ReloadState, policy::PolicyError> {
             let started = Instant::now();
             let mut base_rules = self.base_rules.lock().expect("base rules lock");
-            let mut combined = base_rules.clone();
-            combined.extend_from_slice(additions);
-            self.publish_rules_locked(&combined, &mut base_rules, "rules_append", started)
+            let mut explicit = self
+                .explicit_rules
+                .lock()
+                .expect("explicit rules lock")
+                .clone();
+            explicit.extend_from_slice(additions);
+            let mut combined = explicit.clone();
+            combined.extend(self.current_profile_rules()?);
+            self.publish_rules_locked(
+                &combined,
+                &explicit,
+                &mut base_rules,
+                "rules_append",
+                started,
+            )
         }
 
         /// Remove every cached answer and return the number of entries
@@ -1784,8 +1799,13 @@ mod runtime {
                 });
             }
             let mut base_rules = self.base_rules.lock().expect("base rules lock");
-            let original_len = base_rules.len();
-            let mut next = base_rules.clone();
+            let explicit = self
+                .explicit_rules
+                .lock()
+                .expect("explicit rules lock")
+                .clone();
+            let original_len = explicit.len();
+            let mut next = explicit.clone();
             next.retain(|rule| !requested.contains(&rule.id));
             if next.len() == original_len {
                 return Err(policy::PolicyError::InvalidProfile {
@@ -1793,12 +1813,22 @@ mod runtime {
                     reason: "no requested rule ID exists".into(),
                 });
             }
-            self.publish_rules_locked(&next, &mut base_rules, "rules_remove", started)
+            let mut combined = next.clone();
+            combined.extend(self.current_profile_rules()?);
+            self.publish_rules_locked(&combined, &next, &mut base_rules, "rules_remove", started)
+        }
+
+        fn current_profile_rules(&self) -> Result<Vec<RuleConfig>, policy::PolicyError> {
+            compile_profiles(
+                &self.profiles.read().expect("profiles lock"),
+                &self.client_groups.read().expect("client groups lock"),
+            )
         }
 
         fn publish_rules_locked(
             &self,
             rules: &[RuleConfig],
+            explicit_rules: &[RuleConfig],
             base_rules: &mut Vec<RuleConfig>,
             reload_kind: &'static str,
             started: Instant,
@@ -1815,7 +1845,7 @@ mod runtime {
             }
             let published = self.reference.reload(rules)?;
             *base_rules = rules.to_vec();
-            *self.explicit_rules.lock().expect("explicit rules lock") = rules.to_vec();
+            *self.explicit_rules.lock().expect("explicit rules lock") = explicit_rules.to_vec();
             self.domain_rules_configured
                 .store(!rules.is_empty(), Ordering::Release);
             self.rules_configured.store(

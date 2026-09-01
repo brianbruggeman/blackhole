@@ -415,6 +415,12 @@ mod tests {
             serde_json::from_slice(&profiles.payload).expect("replacement profiles JSON");
         assert_eq!(profiles["total"], 1);
         assert_eq!(profiles["profiles"][0]["name"], "new-family");
+        let rules = block_on(handler.call(request("GET", "/rules"))).expect("rules");
+        let rules: serde_json::Value = serde_json::from_slice(&rules.payload).expect("rules JSON");
+        assert_eq!(
+            rules["total"], 82,
+            "explicit, profile, and regex rules remain"
+        );
     }
 
     #[test]
