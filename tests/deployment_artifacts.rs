@@ -186,6 +186,9 @@ fn launchd_smoke_covers_host_install_and_upgrade() {
             "missing launchd smoke step: {required}"
         );
     }
+    let plist = fs::read_to_string(LAUNCHD_PLIST).expect("read launchd service definition");
+    assert!(plist.contains("StandardOutPath"));
+    assert!(plist.contains("StandardErrorPath"));
 }
 
 #[test]

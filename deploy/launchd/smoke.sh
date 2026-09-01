@@ -23,6 +23,8 @@ binary_target=/usr/local/bin/blackhole
 config_target=/usr/local/etc/blackhole/blackhole.toml
 plist_target=/Library/LaunchDaemons/$label.plist
 state_target=/usr/local/var/lib/blackhole
+stdout_log=$state_target/launchd.stdout.log
+stderr_log=$state_target/launchd.stderr.log
 created_user=0
 
 [ -x "$binary" ] || { echo "release binary is required: $binary" >&2; exit 1; }
@@ -40,8 +42,15 @@ fi
 
 cleanup() {
     status=$?
+    if [ "$status" -ne 0 ]; then
+        echo "launchd stdout:" >&2
+        tail -n 80 "$stdout_log" 2>/dev/null || true
+        echo "launchd stderr:" >&2
+        tail -n 80 "$stderr_log" 2>/dev/null || true
+    fi
     launchctl bootout "system/$label" >/dev/null 2>&1 || true
     rm -f "$binary_target" "$config_target" "$plist_target"
+    rm -f "$stdout_log" "$stderr_log"
     if [ -n "${failed_plist:-}" ]; then
         rm -f "$failed_plist"
     fi
@@ -60,6 +69,8 @@ launchctl print "system/$label" >/dev/null
 test -x "$binary_target"
 test -f "$config_target"
 test -f "$plist_target"
+test -f "$stdout_log"
+test -f "$stderr_log"
 created_user=1
 
 old_binary=$(shasum -a 256 "$binary_target")

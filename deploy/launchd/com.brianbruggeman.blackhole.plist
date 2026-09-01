@@ -17,6 +17,10 @@
   <string>_blackhole</string>
   <key>WorkingDirectory</key>
   <string>/usr/local/var/lib/blackhole</string>
+  <key>StandardOutPath</key>
+  <string>/usr/local/var/lib/blackhole/launchd.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>/usr/local/var/lib/blackhole/launchd.stderr.log</string>
 
   <key>RunAtLoad</key>
   <true/>
