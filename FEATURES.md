@@ -36,6 +36,10 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   bounded UDP exchanges and DNS-over-TCP fallback when UDP sets `TC`; timeout
   is bounded to 60 seconds, at most eight attempts per exchange, and the
   outstanding-query limit is bounded.
+- Configurable Proxima upstream transport: `udp` (with TCP fallback), `tcp`,
+  or `tls` for DNS-over-TLS stream-only exchanges; TLS requires an explicit
+  server name and uses certificate verification through Proxima's GitHub
+  `proxima-tls` adapter.
 - Bounded positive and negative response caching with a configured maximum
   protocol TTL, a bounded stale-serving window for upstream outages, plus
   Proxima-native hit/miss/stale/eviction counters and effective positive/

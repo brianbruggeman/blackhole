@@ -66,6 +66,12 @@ invalid or oversized expressions fail configuration validation, and explicit
 domain rules take precedence when both match. Regex rules may also use the
 same bounded `client_cidrs` network scope as domain rules.
 
+The upstream transport is selected in `[upstream]`: `transport = "udp"` keeps
+UDP with bounded TCP fallback, `transport = "tcp"` uses DNS-over-TCP for every
+exchange, and `transport = "tls"` uses DNS-over-TLS for every exchange. TLS
+requires `tls_server_name` and validates the server certificate through
+Proxima's GitHub `proxima-tls` adapter.
+
 Proxima is consumed from GitHub. Prime is the default runtime and executable
 path. Proxima's HTTP listener currently brings a small Tokio dependency into
 the default graph for its UDS support; use the opt-in `tokio-compat` feature
