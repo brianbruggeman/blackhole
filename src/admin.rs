@@ -81,17 +81,16 @@ struct PolicyBundle {
 }
 const ADMIN_UI: &str = r#"<!doctype html>
 <meta charset="utf-8">
-<title>Blackhole DNS</title>
-<h1>Blackhole DNS</h1>
-<p>Private DNS controls.</p>
+<title>Blackhole</title>
+<h1>Blackhole</h1>
 <p><button id="clear-logs">Clear privacy log</button> <button id="clear-stats">Clear decision statistics</button> <button id="clear-cache">Clear DNS cache</button> <button id="clear-abuse">Clear temporary abuse state</button> <button id="reload-blocklists">Reload blocklists</button> <button id="reload-country">Reload country map</button> <button id="reload-admission">Reload admission JSON</button> <button id="reload-bundle">Publish full config</button></p>
-<p id="operation-status" role="status"></p>
+<p id="operation-status"></p>
 <h2>Status</h2><pre id="status">loading…</pre>
 <h2>Decision statistics</h2><pre id="stats">loading…</pre>
 <h2>Admission limits</h2><textarea id="admission-config" rows="16" cols="80">loading…</textarea><pre id="admission-status">loading…</pre>
-<h2>Adaptive abuse controls</h2><pre id="abuse-status">loading…</pre>
+<h2>Abuse status</h2><pre id="abuse-status">loading…</pre>
 <h2>Managed client denylist</h2><textarea id="denylist-config" rows="5" cols="80">loading…</textarea><p><button id="add-denylist">Add entries</button> <button id="remove-denylist">Revoke entries</button></p>
-<h2>Temporary incident revocation</h2><textarea id="abuse-revoke" rows="3" cols="80" placeholder='["192.0.2.10"]'></textarea><p><button id="revoke-abuse">Revoke temporary blocks</button></p>
+<h2>Abuse</h2><textarea id="abuse-revoke"></textarea><button id="revoke-abuse">Revoke</button><button id="approve-abuse">Approve</button>
 <h2>Incident review</h2><p><button id="export-abuse">Export durable incidents</button></p><pre id="abuse-incidents">loading…</pre>
 <h2>Policy bundle</h2><textarea id="policy-bundle" rows="12" cols="80">loading…</textarea>
 <h2>Blocklists</h2><textarea id="blocklist-sources"></textarea><button id="replace-blocklists">Replace</button><button id="add-blocklists">Add</button><button id="remove-blocklists">Remove</button><button id="reload-blocklists">Reload</button><div id="blocklist-controls"></div><pre id="blocklists">loading…</pre>
@@ -157,7 +156,8 @@ document.querySelector('#clear-abuse').onclick = () => operate('/abuse/clear', {
 const updateDenylist = path => operate(path, {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#denylist-config').value}).then(refresh);
 document.querySelector('#add-denylist').onclick = () => updateDenylist('/abuse/denylist/add');
 document.querySelector('#remove-denylist').onclick = () => updateDenylist('/abuse/denylist/remove');
-document.querySelector('#revoke-abuse').onclick = () => operate('/abuse/revoke', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#abuse-revoke').value}).then(refresh);
+const updateAbuse = path => operate(path, {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#abuse-revoke').value}).then(refresh);
+for (const [id,path] of [['revoke-abuse','/abuse/revoke'],['approve-abuse','/abuse/incidents/approve']]) document.querySelector(`#${id}`).onclick = () => updateAbuse(path);
 document.querySelector('#export-abuse').onclick = () => fetch('/abuse/incidents/export').then(response => response.json()).then(value => { document.querySelector('#abuse-incidents').textContent = JSON.stringify(value, null, 2); });
 const updateBlocklists = op => operate(`/reload/blocklists/${op}`, {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#blocklist-sources').value}).then(refresh);
 for (const [id,op] of [['replace-blocklists','replace'],['add-blocklists','add'],['remove-blocklists','remove']]) document.querySelector(`#${id}`).onclick = () => updateBlocklists(op);

@@ -114,6 +114,8 @@ async fn admin_http_listener_enforces_bearer_auth() {
     assert!(ui.starts_with("HTTP/1.1 200"));
     assert!(ui.contains("replace-blocklists"));
     assert!(ui.contains("/reload/blocklists/${op}"));
+    assert!(ui.contains("approve-abuse"));
+    assert!(ui.contains("/abuse/incidents/approve"));
     let status = request(
         addr,
         "GET",
