@@ -4208,9 +4208,16 @@ mod runtime {
     fn valid_dns_name(name: &str) -> bool {
         name.is_empty()
             || (name.len() <= 253
-                && name
-                    .split('.')
-                    .all(|label| !label.is_empty() && label.len() <= 63 && label.is_ascii()))
+                && name.split('.').all(|label| {
+                    !label.is_empty()
+                        && label.len() <= 63
+                        && label.is_ascii()
+                        && !label.starts_with('-')
+                        && !label.ends_with('-')
+                        && label
+                            .bytes()
+                            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+                }))
     }
 
     fn validate_legacy_domains(domains: &[String]) -> Result<Vec<String>, policy::PolicyError> {
@@ -5497,6 +5504,28 @@ mod runtime {
                 Policy::new(invalid),
                 Err(policy::PolicyError::InvalidRewrite { .. })
             ));
+
+            for name in [
+                "has space.example",
+                "has_underscore.example",
+                "-leading.example",
+                "trailing-.example",
+            ] {
+                let mut invalid = Config::default();
+                invalid.policy.rewrites = vec![RewriteConfig {
+                    name: name.into(),
+                    ipv4: Some(Ipv4Addr::new(192, 0, 2, 1)),
+                    ipv6: None,
+                    ttl: 30,
+                }];
+                assert!(
+                    matches!(
+                        Policy::new(invalid),
+                        Err(policy::PolicyError::InvalidRewrite { .. })
+                    ),
+                    "invalid rewrite name must fail closed: {name}"
+                );
+            }
 
             let mut oversized = Config::default();
             oversized.policy.rewrites = (0..=MAX_REWRITES)
