@@ -13,11 +13,6 @@ evidence stay in the engineering workflow rather than this product roadmap.
 The current baseline is documented in [FEATURES.md](FEATURES.md). The items
 below are future capabilities, grouped by the dependency layer they extend.
 
-## Resolver completion
-
-- Isolate the synthetic honeypot answer from any future payload-collection
-  terminal and preserve its bounded DNS-only contract.
-
 ## Policy and operator controls
 
 - Extend the authenticated blocklist and policy administration with richer
