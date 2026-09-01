@@ -86,6 +86,30 @@ async fn admin_http_listener_enforces_bearer_auth() {
     let status = String::from_utf8_lossy(&status);
     assert!(status.starts_with("HTTP/1.1 200"));
     assert!(status.contains("\"cache_entries\":0"));
+    let logs = request(
+        addr,
+        "GET",
+        "/logs",
+        Some("Bearer integration-secret"),
+        None,
+    )
+    .await
+    .expect("query log response");
+    let logs = String::from_utf8_lossy(&logs);
+    assert!(logs.starts_with("HTTP/1.1 200"));
+    assert!(logs.contains("{\"enabled\":false,\"entries\":[]}"));
+    let cleared_logs = request(
+        addr,
+        "POST",
+        "/logs/clear",
+        Some("Bearer integration-secret"),
+        None,
+    )
+    .await
+    .expect("query log clear response");
+    let cleared_logs = String::from_utf8_lossy(&cleared_logs);
+    assert!(cleared_logs.starts_with("HTTP/1.1 200"));
+    assert!(cleared_logs.contains("\"entries\":0"));
     let reloaded = request(
         addr,
         "POST",

@@ -22,6 +22,13 @@ DNS edge and is a prerequisite for any future honeypot terminal.
 - An authenticated `POST /cache/clear` operation deletes all currently cached
   DNS answers and returns only the bounded number of entries removed. It does
   not expose names, client identity, or payloads.
+- The optional query-decision log is disabled by default. When enabled, it is
+  bounded by `privacy.query_log_max_entries` and
+  `privacy.query_log_retention_secs`, stores only timestamp/action/qtype/qclass
+  metadata through Proxima's recording event shape, and is readable or
+  deletable only through the authenticated loopback admin surface (`GET
+  /logs` and `POST /logs/clear`). The in-memory log is not a durable honeypot
+  store and is cleared on process exit.
 - Country-policy classification uses adapter-owned client addresses against an
   operator-supplied CIDR map. It is an operational classification signal, not
   identity, attribution, authentication, or a substitute for network-level

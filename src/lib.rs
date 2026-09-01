@@ -31,7 +31,7 @@ pub mod snapshot;
 mod runtime {
     use proxima::{
         BoundedRecordingSink, DynRecordingSink, FailMode, InteractionId, Labels, ProtocolEvent,
-        RecordingEvent, TelemetryHandle,
+        RecordingAppendFuture, RecordingEvent, RecordingSink, TelemetryHandle,
     };
     use proxima_core::ProximaError;
     use proxima_dns::{
@@ -43,7 +43,7 @@ mod runtime {
     use proxima_primitives::stream::DatagramFactory;
     use proxima_primitives::sync::Semaphore;
     use serde::Deserialize;
-    use std::collections::{BTreeSet, HashMap};
+    use std::collections::{BTreeSet, HashMap, VecDeque};
     use std::hash::Hash;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -84,6 +84,8 @@ mod runtime {
         pub security: SecurityConfig,
         #[serde(default)]
         pub country_policy: CountryPolicyConfig,
+        #[serde(default)]
+        pub privacy: PrivacyConfig,
         #[serde(default)]
         pub capture: CaptureConfig,
     }
@@ -449,6 +451,29 @@ mod runtime {
         pub reject_private_upstream_addresses: bool,
     }
 
+    #[derive(Debug, Clone, Deserialize)]
+    pub struct PrivacyConfig {
+        /// Enable the bounded in-memory query-decision log.
+        #[serde(default)]
+        pub query_log_enabled: bool,
+        /// Maximum number of metadata-only entries retained.
+        #[serde(default = "default_query_log_entries")]
+        pub query_log_max_entries: usize,
+        /// Maximum age of a metadata entry in seconds.
+        #[serde(default = "default_query_log_retention_secs")]
+        pub query_log_retention_secs: u64,
+    }
+
+    impl Default for PrivacyConfig {
+        fn default() -> Self {
+            Self {
+                query_log_enabled: false,
+                query_log_max_entries: default_query_log_entries(),
+                query_log_retention_secs: default_query_log_retention_secs(),
+            }
+        }
+    }
+
     impl Default for SecurityConfig {
         fn default() -> Self {
             Self {
@@ -727,6 +752,14 @@ mod runtime {
     }
     fn default_cache_entries() -> usize {
         1024
+    }
+
+    fn default_query_log_entries() -> usize {
+        1024
+    }
+
+    fn default_query_log_retention_secs() -> u64 {
+        86_400
     }
 
     fn default_max_cache_ttl_secs() -> u64 {
@@ -1253,6 +1286,77 @@ mod runtime {
         }
     }
 
+    /// A bounded Proxima recording sink for privacy-safe decision metadata.
+    /// Query names, client addresses, credentials, and wire payloads are never
+    /// accepted by this sink.
+    pub struct QueryLog {
+        entries: Mutex<VecDeque<RecordingEvent>>,
+        max_entries: usize,
+        retention: Duration,
+    }
+
+    impl QueryLog {
+        fn new(config: &PrivacyConfig) -> Self {
+            Self {
+                entries: Mutex::new(VecDeque::with_capacity(config.query_log_max_entries)),
+                max_entries: config.query_log_max_entries,
+                retention: Duration::from_secs(config.query_log_retention_secs),
+            }
+        }
+
+        fn append_event(&self, event: RecordingEvent) {
+            let mut entries = self.entries.lock().expect("query log lock");
+            let cutoff = event
+                .ts_ms
+                .saturating_sub(self.retention.as_millis().min(u128::from(u64::MAX)) as u64);
+            while entries.front().is_some_and(|old| old.ts_ms < cutoff) {
+                entries.pop_front();
+            }
+            entries.push_back(event);
+            while entries.len() > self.max_entries {
+                entries.pop_front();
+            }
+        }
+
+        pub fn snapshot(&self) -> Vec<RecordingEvent> {
+            let mut entries = self.entries.lock().expect("query log lock");
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |duration| {
+                    duration.as_millis().min(u128::from(u64::MAX)) as u64
+                });
+            let cutoff =
+                now_ms.saturating_sub(self.retention.as_millis().min(u128::from(u64::MAX)) as u64);
+            while entries.front().is_some_and(|old| old.ts_ms < cutoff) {
+                entries.pop_front();
+            }
+            entries.iter().cloned().collect()
+        }
+
+        pub fn clear(&self) -> usize {
+            let mut entries = self.entries.lock().expect("query log lock");
+            let count = entries.len();
+            entries.clear();
+            count
+        }
+    }
+
+    impl RecordingSink for QueryLog {
+        fn append<'lifetime>(
+            &'lifetime self,
+            event: RecordingEvent,
+        ) -> RecordingAppendFuture<'lifetime> {
+            Box::pin(async move {
+                self.append_event(event);
+                Ok(())
+            })
+        }
+
+        fn flush<'lifetime>(&'lifetime self) -> RecordingAppendFuture<'lifetime> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
     pub struct Policy {
         config: Config,
         base_rules: Mutex<Vec<RuleConfig>>,
@@ -1264,6 +1368,7 @@ mod runtime {
         rules_configured: AtomicBool,
         telemetry: Option<TelemetryHandle>,
         recording: Option<DynRecordingSink>,
+        query_log: Option<Arc<QueryLog>>,
         upstream: Option<DnsClientUpstream>,
         upstream_slots: Option<Arc<Semaphore>>,
         cache: Arc<Mutex<DnsCache>>,
@@ -1476,6 +1581,15 @@ mod runtime {
                     reason: "client abuse limits must be non-zero".into(),
                 });
             }
+            if config.privacy.query_log_enabled
+                && (config.privacy.query_log_max_entries == 0
+                    || config.privacy.query_log_max_entries > 65_536
+                    || config.privacy.query_log_retention_secs == 0)
+            {
+                return Err(policy::PolicyError::InvalidAdmission {
+                    reason: "enabled query log bounds are invalid".into(),
+                });
+            }
             let profile_rules =
                 compile_profiles(&config.policy.profiles, &config.policy.client_groups)?;
             config.policy.rules.extend(profile_rules);
@@ -1510,6 +1624,10 @@ mod runtime {
             let rules_configured =
                 !config.policy.rules.is_empty() || !config.policy.regex_rules.is_empty();
             let domain_rules_configured = !config.policy.rules.is_empty();
+            let query_log = config
+                .privacy
+                .query_log_enabled
+                .then(|| Arc::new(QueryLog::new(&config.privacy)));
             let policy = Self {
                 config,
                 base_rules: Mutex::new(base_rules),
@@ -1521,6 +1639,7 @@ mod runtime {
                 rules_configured: AtomicBool::new(rules_configured),
                 telemetry: None,
                 recording: None,
+                query_log,
                 upstream: None,
                 upstream_slots: None,
                 cache,
@@ -1551,6 +1670,10 @@ mod runtime {
         pub fn with_recording_sink(mut self, recording: DynRecordingSink) -> Self {
             self.recording = Some(recording);
             self
+        }
+
+        pub fn query_log(&self) -> Option<Arc<QueryLog>> {
+            self.query_log.as_ref().map(Arc::clone)
         }
 
         /// Attach a Proxima recording backend behind its bounded recording
@@ -2423,9 +2546,9 @@ mod runtime {
         }
 
         pub(crate) async fn record_decision(&self, action: Action, query: &proxima_dns::DnsQuery) {
-            let Some(recording) = self.recording.as_ref() else {
+            if self.recording.is_none() && self.query_log.is_none() {
                 return;
-            };
+            }
             let event = RecordingEvent {
                 id: InteractionId::new(),
                 ts_ms: std::time::SystemTime::now()
@@ -2443,9 +2566,39 @@ mod runtime {
                     }),
                 },
             };
-            if recording.append(event).await.is_err() {
+            if let Some(query_log) = self.query_log.as_ref()
+                && query_log.append(event.clone()).await.is_err()
+            {
+                self.observe_failure("query_log_append");
+            }
+            if let Some(recording) = self.recording.as_ref()
+                && recording.append(event).await.is_err()
+            {
                 self.observe_failure("recording_append");
             }
+        }
+
+        pub(crate) fn admin_query_log(&self) -> String {
+            let Some(query_log) = self.query_log.as_ref() else {
+                return "{\"enabled\":false,\"entries\":[]}".into();
+            };
+            let entries = query_log
+                .snapshot()
+                .into_iter()
+                .filter_map(|event| match event.event {
+                    ProtocolEvent::Custom { kind, payload } if kind == "blackhole.dns_decision" => {
+                        Some(payload)
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            serde_json::json!({"enabled": true, "entries": entries}).to_string()
+        }
+
+        pub(crate) fn clear_query_log(&self) -> usize {
+            self.query_log
+                .as_ref()
+                .map_or(0, |query_log| query_log.clear())
         }
 
         pub(crate) fn admin_status(&self) -> String {
@@ -4754,6 +4907,50 @@ mod runtime {
             assert_eq!(payload["qtype"], 1);
             assert_eq!(payload["qclass"], 1);
             assert!(!payload.to_string().contains("secret.example"));
+        }
+
+        #[test]
+        fn bounded_query_log_retains_metadata_only_and_can_be_deleted() {
+            let mut config = Config::default();
+            config.privacy.query_log_enabled = true;
+            config.privacy.query_log_max_entries = 1;
+            config.privacy.query_log_retention_secs = 60;
+            let policy = Policy::new(config).expect("valid query log config");
+            let query = proxima_dns::DnsQuery {
+                id: 9,
+                recursion_desired: true,
+                name: "secret.example.".into(),
+                qtype: 1,
+                qclass: 1,
+            };
+            futures::executor::block_on(policy.record_decision(Action::Reject, &query));
+            futures::executor::block_on(policy.record_decision(Action::Nxdomain, &query));
+
+            let log = policy.query_log().expect("enabled query log");
+            let events = log.snapshot();
+            assert_eq!(events.len(), 1, "entry bound is enforced");
+            assert_eq!(
+                policy.admin_query_log().matches("secret.example").count(),
+                0
+            );
+            assert!(policy.admin_query_log().contains("nxdomain"));
+            assert_eq!(policy.clear_query_log(), 1);
+            assert!(log.snapshot().is_empty());
+        }
+
+        #[test]
+        fn query_log_configuration_is_bounded_and_disabled_by_default() {
+            let policy = Policy::new(Config::default()).expect("default policy");
+            assert!(policy.query_log().is_none());
+            assert_eq!(
+                policy.admin_query_log(),
+                "{\"enabled\":false,\"entries\":[]}"
+            );
+
+            let mut config = Config::default();
+            config.privacy.query_log_enabled = true;
+            config.privacy.query_log_max_entries = 65_537;
+            assert!(Policy::new(config).is_err());
         }
     }
 }

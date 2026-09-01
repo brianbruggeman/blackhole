@@ -67,9 +67,14 @@ impl SendPipe for AdminHandler {
             ("GET", "/health") => Ok(Response::ok("{\"status\":\"ok\"}")),
             ("GET", "/status") => Ok(Response::ok(self.policy.admin_status())),
             ("GET", "/rules") => Ok(Response::ok(self.policy.admin_rules())),
+            ("GET", "/logs") => Ok(Response::ok(self.policy.admin_query_log())),
             ("POST", "/cache/clear") => Ok(Response::ok(format!(
                 "{{\"status\":\"cleared\",\"entries\":{}}}",
                 self.policy.clear_cache()
+            ))),
+            ("POST", "/logs/clear") => Ok(Response::ok(format!(
+                "{{\"status\":\"cleared\",\"entries\":{}}}",
+                self.policy.clear_query_log()
             ))),
             ("POST", "/reload/blocklists") => match self.policy.reload_blocklists() {
                 Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
@@ -172,7 +177,9 @@ impl SendPipe for AdminHandler {
                 | "/health"
                 | "/status"
                 | "/rules"
+                | "/logs"
                 | "/cache/clear"
+                | "/logs/clear"
                 | "/reload/blocklists"
                 | "/reload/country"
                 | "/reload/policy"
@@ -255,6 +262,19 @@ mod tests {
         let rules: serde_json::Value = serde_json::from_slice(&rules.payload).expect("rules JSON");
         assert_eq!(rules["total"], 0);
         assert_eq!(rules["truncated"], false);
+        let logs = block_on(handler.call(request("GET", "/logs"))).expect("logs response");
+        assert_eq!(logs.status, 200);
+        assert_eq!(
+            logs.payload,
+            Bytes::from_static(b"{\"enabled\":false,\"entries\":[]}")
+        );
+        let clear_logs =
+            block_on(handler.call(request("POST", "/logs/clear"))).expect("log clear response");
+        assert_eq!(clear_logs.status, 200);
+        assert_eq!(
+            clear_logs.payload,
+            Bytes::from_static(b"{\"status\":\"cleared\",\"entries\":0}")
+        );
         let unknown = block_on(handler.call(request("GET", "/private"))).expect("404 response");
         assert_eq!(unknown.status, 404);
         let wrong_method =
