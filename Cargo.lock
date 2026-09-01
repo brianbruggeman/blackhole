@@ -271,6 +271,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "futures",
+ "memchr",
  "proxima",
  "proxima-core",
  "proxima-dns",

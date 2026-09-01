@@ -148,6 +148,13 @@ fn main() {
         (start.elapsed().as_nanos(), snapshot().bytes - before.bytes)
     });
 
+    // Compare bounded wire-name terminator scans independently of the policy
+    // result. These are measurement arms only: the production parser remains
+    // Proxima's validated codec until an end-to-end replacement is proven.
+    let scan_scalar = measure_name_scan(sample_count, &long_packet, scan_name_scalar);
+    let scan_chunked = measure_name_scan(sample_count, &long_packet, scan_name_chunked);
+    let scan_memchr = measure_name_scan(sample_count, &long_packet, scan_name_memchr);
+
     let owned_packet = [
         0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07, b'e', b'x',
         b'a', b'm', b'p', b'l', b'e', 0x03, b'c', b'o', b'm', 0x00, 0x00, 0x01, 0x00, 0x01,
@@ -209,6 +216,9 @@ fn main() {
     report("parse_long", &parsing_long, sample_count);
     report("parse_adversarial", &parsing_adversarial, sample_count);
     report("parse_mixed", &parsing_mixed, sample_count);
+    report("name_scan_scalar", &scan_scalar, sample_count);
+    report("name_scan_chunked", &scan_chunked, sample_count);
+    report("name_scan_memchr", &scan_memchr, sample_count);
     report("owned", &owning, sample_count);
     report("encode_response", &encoding, sample_count);
     #[cfg(feature = "perf-instrument")]
@@ -228,7 +238,7 @@ fn main() {
         load_average()
     );
     println!(
-        "arms=scalar-retained memchr-not-added simd-not-added wasm-edge-compile-only wasm-runtime-not-installed"
+        "arms=scalar-production name-scan-chunked-measured name-scan-memchr-measured simd-not-added wasm-edge-compile-only wasm-runtime-not-installed"
     );
 }
 
@@ -307,6 +317,49 @@ fn parse_measure(sample_count: usize, packet: &[u8]) -> Measurements {
         let _ = black_box(QueryView::parse(packet));
         (start.elapsed().as_nanos(), snapshot().bytes - before.bytes)
     })
+}
+
+fn measure_name_scan(
+    sample_count: usize,
+    packet: &[u8],
+    scan: fn(&[u8], usize) -> usize,
+) -> Measurements {
+    let expected = scan_name_scalar(packet, 12);
+    measure(sample_count, || {
+        let before = snapshot();
+        let start = Instant::now();
+        assert_eq!(black_box(scan(packet, 12)), expected);
+        (start.elapsed().as_nanos(), snapshot().bytes - before.bytes)
+    })
+}
+
+fn scan_name_scalar(packet: &[u8], start: usize) -> usize {
+    let mut offset = start;
+    while offset < packet.len() {
+        let length = packet[offset] as usize;
+        offset += 1;
+        if length == 0 {
+            return offset;
+        }
+        offset += length;
+    }
+    packet.len()
+}
+
+fn scan_name_chunked(packet: &[u8], start: usize) -> usize {
+    let mut offset = start;
+    while offset < packet.len() {
+        let end = (offset + 16).min(packet.len());
+        if let Some(index) = packet[offset..end].iter().position(|byte| *byte == 0) {
+            return offset + index + 1;
+        }
+        offset = end;
+    }
+    packet.len()
+}
+
+fn scan_name_memchr(packet: &[u8], start: usize) -> usize {
+    memchr::memchr(0, &packet[start..]).map_or(packet.len(), |offset| start + offset + 1)
 }
 
 fn wire_query(name: &str) -> Vec<u8> {
