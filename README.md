@@ -181,6 +181,7 @@ runs directly as the dedicated `_blackhole` user and reads
 `/usr/local/var/lib/blackhole` owned by that account before loading it. Keep the
 example high-port listener unless a separately authorized PF redirect is
 installed: macOS does not provide Linux-style per-binary low-port capabilities.
-Validate the installed configuration with `blackhole --check` before running
+Validate the installed configuration with
+`blackhole --check /usr/local/etc/blackhole/blackhole.toml` before running
 `launchctl bootstrap system` on the plist. The launch daemon neither installs
 nor removes PF rules.
