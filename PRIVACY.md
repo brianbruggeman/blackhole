@@ -42,6 +42,10 @@ DNS edge and is a prerequisite for any future honeypot terminal.
   the exact-client and configured-network breakers; names and wire payloads
   remain excluded. Durable incident deletion is operator-managed through the
   recording files, not the in-memory `/abuse/clear` operation.
+- The explicit local `--delete-recording` command preflights the active
+  recording and its bounded 16 rotated generations, removes only those exact
+  regular-file paths, and verifies each target is absent afterward. It does
+  not recursively delete directories or unrelated files.
 - Country-policy classification uses adapter-owned client addresses against an
   operator-supplied CIDR map. It is an operational classification signal, not
   identity, attribution, authentication, or a substitute for network-level

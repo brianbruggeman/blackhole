@@ -49,6 +49,8 @@ use std::{
     task::{Context, Poll},
 };
 
+const MAX_RECORDING_ROTATIONS: usize = 16;
+
 #[cfg(feature = "doq")]
 fn doq_tls_config() -> Result<rustls::ClientConfig, ProximaError> {
     let mut roots = rustls::RootCertStore::empty();
@@ -99,6 +101,68 @@ fn validate_query_recording_path(path: &str) -> Result<(), ProximaError> {
         }
     }
     Ok(())
+}
+
+#[cfg(feature = "std")]
+fn delete_query_recording(path: &Path) -> Result<usize, ProximaError> {
+    let path_string = path
+        .to_str()
+        .ok_or_else(|| ProximaError::Record("query recording path must be valid UTF-8".into()))?;
+    validate_query_recording_path(path_string)?;
+    let mut targets = Vec::with_capacity(MAX_RECORDING_ROTATIONS + 1);
+    targets.push(path.to_owned());
+    for index in 1..=MAX_RECORDING_ROTATIONS {
+        targets.push(rotated_query_recording_path(path, index));
+    }
+    for target in &targets {
+        match std::fs::metadata(target) {
+            Ok(metadata) if metadata.is_file() => {}
+            Ok(_) => {
+                return Err(ProximaError::Record(format!(
+                    "query recording target {} is not a regular file",
+                    target.display()
+                )));
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(ProximaError::Record(format!(
+                    "inspect query recording target {}: {error}",
+                    target.display()
+                )));
+            }
+        }
+    }
+    let mut removed = 0;
+    for target in &targets {
+        match std::fs::remove_file(target) {
+            Ok(()) => removed += 1,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(ProximaError::Record(format!(
+                    "delete query recording target {}: {error}",
+                    target.display()
+                )));
+            }
+        }
+    }
+    for target in &targets {
+        match std::fs::metadata(target) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Ok(_) => {
+                return Err(ProximaError::Record(format!(
+                    "query recording target {} remains after deletion",
+                    target.display()
+                )));
+            }
+            Err(error) => {
+                return Err(ProximaError::Record(format!(
+                    "verify query recording deletion {}: {error}",
+                    target.display()
+                )));
+            }
+        }
+    }
+    Ok(removed)
 }
 
 fn rotated_query_recording_path(path: &Path, index: usize) -> PathBuf {
@@ -349,7 +413,10 @@ async fn restore_persisted_abuse(
 #[cfg(test)]
 mod tests {
     use super::restore_persisted_abuse;
-    use super::{count_replay_event, rotate_query_recording, validate_query_recording_path};
+    use super::{
+        count_replay_event, delete_query_recording, rotate_query_recording,
+        validate_query_recording_path,
+    };
     use blackhole::{Config, Policy};
     use std::collections::BTreeMap;
     use std::path::PathBuf;
@@ -402,6 +469,22 @@ mod tests {
         );
         assert!(!path.with_extension("jsonl.3").exists());
         std::fs::remove_dir_all(directory).expect("remove temporary directory");
+    }
+
+    #[test]
+    fn durable_recording_deletion_removes_bounded_rotations_and_verifies_absence() {
+        let directory = temporary_path("delete");
+        std::fs::create_dir(&directory).expect("temporary directory");
+        let path = directory.join("decisions.jsonl");
+        std::fs::write(&path, b"active").expect("active recording");
+        std::fs::write(path.with_extension("jsonl.1"), b"one").expect("first rotation");
+        std::fs::write(path.with_extension("jsonl.16"), b"old").expect("old rotation");
+
+        assert_eq!(delete_query_recording(&path).expect("delete recording"), 3);
+        assert!(!path.exists());
+        assert!(!path.with_extension("jsonl.1").exists());
+        assert!(!path.with_extension("jsonl.16").exists());
+        std::fs::remove_dir(&directory).expect("remove temporary directory");
     }
 
     #[test]
@@ -742,6 +825,13 @@ impl SendPipe for AnyHandler {
 #[proxima::main]
 async fn main() -> Result<(), ProximaError> {
     let arguments: Vec<String> = env::args().skip(1).collect();
+    if let [flag, path] = arguments.as_slice() {
+        if flag == "--delete-recording" {
+            let removed = delete_query_recording(Path::new(path))?;
+            println!("{{\"status\":\"deleted\",\"files\":{removed}}}");
+            return Ok(());
+        }
+    }
     let (check_only, explicit_config_path, replay_path) = match arguments.as_slice() {
         [] => (false, None, None),
         [flag] if flag == "--check" => (true, None, None),

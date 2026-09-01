@@ -126,6 +126,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   JSONL source and deterministically reports event, full-action, and DDoS
   incident counts; it accepts only Blackhole metadata events, caps the input
   at 64 MiB, and never reconstructs or retains DNS names or wire payloads.
+- Explicit local `--delete-recording recording.jsonl` management removes only
+  the durable recording and its bounded `.1` through `.16` rotations after a
+  regular-file preflight, then verifies every exact target is absent.
 - The in-process query-decision log uses Proxima's lock-free live snapshot
   publication for concurrent append/read paths while retaining bounded count
   and age limits.
