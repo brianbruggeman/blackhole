@@ -2175,7 +2175,17 @@ mod runtime {
             if metadata.len() > 1_048_576 {
                 return Err("configuration exceeds 1 MiB".into());
             }
-            Ok(toml::from_str(&std::fs::read_to_string(path)?)?)
+            let initial_length = metadata.len();
+            let initial_modified = metadata.modified().ok();
+            let contents = std::fs::read_to_string(path)?;
+            let final_metadata = std::fs::metadata(path)?;
+            if final_metadata.len() != initial_length
+                || initial_modified
+                    .is_some_and(|modified| final_metadata.modified().ok() != Some(modified))
+            {
+                return Err("configuration changed while it was being read".into());
+            }
+            Ok(toml::from_str(&contents)?)
         }
     }
 
