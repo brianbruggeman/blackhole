@@ -41,12 +41,23 @@ impl PfRulePlan {
 
     #[must_use]
     pub fn render(&self) -> String {
+        let family = if self.original_destination.is_ipv4() {
+            "inet"
+        } else {
+            "inet6"
+        };
+        let destination = self.original_destination.ip();
+        let destination_port = self.original_destination.port();
         format!(
-            "# blackhole-owned anchor: {}\nrdr pass inet proto tcp to {} -> 127.0.0.1 port {}\nrdr pass inet proto udp to {} -> 127.0.0.1 port {}\n",
+            "# blackhole-owned anchor: {}\nrdr pass {} proto tcp to {} port {} -> 127.0.0.1 port {}\nrdr pass {} proto udp to {} port {} -> 127.0.0.1 port {}\n",
             self.anchor,
-            self.original_destination,
+            family,
+            destination,
+            destination_port,
             self.redirect_port,
-            self.original_destination,
+            family,
+            destination,
+            destination_port,
             self.redirect_port,
         )
     }
@@ -214,8 +225,22 @@ mod tests {
             PfRulePlan::new("blackhole/capture", "192.0.2.10:443".parse().unwrap(), 5353).unwrap();
         assert_eq!(
             plan.render(),
-            "# blackhole-owned anchor: blackhole/capture\nrdr pass inet proto tcp to 192.0.2.10:443 -> 127.0.0.1 port 5353\nrdr pass inet proto udp to 192.0.2.10:443 -> 127.0.0.1 port 5353\n"
+            "# blackhole-owned anchor: blackhole/capture\nrdr pass inet proto tcp to 192.0.2.10 port 443 -> 127.0.0.1 port 5353\nrdr pass inet proto udp to 192.0.2.10 port 443 -> 127.0.0.1 port 5353\n"
         );
+    }
+
+    #[test]
+    fn pf_render_selects_inet6_for_ipv6_destinations() {
+        let plan = PfRulePlan::new(
+            "blackhole_capture",
+            "[2001:db8::10]:443".parse().unwrap(),
+            5353,
+        )
+        .unwrap();
+        let rendered = plan.render();
+        assert!(rendered.contains("rdr pass inet6 proto tcp to 2001:db8::10 port 443"));
+        assert!(rendered.contains("rdr pass inet6 proto udp to 2001:db8::10 port 443"));
+        assert!(!rendered.contains("2001:db8::10:443"));
     }
 
     #[test]
