@@ -1567,6 +1567,9 @@ mod runtime {
     const MAX_BLOCKLIST_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
 
     fn http_source_parts(source: &str) -> Option<(&str, &str)> {
+        if !source.starts_with("http://") && !source.starts_with("https://") {
+            return None;
+        }
         let scheme_end = source.find("://")?;
         let authority_start = scheme_end + 3;
         let path_start = source[authority_start..]
@@ -7354,6 +7357,13 @@ mod runtime {
                 Err(policy::PolicyError::InvalidCountryMap { reason, .. })
                     if reason.contains("only supported for local map files")
             ));
+        }
+
+        #[test]
+        fn hosted_sources_reject_non_http_schemes() {
+            assert!(http_source_parts("ftp://example.test/map.txt").is_none());
+            assert!(http_source_parts("file:///etc/hosts").is_none());
+            assert!(http_source_parts("https://example.test/map.txt").is_some());
         }
 
         #[test]
