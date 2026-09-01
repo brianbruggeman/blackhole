@@ -3,6 +3,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, UdpSocket};
 use std::sync::Arc;
 
 use blackhole::listener::{TcpProtocol, UdpProtocol};
+use blackhole::query::MAX_QUERY_BYTES;
 use blackhole::{Action, Config, Policy, RewriteConfig, RuleConfig, UpstreamConfig};
 use bytes::Bytes;
 use futures::io::{AsyncReadExt, AsyncWriteExt};
@@ -115,6 +116,37 @@ async fn listener_forwards_allowed_query_to_loopback_upstream() {
         .serve()
         .await
         .expect("serve listener");
+
+    let oversized_client =
+        UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind oversized client");
+    oversized_client
+        .set_read_timeout(Some(std::time::Duration::from_millis(100)))
+        .expect("set oversized client timeout");
+    let mut oversized_query = Vec::new();
+    encode::encode_query(
+        0x1233,
+        true,
+        encode::EncodeQuestion {
+            name: "oversized.example.",
+            qtype: 1,
+            qclass: 1,
+        },
+        &mut oversized_query,
+    )
+    .expect("encode oversized query prefix");
+    oversized_query.resize(MAX_QUERY_BYTES + 1, 0);
+    oversized_client
+        .send_to(&oversized_query, listener_addr)
+        .expect("send oversized query");
+    let mut oversized_response = [0_u8; 4096];
+    let oversized_result = oversized_client.recv_from(&mut oversized_response);
+    assert!(
+        matches!(
+            oversized_result,
+            Err(ref error) if matches!(error.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock)
+        ),
+        "oversized query unexpectedly produced a response: {oversized_result:?}"
+    );
 
     let mut client = PrimeDatagramFactory
         .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))

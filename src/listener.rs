@@ -18,7 +18,7 @@ use std::time::Instant;
 
 use crate::Policy;
 use crate::fsm::{DecisionState, DropReason, Event};
-use crate::query::{QueryView, valid_query_flags};
+use crate::query::{MAX_QUERY_BYTES, QueryView, valid_query_flags};
 
 const MAX_TCP_FRAME: usize = 4096;
 const UDP_HEADER: usize = 12;
@@ -309,11 +309,23 @@ impl AnyProtocol for UdpProtocol {
         _admission: &'a ConnAdmission,
     ) -> Pin<Box<dyn Future<Output = Result<(), ProximaError>> + Send + 'a>> {
         Box::pin(async move {
-            let mut packet = Vec::new();
-            stream.read_to_end(&mut packet).await.map_err(|error| {
-                self.policy.observe_failure("transport_read");
-                ProximaError::Io(error)
-            })?;
+            // `.any()` replays the classifier's prefix before the datagram
+            // adapter's remaining bytes. Drain that one-shot stream through
+            // a bounded reader so a split replay cannot be mistaken for a
+            // complete DNS message.
+            let mut packet = Vec::with_capacity(MAX_QUERY_BYTES + 1);
+            (&mut *stream)
+                .take((MAX_QUERY_BYTES + 1) as u64)
+                .read_to_end(&mut packet)
+                .await
+                .map_err(|error| {
+                    self.policy.observe_failure("transport_read");
+                    ProximaError::Io(error)
+                })?;
+            if packet.len() > MAX_QUERY_BYTES {
+                self.policy.observe_failure("query_oversized");
+                return Ok(());
+            }
             let state = DecisionState::received(&packet);
             if let Some((reply, state)) = decide(&self.policy, state, &packet, peer, false).await? {
                 stream.write_all(&reply).await.map_err(|error| {
