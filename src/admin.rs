@@ -69,6 +69,10 @@ struct PolicyBundle {
     /// Omitted/null retains the currently loaded blocklist snapshot.
     #[serde(default)]
     blocklists: Option<Vec<String>>,
+    /// Required by the full configuration reload route; ignored by the
+    /// policy-only route.
+    #[serde(default)]
+    admission: Option<AdmissionConfig>,
 }
 const ADMIN_UI: &str = r#"<!doctype html>
 <meta charset="utf-8">
@@ -76,7 +80,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <style>body{font:15px system-ui,sans-serif;max-width:70rem;margin:2rem auto;padding:0 1rem}pre{background:#f3f3f3;padding:1rem;overflow:auto}button{padding:.4rem .7rem}</style>
 <h1>Blackhole DNS</h1>
 <p>Authenticated operator control plane. DNS names and packet payloads are not shown here.</p>
-<p><button id="clear-logs">Clear privacy log</button> <button id="clear-abuse">Clear temporary abuse state</button> <button id="reload-blocklists">Reload blocklists</button> <button id="reload-admission">Reload admission JSON</button> <button id="reload-bundle">Publish policy bundle</button></p>
+<p><button id="clear-logs">Clear privacy log</button> <button id="clear-abuse">Clear temporary abuse state</button> <button id="reload-blocklists">Reload blocklists</button> <button id="reload-admission">Reload admission JSON</button> <button id="reload-bundle">Publish full config</button></p>
 <h2>Status</h2><pre id="status">loading…</pre>
 <h2>Admission limits</h2><textarea id="admission-config" rows="16" cols="80">loading…</textarea><pre id="admission-status">loading…</pre>
 <h2>Adaptive abuse controls</h2><pre id="abuse-status">loading…</pre>
@@ -100,7 +104,7 @@ document.querySelector('#clear-logs').onclick = () => fetch('/logs/clear', {meth
 document.querySelector('#clear-abuse').onclick = () => fetch('/abuse/clear', {method:'POST'}).then(refresh);
 document.querySelector('#reload-blocklists').onclick = () => fetch('/reload/blocklists', {method:'POST'}).then(refresh);
 document.querySelector('#reload-admission').onclick = () => fetch('/reload/admission', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#admission-config').value}).then(refresh);
-document.querySelector('#reload-bundle').onclick = () => fetch('/reload/policy-bundle', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#policy-bundle').value}).then(refresh);
+document.querySelector('#reload-bundle').onclick = () => fetch('/reload/config', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#policy-bundle').value}).then(refresh);
 refresh();
 </script>
 "#;
@@ -281,6 +285,45 @@ impl SendPipe for AdminHandler {
                     bundle.mode,
                     bundle.domains.as_deref(),
                     bundle.default_action,
+                ) {
+                    Ok(_) => Ok(Response::ok(r#"{"status":"reloaded"}"#)),
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        r#"{{"status":"error","message":{}}}"#,
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
+            ("POST", "/reload/config") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let config = match serde_json::from_slice::<PolicyBundle>(&request.payload) {
+                    Ok(config) => config,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            r#"{{"status":"error","message":{}}}"#,
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                let Some(admission) = config.admission.as_ref() else {
+                    return Ok(Response::new(400)
+                        .with_body(r#"{"status":"error","message":"admission is required"}"#));
+                };
+                match self.policy.reload_policy_bundle_with_legacy_and_admission(
+                    &config.rules,
+                    &config.regex_rules,
+                    &config.profiles,
+                    &config.client_groups,
+                    &config.client_identities,
+                    &config.rewrites,
+                    &config.country_policy,
+                    config.blocklists.as_deref(),
+                    config.mode,
+                    config.domains.as_deref(),
+                    config.default_action,
+                    Some(admission),
                 ) {
                     Ok(_) => Ok(Response::ok(r#"{"status":"reloaded"}"#)),
                     Err(error) => Ok(Response::new(422).with_body(format!(
@@ -668,6 +711,7 @@ impl SendPipe for AdminHandler {
                 | "/reload/client-identities/upsert"
                 | "/reload/client-identities/remove"
                 | "/reload/policy-bundle"
+                | "/reload/config"
                 | "/logs"
                 | "/cache/clear"
                 | "/logs/clear"
@@ -782,6 +826,11 @@ mod tests {
                 .windows(b"/policy-bundle".len())
                 .any(|window| window == b"/policy-bundle")
         );
+        assert!(
+            ui.payload
+                .windows(b"/reload/config".len())
+                .any(|window| window == b"/reload/config")
+        );
         assert!(ui.payload.len() < 4 * 1024);
         let clear =
             block_on(handler.call(request("POST", "/cache/clear"))).expect("cache clear response");
@@ -820,6 +869,7 @@ mod tests {
         assert_eq!(bundle["client_groups"], serde_json::json!([]));
         assert_eq!(bundle["rewrites"], serde_json::json!([]));
         assert_eq!(bundle["blocklists"], serde_json::Value::Null);
+        assert_eq!(bundle["admission"]["max_queries_per_second"], 10_000);
         let privacy_status =
             block_on(handler.call(request("GET", "/privacy/status"))).expect("privacy status");
         assert_eq!(privacy_status.status, 200);
@@ -1422,6 +1472,60 @@ mod tests {
         let status: serde_json::Value =
             serde_json::from_slice(&status.payload).expect("status JSON");
         assert_eq!(status["policy_generation"], 2);
+    }
+
+    #[test]
+    fn full_config_reload_publishes_policy_and_admission_together() {
+        let policy = Arc::new(Policy::new(crate::Config::default()).expect("default policy"));
+        let handler = AdminHandler::new(Arc::clone(&policy));
+        let publish = Request::builder()
+            .method("POST")
+            .path("/reload/config")
+            .payload(
+                r#"{"rules":[{"id":77,"domain":"blocked.example","action":"reject"}],"admission":{"max_queries_per_second":7}}"#,
+            )
+            .build()
+            .expect("full config request");
+        assert_eq!(
+            block_on(handler.call(publish))
+                .expect("full config response")
+                .status,
+            200
+        );
+
+        let policy_status = block_on(handler.call(request("GET", "/policy/status")))
+            .expect("policy status response");
+        let policy_status: serde_json::Value =
+            serde_json::from_slice(&policy_status.payload).expect("policy status JSON");
+        assert_eq!(policy_status["domain_rules"], 1);
+        let admission_status = block_on(handler.call(request("GET", "/admission/status")))
+            .expect("admission status response");
+        let admission_status: serde_json::Value =
+            serde_json::from_slice(&admission_status.payload).expect("admission status JSON");
+        assert_eq!(admission_status["max_queries_per_second"], 7);
+
+        let rejected = Request::builder()
+            .method("POST")
+            .path("/reload/config")
+            .payload(r#"{"rules":[],"admission":{"max_inflight_requests":1}}"#)
+            .build()
+            .expect("invalid full config request");
+        assert_eq!(
+            block_on(handler.call(rejected))
+                .expect("rejected response")
+                .status,
+            422
+        );
+        let admission_status = block_on(handler.call(request("GET", "/admission/status")))
+            .expect("retained admission status response");
+        let admission_status: serde_json::Value =
+            serde_json::from_slice(&admission_status.payload).expect("retained admission JSON");
+        assert_eq!(admission_status["max_queries_per_second"], 7);
+        let policy_status = block_on(handler.call(request("GET", "/policy/status")))
+            .expect("retained policy status response");
+        let policy_status: serde_json::Value =
+            serde_json::from_slice(&policy_status.payload).expect("retained policy JSON");
+        assert_eq!(policy_status["domain_rules"], 1);
     }
 
     #[test]

@@ -166,7 +166,7 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   status, admission limits, adaptive-abuse status and clearing, privacy
   status, rule metadata, and privacy-log inspection/clearing; it loads the
   live policy bundle and provides authenticated blocklist reload and complete
-  policy-bundle publication controls, contains no packet payloads, and uses
+  full-configuration publication controls, contains no packet payloads, and uses
   the existing Proxima HTTP pipe.
 - Authenticated bounded `GET /admission/status` exposes configured query,
   response, amplification, and abuse limits without exposing counters, client
@@ -175,6 +175,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   admission, rate, response-budget, and abuse-breaker limits; the startup-sized
   global in-flight atomic permit pool is immutable and capacity changes fail
   closed.
+- Authenticated bounded `POST /reload/config` publishes the validated policy
+  bundle and live admission snapshot together, preserving the same startup-only
+  capacity boundary as the separate admission route.
 - Per-client query-rate buckets use Proxima's bounded lock-free keyed table;
   full tagged IPv4/IPv6 bytes are retained as keys and eviction remains bounded.
 - Authenticated bounded `GET /country/status` exposes country-policy deny/

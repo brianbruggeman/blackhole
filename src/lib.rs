@@ -2667,14 +2667,10 @@ mod runtime {
             self.publish_rules_locked(&combined, rules, &mut base_rules, "rules", started)
         }
 
-        /// Atomically replace the live admission limits. The in-flight
-        /// semaphore is intentionally fixed at startup; changing its capacity
-        /// would make existing permits ambiguous, so such a replacement is
-        /// rejected without changing any live limits.
-        pub fn reload_admission(
+        fn validate_admission(
             &self,
             admission: &AdmissionConfig,
-        ) -> Result<ReloadState, policy::PolicyError> {
+        ) -> Result<(), policy::PolicyError> {
             if admission.max_inflight_requests != self.config.admission.max_inflight_requests {
                 return Err(policy::PolicyError::InvalidAdmission {
                     reason: "max_inflight_requests is startup-only".into(),
@@ -2708,6 +2704,18 @@ mod runtime {
                     reason: "admission limits are invalid or zero".into(),
                 });
             }
+            Ok(())
+        }
+
+        /// Atomically replace the live admission limits. The in-flight
+        /// semaphore is intentionally fixed at startup; changing its capacity
+        /// would make existing permits ambiguous, so such a replacement is
+        /// rejected without changing any live limits.
+        pub fn reload_admission(
+            &self,
+            admission: &AdmissionConfig,
+        ) -> Result<ReloadState, policy::PolicyError> {
+            self.validate_admission(admission)?;
             let _reload = self.reload_lock.write().expect("reload lock");
             let started = Instant::now();
             self.admission_control.replace(admission.clone());
@@ -3400,8 +3408,44 @@ mod runtime {
             legacy_domains: Option<&[String]>,
             default_action: Option<Action>,
         ) -> Result<ReloadState, policy::PolicyError> {
+            self.reload_policy_bundle_with_legacy_and_admission(
+                rules,
+                regex_configs,
+                profiles,
+                client_groups,
+                client_identities,
+                rewrite_configs,
+                country_config,
+                blocklist_paths,
+                legacy_mode,
+                legacy_domains,
+                default_action,
+                None,
+            )
+        }
+
+        /// Atomically replace policy tables and live admission limits as one
+        /// operator publication. Startup-only capacity remains immutable.
+        pub fn reload_policy_bundle_with_legacy_and_admission(
+            &self,
+            rules: &[RuleConfig],
+            regex_configs: &[RegexRuleConfig],
+            profiles: &[ServiceProfileConfig],
+            client_groups: &[ClientGroupConfig],
+            client_identities: &[ClientIdentityConfig],
+            rewrite_configs: &[RewriteConfig],
+            country_config: &CountryPolicyConfig,
+            blocklist_paths: Option<&[String]>,
+            legacy_mode: Option<Mode>,
+            legacy_domains: Option<&[String]>,
+            default_action: Option<Action>,
+            admission: Option<&AdmissionConfig>,
+        ) -> Result<ReloadState, policy::PolicyError> {
             let _reload = self.reload_lock.write().expect("reload lock");
             let started = Instant::now();
+            if let Some(admission) = admission {
+                self.validate_admission(admission)?;
+            }
             let normalized_legacy_domains =
                 legacy_domains.map(validate_legacy_domains).transpose()?;
             let generated = compile_profiles(profiles, client_groups)?;
@@ -3438,6 +3482,9 @@ mod runtime {
             self.rewrite_control.replace(rewrites);
             *self.rewrite_configs.write().expect("rewrite configs lock") = rewrite_configs.to_vec();
             self.country_policy_control.replace(country_policy);
+            if let Some(admission) = admission {
+                self.admission_control.replace(admission.clone());
+            }
             if let Some(domains) = normalized_legacy_domains {
                 self.legacy_domains_control.replace(domains);
             }
@@ -4794,6 +4841,7 @@ mod runtime {
                 })).collect::<Vec<_>>(),
                 "country_policy": self.config.country_policy,
                 "blocklists": serde_json::Value::Null,
+                "admission": self.admission_config(),
             });
             let encoded = value.to_string();
             if encoded.len() <= 64 * 1024 {

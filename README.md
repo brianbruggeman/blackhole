@@ -201,6 +201,9 @@ its optional `blocklists` array can replace the
 blocklist source paths in the same validated publication; omitted or `null`
 retains the current blocklist snapshot. Reloads bound source count, path
 length, each file, and aggregate file bytes before touching the live snapshot.
+`POST /reload/config` accepts the same policy shape plus a required `admission`
+object and publishes policy tables and live admission limits together;
+startup-only capacity changes are rejected before either snapshot changes.
 `POST /reload/blocklists/replace` atomically replaces the blocklist source path
 set and preserves the previous sources and rules if a replacement fails.
 `GET /privacy/status` exposes only privacy-recording enablement and configured
