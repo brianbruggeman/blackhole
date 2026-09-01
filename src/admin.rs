@@ -102,9 +102,9 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <h2>Country</h2><pre id="country-status"></pre>
 <h2>Privacy</h2><pre id="privacy-status"></pre>
 <h2>Rules</h2><pre id="rules"></pre>
-<h2>Profiles</h2><div id="profile-controls"></div><pre id="profiles"></pre>
-<h2>Groups</h2><div id="group-controls"></div><pre id="groups"></pre>
-<h2>Identities</h2><div id="identity-controls"></div><pre id="identities"></pre>
+<h2>Profiles</h2><textarea id="profile-editor" rows="8" cols="80"></textarea><button id="upsert-profiles">Upsert profiles</button><div id="profile-controls"></div><pre id="profiles"></pre>
+<h2>Groups</h2><textarea id="group-editor" rows="8" cols="80"></textarea><button id="upsert-groups">Upsert groups</button><div id="group-controls"></div><pre id="groups"></pre>
+<h2>Identities</h2><textarea id="identity-editor" rows="8" cols="80"></textarea><button id="upsert-identities">Upsert identities</button><div id="identity-controls"></div><pre id="identities"></pre>
 <h2>Rewrites</h2><pre id="rewrites"></pre>
 <h2>Privacy log</h2><pre id="logs"></pre>
 <script>
@@ -140,6 +140,9 @@ const load = (path, target) => fetch(path).then(response => response.json()).the
     toggle('#profile-controls', value.profiles, '/reload/profiles/upsert', 'profiles', '/reload/profiles/remove');
     toggle('#group-controls', value.client_groups, '/reload/client-groups/upsert', 'client_groups', '/reload/client-groups/remove');
     toggle('#identity-controls', value.client_identities, '/reload/client-identities/upsert', 'client_identities', '/reload/client-identities/remove');
+    document.querySelector('#profile-editor').value = JSON.stringify(value.profiles || [], null, 2);
+    document.querySelector('#group-editor').value = JSON.stringify(value.client_groups || [], null, 2);
+    document.querySelector('#identity-editor').value = JSON.stringify(value.client_identities || [], null, 2);
   }
   if (path === '/policy-bundle') document.querySelector(target).value = JSON.stringify(value, null, 2);
   else if (path === '/abuse/denylist') document.querySelector(target).value = JSON.stringify(value, null, 2);
@@ -153,6 +156,10 @@ const operate = (path, options) => fetch(path, options).then(async response => {
   return value;
 }).catch(error => { document.querySelector('#operation-status').textContent = `${path}: ${error.message}`; throw error; });
 const send = (path, body) => operate(path, {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body)}).then(refresh);
+const edit = (id, path, field) => {
+  try { return send(path, {[field]: JSON.parse(document.querySelector(id).value)}); }
+  catch (error) { document.querySelector('#operation-status').textContent = `${path}: ${error.message}`; return Promise.reject(error); }
+};
 const refresh = () => Promise.all([load('/status','#status'), load('/stats','#stats'), load('/admission/status','#admission-status'), load('/abuse/status','#abuse-status'), load('/abuse/incidents','#abuse-incidents'), load('/abuse/denylist','#denylist-config'), load('/policy-bundle','#policy-bundle'), load('/blocklists','#blocklists'), load('/country/status','#country-status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/client-identities','#identities'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
 document.querySelector('#clear-logs').onclick = () => operate('/logs/clear', {method:'POST'}).then(refresh);
 document.querySelector('#clear-stats').onclick = () => operate('/stats/clear', {method:'POST'}).then(refresh);
@@ -166,6 +173,9 @@ for (const [id,path] of [['revoke-abuse','/abuse/revoke'],['approve-abuse','/abu
 document.querySelector('#export-abuse').onclick = () => fetch('/abuse/incidents/export').then(response => response.json()).then(value => { document.querySelector('#abuse-incidents').textContent = JSON.stringify(value, null, 2); });
 const updateBlocklists = op => operate(`/reload/blocklists/${op}`, {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#blocklist-sources').value}).then(refresh);
 for (const [id,op] of [['replace-blocklists','replace'],['add-blocklists','add'],['remove-blocklists','remove']]) document.querySelector(`#${id}`).onclick = () => updateBlocklists(op);
+document.querySelector('#upsert-profiles').onclick = () => edit('#profile-editor', '/reload/profiles/upsert', 'profiles');
+document.querySelector('#upsert-groups').onclick = () => edit('#group-editor', '/reload/client-groups/upsert', 'client_groups');
+document.querySelector('#upsert-identities').onclick = () => edit('#identity-editor', '/reload/client-identities/upsert', 'client_identities');
 document.querySelector('#reload-blocklists').onclick = () => operate('/reload/blocklists', {method:'POST'}).then(refresh);
 document.querySelector('#reload-country').onclick = () => operate('/reload/country', {method:'POST'}).then(refresh);
 document.querySelector('#reload-admission').onclick = () => operate('/reload/admission', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#admission-config').value}).then(refresh);
@@ -1298,6 +1308,12 @@ mod tests {
             b"profile-controls".as_slice(),
             b"group-controls".as_slice(),
             b"identity-controls".as_slice(),
+            b"profile-editor".as_slice(),
+            b"group-editor".as_slice(),
+            b"identity-editor".as_slice(),
+            b"upsert-profiles".as_slice(),
+            b"upsert-groups".as_slice(),
+            b"upsert-identities".as_slice(),
         ] {
             assert!(
                 ui.payload
