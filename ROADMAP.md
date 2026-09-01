@@ -18,11 +18,12 @@ below are future capabilities, grouped by the dependency layer they extend.
 - Extend the authenticated blocklist and policy administration with richer
   policy management beyond the current bounded source inspection and health,
   background reload, source replacement, atomic domain/regex-rule
-  append/upsert/removal, read-only status, and complete-snapshot reload
-  routes.
+  append/upsert/removal, per-source activation, read-only status, and
+  complete-snapshot reload routes.
 - Extend the authenticated profile and client-group metadata views with
   additional policy controls beyond atomic enabled/disabled profile,
-  identity, and network scope replacement/upsert/removal operations.
+  identity, and network scope replacement/upsert/removal operations, including
+  retained enable/disable state for profiles, groups, and identity mappings.
 - Extend adaptive amplification controls for repeated abusive patterns beyond
   the current per-query response-ratio cap, aggregate/per-client admission
   limits, bounded client/network/global rate and response-budget breakers,
@@ -49,7 +50,8 @@ below are future capabilities, grouped by the dependency layer they extend.
   redaction and deletion-verification backends beyond the current metadata-only,
   byte-bounded Proxima JSONL destination and bounded startup rotation.
 - Extend the current bounded authenticated status UI into a full optional web
-  UI beyond the current bounded status and policy-bundle controls.
+  UI beyond the current bounded status, policy-bundle, and blocklist source
+  activation controls.
 - Add the remaining Pi-hole/AdGuard Home policy features, including richer
   per-client identity and group-management controls.
 - Add a separately isolated honeypot terminal with explicit retention and
