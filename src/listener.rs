@@ -353,3 +353,51 @@ impl AnyProtocol for TcpProtocol {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Config, Policy};
+    use proxima::Telemetry;
+    use proxima_primitives::pipe::telemetry_surface::Labels;
+    use std::sync::{Arc, Mutex};
+
+    struct FailureCollector(Arc<Mutex<Vec<String>>>);
+
+    impl Telemetry for FailureCollector {
+        fn counter_inc(&self, metric: &str, labels: &Labels, by: u64) {
+            assert_eq!(metric, "blackhole.failures");
+            assert_eq!(by, 1);
+            self.0
+                .lock()
+                .expect("failure labels lock")
+                .push(labels.entries()[0].1.clone());
+        }
+
+        fn gauge_set(&self, _: &str, _: &Labels, _: i64) {}
+
+        fn histogram_record(&self, _: &str, _: &Labels, _: f64) {}
+    }
+
+    #[test]
+    fn listener_records_the_parser_failure_cause() {
+        let causes = Arc::new(Mutex::new(Vec::new()));
+        let policy = Policy::new(Config::default())
+            .expect("default policy")
+            .with_telemetry(Arc::new(FailureCollector(Arc::clone(&causes))));
+
+        let result = futures::executor::block_on(decide(
+            &policy,
+            DecisionState::received(&[0; 11]),
+            &[0; 11],
+            None,
+            false,
+        ))
+        .expect("malformed input is a dropped request");
+        assert!(result.is_none());
+        assert_eq!(
+            causes.lock().expect("failure labels lock").as_slice(),
+            ["query_wire_short"]
+        );
+    }
+}
