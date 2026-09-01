@@ -245,6 +245,34 @@ higher tail variance. The edge path has `cov=0.200058`, so this row is an
 observed reference rather than a performance verdict; no zero-copy or
 production-grade claim is made.
 
+## Row 11 — current release reference after profile and DDoS controls
+
+`MEASURED` on 2026-09-01, Linux `x86_64`, rustc `1.98.0`, release build,
+source commit `a938749`, GitHub Proxima revision `03ea2c7d`, and load average
+`1.25`. The running harness used `N=25` samples per workload:
+
+```text
+build p50_ns=48727373 p95_ns=50482756 p99_ns=50490788 cov=0.011726 allocs=250025 alloc_bytes=33722250
+match p50_ns=44757 p95_ns=47206 p99_ns=48929 cov=0.023493 allocs=2500 alloc_bytes=57500
+edge_parse_match p50_ns=46937 p95_ns=88182 p99_ns=110810 cov=0.306948 allocs=100 alloc_bytes=1375
+parse_short p50_ns=48 p95_ns=69 p99_ns=139 cov=0.337150 allocs=0 alloc_bytes=0
+parse_long p50_ns=232 p95_ns=246 p99_ns=307 cov=0.064010 allocs=0 alloc_bytes=0
+parse_adversarial p50_ns=80 p95_ns=82 p99_ns=121 cov=0.099022 allocs=0 alloc_bytes=0
+parse_mixed p50_ns=81 p95_ns=238 p99_ns=238 cov=0.629793 allocs=0 alloc_bytes=0
+name_scan_scalar p50_ns=42 p95_ns=60 p99_ns=73 cov=0.171311 allocs=0 alloc_bytes=0
+name_scan_chunked p50_ns=80 p95_ns=100 p99_ns=135 cov=0.137180 allocs=0 alloc_bytes=0
+name_scan_memchr p50_ns=20 p95_ns=44 p99_ns=1452 cov=3.569132 allocs=0 alloc_bytes=0
+owned p50_ns=126 p95_ns=353 p99_ns=29891 cov=4.398529 allocs=50 alloc_bytes=400
+encode_response p50_ns=110 p95_ns=268 p99_ns=488 cov=0.577802 allocs=50 alloc_bytes=1450
+boundary_bytes=MEASURED policy_canonicalize=60600 borrowed_to_owned=300 tcp_frame_buffer=0 encode_output=0 transport_write=0 rss_kib=7264
+```
+
+Throughput is `DERIVED` from measured durations and operation counts. The
+borrowed parser and scan arms measured zero allocations. Scalar remains the
+production arm; memchr retains high tail variance, and the owned arm had a
+single high-tail observation in this small run. This is an observed reference
+only; no zero-copy or production-grade claim is made.
+
 ## Row 10 — current release reference after roadmap documentation cleanup
 
 `MEASURED` on 2026-09-01, Linux `x86_64`, rustc `1.98.0`, release build,
