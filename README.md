@@ -110,6 +110,9 @@ and `GET /client-groups` metadata views, plus bounded privacy-safe
 query-decision inspection at `GET /logs` and deletion at `POST /logs/clear` when
 enabled. `POST /reload/profiles` atomically replaces the profile and client-group
 tables from a bounded JSON object with `profiles` and `client_groups` arrays.
+`POST /reload/client-groups/upsert` replaces or adds named client CIDR groups
+while preserving profiles and validates the resulting profile expansion before
+publication.
 `POST /reload/policy-bundle` replaces the domain, regex, profile, client-group,
 local-rewrite, and country-policy tables as one validated snapshot while
 retaining loaded blocklists. Its optional `blocklists` array can replace the

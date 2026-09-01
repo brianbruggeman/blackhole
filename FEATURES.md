@@ -109,6 +109,9 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Authenticated bounded `GET /profiles` and `GET /client-groups` routes expose
   configured service-profile and client-network metadata without exposing
   runtime client identity.
+- Authenticated bounded `POST /reload/client-groups/upsert` atomically replaces
+  existing named CIDR groups or adds new groups while preserving profiles and
+  rejecting invalid expansions without publication.
 - Authenticated bounded `POST /reload/profiles` atomically replaces service
   profiles and client groups, preserves explicit domain rules, and rejects
   invalid expansions without publishing them.
