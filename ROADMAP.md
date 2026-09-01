@@ -49,8 +49,8 @@ below are future capabilities, grouped by the dependency layer they extend.
   upstream transports are implemented in the current baseline.
 - Add bounded query logs and privacy controls for retention, redaction, access,
   and deletion.
-- Extend the authenticated admin API with an optional web UI and optional DHCP
-  adapter.
+- Extend the current bounded authenticated status page into a full optional
+  web UI and add an optional DHCP adapter.
 - Add the remaining Pi-hole/AdGuard Home policy features, including richer
   per-client identity and group-management controls.
 - Add a separately isolated honeypot terminal with explicit retention and
