@@ -77,6 +77,9 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   operator-supplied country-to-CIDR map; longest-prefix entries win and the
   classification is not treated as exact identity. An optional freshness bound
   fails closed when the map file is stale or its timestamp is unavailable.
+- An optional bounded background country-map reload uses Proxima's interval
+  and lifecycle primitives, publishes only changed valid maps, and preserves
+  the last good snapshot after a failed refresh.
 - A committed libFuzzer target for the borrowed DNS query boundary, with a
   privacy-safe corpus location for minimized wire samples.
 - Proxima-native action counters, failure-cause counters, and request-latency

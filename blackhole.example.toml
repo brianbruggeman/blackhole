@@ -149,6 +149,7 @@ query_log_retention_secs = 86400
 # No GeoIP database is bundled; classification is only as current as this file.
 # map_path = "/etc/blackhole/country-cidrs.txt"
 # max_age_secs = 86400
+# reload_interval_secs = 3600
 # deny = ["CN", "RU"]
 # observe = ["US"]
 

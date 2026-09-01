@@ -67,6 +67,10 @@ the interval is bounded to one day, unchanged content does not create a new
 policy generation, and failed reloads retain the last good snapshot.
 Named service profiles are also compiled into the authoritative rule table;
 each profile supplies a bounded domain set and action.
+The optional country policy accepts an operator-supplied `COUNTRY CIDR` map;
+`country_policy.reload_interval_secs` enables bounded background refresh, where
+unchanged content is not republished and failed refreshes retain the last good
+map. Classification remains an explicit policy signal, not authentication.
 Profiles may name bounded client groups with `groups = ["family", "guest"]`;
 each group supplies IPv4/IPv6 CIDRs and a profile may target multiple groups.
 Direct `client_cidrs` and named groups are mutually exclusive.
