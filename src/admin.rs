@@ -76,9 +76,10 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <style>body{font:15px system-ui,sans-serif;max-width:70rem;margin:2rem auto;padding:0 1rem}pre{background:#f3f3f3;padding:1rem;overflow:auto}button{padding:.4rem .7rem}</style>
 <h1>Blackhole DNS</h1>
 <p>Authenticated operator control plane. DNS names and packet payloads are not shown here.</p>
-<p><button id="clear-logs">Clear privacy log</button> <button id="reload-blocklists">Reload blocklists</button> <button id="reload-admission">Reload admission JSON</button> <button id="reload-bundle">Publish policy bundle</button></p>
+<p><button id="clear-logs">Clear privacy log</button> <button id="clear-abuse">Clear temporary abuse state</button> <button id="reload-blocklists">Reload blocklists</button> <button id="reload-admission">Reload admission JSON</button> <button id="reload-bundle">Publish policy bundle</button></p>
 <h2>Status</h2><pre id="status">loading…</pre>
 <h2>Admission limits</h2><textarea id="admission-config" rows="16" cols="80">loading…</textarea><pre id="admission-status">loading…</pre>
+<h2>Adaptive abuse controls</h2><pre id="abuse-status">loading…</pre>
 <h2>Policy bundle</h2><textarea id="policy-bundle" rows="12" cols="80">loading…</textarea>
 <h2>Country policy</h2><pre id="country-status">loading…</pre>
 <h2>Privacy status</h2><pre id="privacy-status">loading…</pre>
@@ -94,8 +95,9 @@ const load = (path, target) => fetch(path).then(response => response.json()).the
   else document.querySelector(target).textContent = JSON.stringify(value, null, 2);
   if (path === '/admission/status') document.querySelector('#admission-config').value = JSON.stringify(value, null, 2);
 });
-const refresh = () => Promise.all([load('/status','#status'), load('/admission/status','#admission-status'), load('/policy-bundle','#policy-bundle'), load('/country/status','#country-status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/client-identities','#identities'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
+const refresh = () => Promise.all([load('/status','#status'), load('/admission/status','#admission-status'), load('/abuse/status','#abuse-status'), load('/policy-bundle','#policy-bundle'), load('/country/status','#country-status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/client-identities','#identities'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
 document.querySelector('#clear-logs').onclick = () => fetch('/logs/clear', {method:'POST'}).then(refresh);
+document.querySelector('#clear-abuse').onclick = () => fetch('/abuse/clear', {method:'POST'}).then(refresh);
 document.querySelector('#reload-blocklists').onclick = () => fetch('/reload/blocklists', {method:'POST'}).then(refresh);
 document.querySelector('#reload-admission').onclick = () => fetch('/reload/admission', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#admission-config').value}).then(refresh);
 document.querySelector('#reload-bundle').onclick = () => fetch('/reload/policy-bundle', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#policy-bundle').value}).then(refresh);
@@ -744,6 +746,16 @@ mod tests {
             ui.payload
                 .windows(b"/admission/status".len())
                 .any(|window| window == b"/admission/status")
+        );
+        assert!(
+            ui.payload
+                .windows(b"/abuse/status".len())
+                .any(|window| window == b"/abuse/status")
+        );
+        assert!(
+            ui.payload
+                .windows(b"/abuse/clear".len())
+                .any(|window| window == b"/abuse/clear")
         );
         assert!(
             ui.payload

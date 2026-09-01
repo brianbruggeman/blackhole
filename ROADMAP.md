@@ -31,9 +31,6 @@ below are future capabilities, grouped by the dependency layer they extend.
 - Extend adaptive amplification controls for repeated abusive patterns beyond
   the current per-query response-ratio cap, aggregate/per-client admission
   limits, and bounded rate/response-budget abuse breaker.
-- Add an authenticated, bounded operator view and explicit lifecycle controls
-  for temporary IP/network blacklist entries; preserve automatic expiry,
-  bounded state, fail-closed behavior, and adapter-owned client metadata.
 - Add managed GeoIP/region/ASN data lifecycle and richer country policy beyond
   the current explicit country/CIDR/region/ASN map labels and bounded background
   refresh; uncertainty must remain explicit.
