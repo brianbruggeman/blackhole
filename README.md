@@ -108,8 +108,9 @@ block regardless of source order, and `$denyallow=domain|domain` permits
 listed domains and their subdomains for that blocking filter. Unknown or
 malformed filter modifiers fail closed. Local
 A/AAAA/CNAME rewrites are bounded and apply to `pass`/`observe` queries;
-explicit policy actions take precedence. A rewrite contains exactly one
-record family: `ipv4`, `ipv6`, or `cname`. The `[capture]` section is disabled
+exact names win over one-label wildcard names, and explicit policy actions
+take precedence. A rewrite contains exactly one record family: `ipv4`, `ipv6`,
+or `cname`. The `[capture]` section is disabled
 by default; when enabled, it installs and recovers only the platform-native,
 journal-owned DNS redirect rules.
 Configured blocklists may be refreshed by Proxima's cancellable background

@@ -880,6 +880,7 @@ mod runtime {
     #[derive(Debug, Clone, Default)]
     struct RewriteTable {
         entries: HashMap<(String, u16), DnsAnswer>,
+        wildcard_entries: HashMap<u16, HashMap<String, DnsAnswer>>,
     }
 
     impl RewriteTable {
@@ -888,9 +889,28 @@ mod runtime {
         }
 
         fn answer(&self, query: &proxima_dns::DnsQuery) -> Option<DnsAnswer> {
-            self.entries
-                .get(&(normalize(&query.name), query.qtype))
-                .cloned()
+            let name = normalize(&query.name);
+            if let Some(answer) = self.entries.get(&(name.clone(), query.qtype)) {
+                return Some(answer.clone());
+            }
+            let suffix = name.split_once('.').map(|(_, suffix)| suffix)?;
+            let answer = self
+                .wildcard_entries
+                .get(&query.qtype)?
+                .get(suffix)?
+                .clone();
+            let query_name = query.name.clone();
+            Some(DnsAnswer {
+                records: answer
+                    .records
+                    .into_iter()
+                    .map(|mut record| {
+                        record.name = query_name.clone();
+                        record
+                    })
+                    .collect(),
+                ..answer
+            })
         }
     }
 
@@ -2301,7 +2321,13 @@ mod runtime {
         let mut entries = HashMap::new();
         for config in configs {
             let name = normalize(&config.name);
-            if name.is_empty() || !valid_dns_name(&name) {
+            let wildcard_suffix = name.strip_prefix("*.");
+            if name.is_empty()
+                || wildcard_suffix.is_some_and(|suffix| {
+                    suffix.is_empty() || suffix.contains('*') || !valid_dns_name(suffix)
+                })
+                || (wildcard_suffix.is_none() && !valid_dns_name(&name))
+            {
                 return Err(policy::PolicyError::InvalidRewrite {
                     name: config.name.clone(),
                     reason: "name must be a non-empty ASCII DNS name".into(),
@@ -2386,7 +2412,22 @@ mod runtime {
                 );
             }
         }
-        Ok(RewriteTable { entries })
+        let mut exact_entries = HashMap::new();
+        let mut wildcard_entries = HashMap::<u16, HashMap<String, DnsAnswer>>::new();
+        for ((name, qtype), answer) in entries {
+            if let Some(suffix) = name.strip_prefix("*.") {
+                wildcard_entries
+                    .entry(qtype)
+                    .or_default()
+                    .insert(suffix.to_owned(), answer);
+            } else {
+                exact_entries.insert((name, qtype), answer);
+            }
+        }
+        Ok(RewriteTable {
+            entries: exact_entries,
+            wildcard_entries,
+        })
     }
     fn default_breaker_failures() -> u32 {
         3
@@ -8357,6 +8398,49 @@ mod runtime {
         }
 
         #[test]
+        fn wildcard_rewrite_matches_one_label_and_exact_wins() {
+            let mut config = Config::default();
+            config.policy.rewrites = vec![
+                RewriteConfig {
+                    name: "*.home.arpa".into(),
+                    ipv4: Some(Ipv4Addr::new(192, 0, 2, 10)),
+                    ipv6: None,
+                    cname: None,
+                    ttl: 30,
+                },
+                RewriteConfig {
+                    name: "router.home.arpa".into(),
+                    ipv4: Some(Ipv4Addr::new(192, 0, 2, 20)),
+                    ipv6: None,
+                    cname: None,
+                    ttl: 40,
+                },
+            ];
+            let policy = Policy::new(config).expect("valid wildcard rewrites");
+            let query = |name: &str| proxima_dns::DnsQuery {
+                id: 1,
+                recursion_desired: true,
+                name: name.into(),
+                qtype: 1,
+                qclass: 1,
+            };
+            let wildcard = policy
+                .evaluate(&query("client.home.arpa."))
+                .expect("wildcard answer");
+            assert_eq!(wildcard.records[0].rdata, vec![192, 0, 2, 10]);
+            assert_eq!(wildcard.records[0].name, "client.home.arpa.");
+            let exact = policy
+                .evaluate(&query("router.home.arpa."))
+                .expect("exact answer");
+            assert_eq!(exact.records[0].rdata, vec![192, 0, 2, 20]);
+            assert!(
+                policy
+                    .evaluate(&query("deep.client.home.arpa."))
+                    .is_some_and(|answer| answer.records.is_empty())
+            );
+        }
+
+        #[test]
         fn local_rewrites_fail_closed_when_invalid_or_oversized() {
             let mut invalid = Config::default();
             invalid.policy.rewrites = vec![RewriteConfig {
@@ -8370,6 +8454,24 @@ mod runtime {
                 Policy::new(invalid),
                 Err(policy::PolicyError::InvalidRewrite { .. })
             ));
+
+            for name in ["*", "a.*.example", "*.has space.example"] {
+                let mut invalid = Config::default();
+                invalid.policy.rewrites = vec![RewriteConfig {
+                    name: name.into(),
+                    ipv4: Some(Ipv4Addr::new(192, 0, 2, 1)),
+                    ipv6: None,
+                    cname: None,
+                    ttl: 30,
+                }];
+                assert!(
+                    matches!(
+                        Policy::new(invalid),
+                        Err(policy::PolicyError::InvalidRewrite { .. })
+                    ),
+                    "invalid wildcard rewrite name must fail closed: {name}"
+                );
+            }
 
             for name in [
                 "has space.example",

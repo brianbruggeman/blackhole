@@ -53,7 +53,8 @@ blocklist_reload_interval_secs = 0
 
 # Optional local DNS rewrites. A rewrite answers matching A/AAAA/CNAME queries
 # when the selected policy action is pass or observe. Set exactly one record
-# family; an explicit rule action wins.
+# family; names may begin with '*.' for a one-label wildcard, and an explicit
+# rule action wins.
 [[policy.rewrites]]
 name = "router.home.arpa"
 ipv4 = "192.0.2.1"
