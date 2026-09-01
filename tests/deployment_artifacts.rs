@@ -127,6 +127,14 @@ fn systemd_smoke_covers_install_and_rollback() {
     ] {
         assert!(smoke.contains(required), "missing smoke step: {required}");
     }
+    let workflow = fs::read_to_string(VERIFY_WORKFLOW).expect("read verification workflow");
+    let systemd = workflow
+        .find("name: run systemd install and rollback smoke")
+        .expect("Linux systemd smoke step");
+    let systemd_contract = &workflow[systemd..];
+    assert!(systemd_contract.contains("BLACKHOLE_SMOKE_TRACE=1"));
+    assert!(systemd_contract.contains("tee systemd-smoke.log"));
+    assert!(systemd_contract.contains("name: blackhole-linux-smoke-"));
 }
 
 #[test]

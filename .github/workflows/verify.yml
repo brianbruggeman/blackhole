@@ -86,7 +86,17 @@ jobs:
       - name: build capture smoke
         run: cargo build --locked --example capture_smoke
       - name: run systemd install and rollback smoke
-        run: sudo -n env BLACKHOLE_BINARY="$PWD/target/release/blackhole" BLACKHOLE_CONFIG="$PWD/blackhole.example.toml" deploy/systemd/smoke.sh
+        run: |
+          set -o pipefail
+          sudo -n env BLACKHOLE_SMOKE_TRACE=1 \
+            BLACKHOLE_BINARY="$PWD/target/release/blackhole" \
+            BLACKHOLE_CONFIG="$PWD/blackhole.example.toml" \
+            deploy/systemd/smoke.sh 2>&1 | tee systemd-smoke.log
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: blackhole-linux-smoke-${{ github.sha }}
+          path: systemd-smoke.log
       - name: run Debian package install smoke
         run: |
           old_package=$(find dist -name 'blackhole_0.0.9_*.deb' -print -quit)
