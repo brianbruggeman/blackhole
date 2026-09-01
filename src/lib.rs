@@ -2391,6 +2391,8 @@ mod runtime {
             serde_json::json!({
                 "status": "ok",
                 "rules_configured": self.rules_configured.load(Ordering::Acquire),
+                "profiles_configured": self.config.policy.profiles.len(),
+                "client_groups_configured": self.config.policy.client_groups.len(),
                 "upstream_configured": self.upstream.is_some(),
                 "country_policy_configured": self
                     .country_policy

@@ -173,6 +173,8 @@ mod tests {
             serde_json::from_slice(&status.payload).expect("status JSON");
         assert_eq!(status["status"], "ok");
         assert_eq!(status["rules_configured"], false);
+        assert_eq!(status["profiles_configured"], 0);
+        assert_eq!(status["client_groups_configured"], 0);
         assert_eq!(status["upstream_configured"], false);
         assert_eq!(status["country_policy_configured"], false);
         assert_eq!(status["cache_entries"], 0);
