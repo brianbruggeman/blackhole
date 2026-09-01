@@ -353,6 +353,26 @@ idle CPU. This supplies the real-client latency, throughput, RSS, and error
 axes for the local UDP boundary. TCP, sustained offered-load CPU utilization,
 and cross-process client/server measurements remain outside this row.
 
+## Row 15 — instrumented real listener transport boundaries
+
+`MEASURED` on 2026-09-01, Linux `x86_64`, rustc `1.98.0`, release build with
+`perf-instrument`, source commit `27f3b01`, and GitHub Proxima revision
+`03596bc908be7ae76179464f85ad867b311e2a65`. The real-client listener example
+sent 100 sequential UDP and 100 sequential TCP requests; both transports
+returned zero errors:
+
+```text
+listener_udp single_request_ns=64791 p50_ns=26280 p95_ns=33335 p99_ns=98199 cov=0.390924 throughput_ops_s=DERIVED 33795.75
+listener_tcp single_request_ns=79611 p50_ns=31387 p95_ns=65948 p99_ns=84585 cov=0.317411 throughput_ops_s=DERIVED 28907.02
+listener_boundary_bytes=MEASURED policy_canonicalize=0 borrowed_to_owned=3798 tcp_frame_buffer=3700 encode_output=14348 transport_write=14348
+rss_kib=MEASURED 9060 cpu_percent=MEASURED 0.0 cpu_clock_ticks_s=MEASURED 100 loadavg=MEASURED 1.76
+```
+
+The counters cover the actual listener exercise, including TCP framing,
+response encoding, and transport writes. CPU remains quantized by the short
+100 Hz process-accounting window and is not interpreted as a utilization
+verdict; sustained cross-process load remains required for that claim.
+
 ## Row 14 — real UDP and TCP listener/client boundary
 
 `MEASURED` on 2026-09-01, Linux `x86_64`, rustc `1.98.0`, release build,
