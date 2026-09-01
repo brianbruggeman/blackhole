@@ -52,8 +52,6 @@ action = "nxdomain"
 priority = 10
 # Optional exact client or bounded CIDR scope; do not configure both.
 # client_cidrs = ["192.0.2.0/24", "2001:db8::/32"]
-# Optional client scope; the profile then applies only to matching networks.
-# client_cidrs = ["192.0.2.0/24", "2001:db8::/32"]
 # Optional DNS filters; each is ranked independently with the client scope.
 # qtype = 1
 # qclass = 1
