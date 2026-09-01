@@ -178,7 +178,8 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   APIs.
 - A pure `blackhole::edge` parse-and-policy entry point that preserves the
   existing rule/action identity and compiles in the no-std WASM edge tier;
-  the owned runtime and transport remain outside this boundary.
+  a target-gated exported probe and Node benchmark exercise the same
+  parse/match path without the owned runtime.
 - Shared capture-controller orchestration with exact ownership journaling,
   rollback on journal failure, corruption-safe restart recovery, and cleanup
   refusal for ownership mismatches.
