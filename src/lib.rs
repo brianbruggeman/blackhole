@@ -2007,14 +2007,10 @@ mod runtime {
                     reason: format!("combined domain count exceeds {}", policy::MAX_RULES),
                 });
             }
-            if (!profile.groups.is_empty() && !profile.client_cidrs.is_empty())
-                || profile.client_identity.is_some()
-                    && (!profile.groups.is_empty() || !profile.client_cidrs.is_empty())
-            {
+            if !profile.groups.is_empty() && !profile.client_cidrs.is_empty() {
                 return Err(policy::PolicyError::InvalidProfile {
                     name: profile.name.clone(),
-                    reason: "groups, client_cidrs, and client_identity are mutually exclusive"
-                        .into(),
+                    reason: "groups and client_cidrs are mutually exclusive".into(),
                 });
             }
             if let Some(identity) = profile.client_identity.as_deref() {
@@ -2028,11 +2024,11 @@ mod runtime {
                     });
                 }
             }
-            let group_scopes = if profile.groups.is_empty() {
+            let mut group_scopes = if profile.groups.is_empty() {
                 vec![ClientScope {
                     client: None,
                     client_cidrs: profile.client_cidrs.clone(),
-                    client_identity: profile.client_identity.clone(),
+                    client_identity: None,
                 }]
             } else {
                 profile
@@ -2052,6 +2048,9 @@ mod runtime {
                     .flatten()
                     .collect()
             };
+            for scope in &mut group_scopes {
+                scope.client_identity = profile.client_identity.clone();
+            }
             let expanded_domains = profile
                 .domains
                 .len()
@@ -6685,24 +6684,45 @@ mod runtime {
         }
 
         #[test]
-        fn service_profile_rejects_mixed_identity_and_network_scope() {
+        fn service_profile_combines_identity_and_network_scope() {
             let mut config = Config::default();
+            config.policy.client_identities = vec![ClientIdentityConfig {
+                name: "family-router".into(),
+                clients: Vec::new(),
+                client_cidrs: vec!["192.0.2.0/24".into()],
+            }];
             config.policy.profiles = vec![ServiceProfileConfig {
                 id: 6_001,
-                name: "ambiguous-profile".into(),
+                name: "narrow-family-profile".into(),
                 domains: vec!["identity.example".into()],
                 action: Action::Reject,
                 groups: Vec::new(),
                 client_identity: Some("family-router".into()),
                 priority: 0,
-                client_cidrs: vec!["192.0.2.0/24".into()],
+                client_cidrs: vec!["192.0.2.0/25".into()],
                 qtype: None,
                 qclass: None,
             }];
-            assert!(matches!(
-                Policy::new(config),
-                Err(policy::PolicyError::InvalidProfile { .. })
-            ));
+            let policy = Policy::new(config).expect("valid combined profile");
+            let query = proxima_dns::DnsQuery {
+                id: 5,
+                recursion_desired: true,
+                name: "identity.example.".into(),
+                qtype: 1,
+                qclass: 1,
+            };
+            assert_eq!(
+                policy
+                    .decision(&query, Some("192.0.2.53".parse().unwrap()))
+                    .expect("combined scope decision")
+                    .action,
+                Action::Reject
+            );
+            assert!(
+                policy
+                    .decision(&query, Some("192.0.2.200".parse().unwrap()))
+                    .is_none()
+            );
         }
 
         #[test]
