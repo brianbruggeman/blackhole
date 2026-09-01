@@ -8,7 +8,7 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | Gate | Evidence |
 | --- | --- |
 | Formatting | `cargo fmt --all -- --check` passed at Blackhole `853aa81` with Rust `1.98.0`. |
-| Compilation | `cargo check --locked --all-targets` passed at Blackhole `853aa81` with GitHub Proxima revision `afca73c`, Rust `1.98.0`, and Cargo `1.98.0`. |
+| Compilation | `cargo check --locked --all-targets` passed at Blackhole `e54b88a` with every Proxima dependency explicitly pinned to GitHub revision `afca73c`, Rust `1.98.0`, and Cargo `1.98.0`. |
 | Unit and integration tests | `cargo test --workspace --all-targets` passed at Blackhole `5a5b323`: the library and live admin/resolver/fake-upstream fixtures passed against GitHub Proxima revision `afca73c`, including profile replacement and rule-preservation coverage. |
 | Cache failure behavior | `fake_upstream_servfail_is_not_cached` passes in the current 103-test run at Blackhole `c23c1ac`; SERVFAIL causes a second upstream exchange rather than a reusable negative cache entry. |
 | Nextest | `cargo nextest run --locked --workspace --all-targets --no-fail-fast` passed at Blackhole `edaa626`: 152 tests, 152 passed, 0 skipped, against GitHub Proxima revision `afca73c`; the real admin, resolver, fake-upstream, recording, parser-cause, invalid-question, rewrite, deployment-artifact, listener-latency, ownership-recovery, country-status, and all-action contract fixtures pass under the parallel runner. |
@@ -17,8 +17,8 @@ only for the exact command and scope that ran. Missing evidence remains open.
 | WASM edge runtime probe | Three fresh disposable-target runs of `node scripts/wasm_edge_bench.mjs` against the `f8ebc00` `wasm32-unknown-unknown` artifact completed 100,000 probe calls each: module `5,565,632` bytes, linear memory `2,162,688` bytes, valid result `0`, short result `-1`, and `1,958.42..2,018.50 ns/call`; a fresh bounds run at `014e1d1` also returned `null=-1` and `oversized=-1`. The scalar production path is unchanged. |
 | Cross-platform GitHub Actions | GitHub Actions run `33478035789` for `1f15c30` completed successfully for all five jobs: Linux, macOS, WASM, performance, and fuzz. Non-expired fuzz, macOS diagnostics, performance, and WASM provenance artifacts were published. |
 | Tokio compatibility build | `cargo check --locked --features tokio-compat --all-targets` passed at Blackhole `853aa81`; the lane compiles Tokio capability support while the default executable remains Prime-backed. |
-| Dependency audit | Root `cargo audit --no-fetch` and `cargo audit --no-fetch --file fuzz/Cargo.lock` passed at Blackhole `5efffec`; the root graph reports one allowed warning for unmaintained `paste` (`RUSTSEC-2024-0436`), while the fuzz lockfile reports no findings. |
-| Fuzz smoke | The installed nightly `query_view` target ran 1,000 iterations over all 56 tracked corpus inputs without a crash at Blackhole `2a1e928`; generated corpus files were moved to Trash after the smoke run. |
+| Dependency audit | Root `cargo audit --no-fetch` and `cargo audit --no-fetch --file fuzz/Cargo.lock` passed at Blackhole `e54b88a`; both graphs report only the allowed warning for unmaintained `paste` (`RUSTSEC-2024-0436`). |
+| Fuzz smoke | The installed nightly `query_view` target ran 1,000 iterations over all 56 tracked corpus inputs without a crash at Blackhole `e54b88a`, using the same pinned GitHub Proxima revision as the root lockfile; generated corpus files were moved to Trash after the smoke run. |
 | Resolver fixture | The actual loopback UDP/TCP listener fixture passed. |
 | Configuration validation | At Blackhole `6b5fcbd`, `cargo run --locked --release -- --check blackhole.example.toml` exited successfully before listener startup; enabled capture plans are validated through the platform planner without installation. |
 | Examples | `cargo check --locked --examples` passed at Blackhole `853aa81`. |
