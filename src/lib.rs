@@ -78,6 +78,8 @@ pub use policy::{Action, RuleConfig};
 #[cfg(feature = "std")]
 pub mod admin;
 #[cfg(feature = "std")]
+pub mod dhcp;
+#[cfg(feature = "std")]
 pub mod linux_capture;
 #[cfg(feature = "std")]
 pub mod listener;
