@@ -13,6 +13,36 @@ pub enum EdgeError {
     Policy(PolicyError),
 }
 
+/// Reusable immutable edge policy. Construct this when the configuration
+/// changes, not once per packet.
+pub struct EdgePolicy {
+    policy: ReferencePolicy,
+}
+
+impl EdgePolicy {
+    pub fn new(rules: &[RuleConfig]) -> Result<Self, PolicyError> {
+        Ok(Self {
+            policy: ReferencePolicy::new(rules)?,
+        })
+    }
+
+    /// Parse and match one packet against this already-built snapshot.
+    pub fn decide(
+        &self,
+        packet: &[u8],
+        client: Option<core::net::IpAddr>,
+    ) -> Result<Option<Decision>, EdgeError> {
+        let query = QueryView::parse(packet)?;
+        let name = query.name.to_dotted();
+        Ok(self.policy.decide(QueryContext {
+            name: &name,
+            qtype: query.qtype,
+            qclass: query.qclass,
+            client,
+        }))
+    }
+}
+
 impl core::fmt::Display for EdgeError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -46,15 +76,7 @@ pub fn decide<'packet>(
     rules: &[RuleConfig],
     client: Option<core::net::IpAddr>,
 ) -> Result<Option<Decision>, EdgeError> {
-    let query = QueryView::parse(packet)?;
-    let policy = ReferencePolicy::new(rules)?;
-    let name = query.name.to_dotted();
-    Ok(policy.decide(QueryContext {
-        name: &name,
-        qtype: query.qtype,
-        qclass: query.qclass,
-        client,
-    }))
+    EdgePolicy::new(rules)?.decide(packet, client)
 }
 
 #[cfg(test)]
@@ -80,8 +102,16 @@ mod tests {
             client_cidr: None,
             client_cidrs: Vec::new(),
         }];
+        let policy = EdgePolicy::new(&rules).expect("valid edge policy");
         assert_eq!(
-            decide(&packet, &rules, None).expect("valid edge decision"),
+            policy.decide(&packet, None).expect("valid edge decision"),
+            Some(Decision {
+                rule_id: 7,
+                action: Action::Nxdomain,
+            })
+        );
+        assert_eq!(
+            decide(&packet, &rules, None).expect("valid convenience decision"),
             Some(Decision {
                 rule_id: 7,
                 action: Action::Nxdomain,
