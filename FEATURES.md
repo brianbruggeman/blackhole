@@ -104,7 +104,8 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   invalid expansions without publishing them.
 - Authenticated bounded `POST /reload/policy-bundle` validates and replaces
   domain, regex, profile, client-group, local-rewrite, and country-policy
-  tables as one snapshot while retaining the loaded blocklist snapshot.
+  tables as one snapshot while retaining the loaded blocklist snapshot; an
+  optional blocklist-path array replaces sources only after all files validate.
 - Authenticated cache deletion clears all bounded positive and negative DNS
   answers and reports only the number of entries removed.
 - Optional bounded privacy-safe query-decision logs use Proxima's recording

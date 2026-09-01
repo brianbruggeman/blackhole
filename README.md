@@ -106,7 +106,9 @@ enabled. `POST /reload/profiles` atomically replaces the profile and client-grou
 tables from a bounded JSON object with `profiles` and `client_groups` arrays.
 `POST /reload/policy-bundle` replaces the domain, regex, profile, client-group,
 local-rewrite, and country-policy tables as one validated snapshot while
-retaining loaded blocklists.
+retaining loaded blocklists. Its optional `blocklists` array can replace the
+blocklist source paths in the same validated publication; omitted or `null`
+retains the current blocklist snapshot.
 Send the token
 as a Bearer credential; `/rules` returns only bounded policy metadata and no
 query payloads. Query logs are disabled by default and retain only timestamp,
