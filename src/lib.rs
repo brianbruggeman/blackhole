@@ -3106,6 +3106,35 @@ mod runtime {
             Ok(ReloadState::Published)
         }
 
+        /// Add operator-managed client networks to the live denylist without
+        /// replacing any other admission limit. The existing admission
+        /// snapshot remains the single authoritative store.
+        pub fn add_deny_client_cidrs(
+            &self,
+            additions: &[String],
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let mut admission = self.admission_config();
+            for cidr in additions {
+                if !admission.deny_client_cidrs.contains(cidr) {
+                    admission.deny_client_cidrs.push(cidr.clone());
+                }
+            }
+            self.reload_admission(&admission)
+        }
+
+        /// Revoke operator-managed client networks from the live denylist.
+        /// Removing an unknown entry is idempotent and safe for retries.
+        pub fn remove_deny_client_cidrs(
+            &self,
+            removals: &[String],
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let mut admission = self.admission_config();
+            admission
+                .deny_client_cidrs
+                .retain(|cidr| !removals.iter().any(|removal| removal == cidr));
+            self.reload_admission(&admission)
+        }
+
         /// Append validated rules to the current authoritative table and
         /// publish the combined snapshot atomically. The base-table lock is
         /// held through validation and publication so concurrent appenders do
@@ -5559,6 +5588,14 @@ mod runtime {
                 "keys": "not_exposed",
             })
             .to_string()
+        }
+
+        /// Export the bounded operator-managed denylist through the already
+        /// authenticated admin surface. This is configuration metadata, not
+        /// telemetry or query logging.
+        pub(crate) fn admin_abuse_denylist(&self) -> String {
+            serde_json::to_string(&self.admission_config().deny_client_cidrs)
+                .unwrap_or_else(|_| "[]".into())
         }
 
         pub(crate) fn clear_abuse_state(&self) -> usize {

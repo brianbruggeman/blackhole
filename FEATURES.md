@@ -91,6 +91,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - An operator-configured bounded IPv4/IPv6 CIDR denylist, including exact
   addresses via `/32` or `/128`, that rejects clients before policy matching
   and is atomically reloadable without publishing invalid entries.
+- Authenticated bounded denylist export, operator-managed additions, and
+  revocations through the same atomic lock-free admission snapshot; updates
+  are idempotent, bounded, and fail closed on invalid CIDRs.
 - An opt-in lock-free global abuse breaker opens after repeated aggregate
   rate or response-budget violations and temporarily sheds all callers; zero
   disables it, and its window/cooldown are bounded and operator-configurable.

@@ -51,6 +51,9 @@ DNS edge and is a prerequisite for any future honeypot terminal.
   identity, attribution, authentication, or a substitute for network-level
   DDoS protection. Operators may configure `country_policy.max_age_secs`; a
   stale or timestamp-unreadable map fails closed before publication.
+- The authenticated `/abuse/denylist` export and add/remove routes expose only
+  operator-managed CIDR configuration to an authenticated administrator; this
+  is control-plane metadata, not telemetry, query logging, or payload storage.
 
 ## Future terminal requirements
 

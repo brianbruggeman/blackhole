@@ -79,6 +79,10 @@ Operators can also set `[admission].deny_client_cidrs` to a bounded list of
 IPv4/IPv6 CIDRs (use `/32` or `/128` for one address); those clients receive
 REFUSED before policy matching, rate accounting, or forwarding. The denylist
 is live-reloadable and invalid replacements are rejected without publication.
+Authenticated operators can export it at `GET /abuse/denylist`, add bounded
+entries with `POST /abuse/denylist/add`, and revoke entries with
+`POST /abuse/denylist/remove`; these operations publish through the same
+atomic admission snapshot and are safe to retry.
 Set `[admission.ddos].persist_incidents = true` to persist temporary-blacklist
 events through the bounded Proxima recording sink; active markers are restored
 after restart until their configured expiry and expired markers are ignored.
@@ -194,6 +198,7 @@ publishing the complete bundle. The same routes are available as
 authenticated `GET /health`, `GET /status`, bounded `GET /admission/status`,
 `GET /country/status`,
 `GET /policy/status`,
+`GET /abuse/denylist`,
 `GET /policy-bundle`,
 `GET /rules`, `GET /logs`,
 and `POST /logs/clear`, `POST /cache/clear`, `POST /reload/blocklists`, bounded
@@ -204,6 +209,8 @@ and `POST /logs/clear`, `POST /cache/clear`, `POST /reload/blocklists`, bounded
 in-flight capacity remains startup-only), bounded
 `POST /reload/admission/denylist` (an atomic JSON array replacement for only
 the configured client CIDRs), bounded
+`POST /abuse/denylist/add` and `/abuse/denylist/remove` (atomic bounded
+operator-managed additions and revocations), bounded
 `POST /reload/country`, bounded `POST /reload/policy` (a JSON array of complete rule objects), bounded
 `POST /reload/country/replace` (an atomic country/CIDR selector and map
 configuration replacement), bounded

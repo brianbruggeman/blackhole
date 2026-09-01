@@ -205,10 +205,38 @@ impl SendPipe for AdminHandler {
             ))),
             ("GET", "/admission/status") => Ok(Response::ok(self.policy.admin_admission_status())),
             ("GET", "/abuse/status") => Ok(Response::ok(self.policy.admin_abuse_status())),
+            ("GET", "/abuse/denylist") => Ok(Response::ok(self.policy.admin_abuse_denylist())),
             ("POST", "/abuse/clear") => Ok(Response::ok(format!(
                 "{{\"status\":\"cleared\",\"entries\":{}}}",
                 self.policy.clear_abuse_state()
             ))),
+            ("POST", "/abuse/denylist/add") | ("POST", "/abuse/denylist/remove") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let cidrs = match serde_json::from_slice::<Vec<String>>(&request.payload) {
+                    Ok(cidrs) => cidrs,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                let result = if path.ends_with("/add") {
+                    self.policy.add_deny_client_cidrs(&cidrs)
+                } else {
+                    self.policy.remove_deny_client_cidrs(&cidrs)
+                };
+                match result {
+                    Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
             ("POST", "/reload/admission") => {
                 if request.payload.len() > MAX_POLICY_BODY_BYTES {
                     return Ok(Response::new(413));
@@ -862,7 +890,10 @@ impl SendPipe for AdminHandler {
                 | "/stats/clear"
                 | "/admission/status"
                 | "/abuse/status"
+                | "/abuse/denylist"
                 | "/abuse/clear"
+                | "/abuse/denylist/add"
+                | "/abuse/denylist/remove"
                 | "/reload/admission"
                 | "/reload/admission/denylist"
                 | "/country/status"
@@ -1359,6 +1390,42 @@ mod tests {
             .expect("admission status response");
         let status: serde_json::Value = serde_json::from_slice(&status.payload).expect("status");
         assert_eq!(status["deny_client_cidr_count"], 2);
+    }
+
+    #[test]
+    fn managed_denylist_can_be_exported_added_and_revoked_atomically() {
+        let handler = AdminHandler::new(Arc::new(
+            Policy::new(crate::Config::default()).expect("default policy"),
+        ));
+        let add = Request::builder()
+            .method("POST")
+            .path("/abuse/denylist/add")
+            .payload(r#"["192.0.2.10/32","2001:db8:42::/48"]"#)
+            .build()
+            .expect("valid denylist add");
+        let response = block_on(handler.call(add)).expect("add response");
+        assert_eq!(response.status, 200);
+        let exported =
+            block_on(handler.call(request("GET", "/abuse/denylist"))).expect("denylist export");
+        assert_eq!(
+            serde_json::from_slice::<Vec<String>>(&exported.payload).expect("export JSON"),
+            vec!["192.0.2.10/32", "2001:db8:42::/48"]
+        );
+
+        let remove = Request::builder()
+            .method("POST")
+            .path("/abuse/denylist/remove")
+            .payload(r#"["192.0.2.10/32"]"#)
+            .build()
+            .expect("valid denylist removal");
+        let response = block_on(handler.call(remove)).expect("remove response");
+        assert_eq!(response.status, 200);
+        let exported = block_on(handler.call(request("GET", "/abuse/denylist")))
+            .expect("denylist export after removal");
+        assert_eq!(
+            serde_json::from_slice::<Vec<String>>(&exported.payload).expect("export JSON"),
+            vec!["2001:db8:42::/48"]
+        );
     }
 
     #[test]
