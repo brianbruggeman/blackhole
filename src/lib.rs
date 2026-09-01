@@ -349,6 +349,8 @@ mod runtime {
         pub max_queries_per_client_per_second: usize,
         #[serde(default = "default_max_response_bytes_per_client_per_second")]
         pub max_response_bytes_per_client_per_second: usize,
+        #[serde(default = "default_max_response_bytes_per_network_per_second")]
+        pub max_response_bytes_per_network_per_second: usize,
         #[serde(default = "default_max_response_bytes_per_second")]
         pub max_response_bytes_per_second: usize,
         #[serde(default = "default_max_client_abuse_violations")]
@@ -383,6 +385,8 @@ mod runtime {
                 max_queries_per_client_per_second: default_max_queries_per_client_per_second(),
                 max_response_bytes_per_client_per_second:
                     default_max_response_bytes_per_client_per_second(),
+                max_response_bytes_per_network_per_second:
+                    default_max_response_bytes_per_network_per_second(),
                 max_response_bytes_per_second: default_max_response_bytes_per_second(),
                 max_client_abuse_violations: default_max_client_abuse_violations(),
                 client_abuse_window_secs: default_client_abuse_window_secs(),
@@ -946,6 +950,9 @@ mod runtime {
     }
     fn default_max_response_bytes_per_client_per_second() -> usize {
         1_048_576
+    }
+    fn default_max_response_bytes_per_network_per_second() -> usize {
+        4 * 1_048_576
     }
     fn default_max_response_bytes_per_second() -> usize {
         16 * 1_048_576
@@ -1567,6 +1574,7 @@ mod runtime {
         client_rates: Arc<Mutex<HashMap<IpAddr, ClientRate>>>,
         global_rate: Arc<Mutex<ClientRate>>,
         client_response_budgets: Arc<Mutex<HashMap<IpAddr, ClientResponseBudget>>>,
+        network_response_budgets: Arc<Mutex<HashMap<AbuseNetworkKey, ClientResponseBudget>>>,
         global_response_budget: Arc<Mutex<ClientResponseBudget>>,
         client_abuse: Arc<Mutex<HashMap<IpAddr, ClientAbuse>>>,
         network_abuse: Arc<Mutex<HashMap<AbuseNetworkKey, ClientAbuse>>>,
@@ -1763,6 +1771,11 @@ mod runtime {
                     reason: "max_response_bytes_per_client_per_second must be non-zero".into(),
                 });
             }
+            if config.admission.max_response_bytes_per_network_per_second == 0 {
+                return Err(policy::PolicyError::InvalidAdmission {
+                    reason: "max_response_bytes_per_network_per_second must be non-zero".into(),
+                });
+            }
             if config.admission.max_response_bytes_per_second == 0 {
                 return Err(policy::PolicyError::InvalidAdmission {
                     reason: "max_response_bytes_per_second must be non-zero".into(),
@@ -1911,6 +1924,7 @@ mod runtime {
                     requests: 0,
                 })),
                 client_response_budgets: Arc::new(Mutex::new(HashMap::new())),
+                network_response_budgets: Arc::new(Mutex::new(HashMap::new())),
                 global_response_budget: Arc::new(Mutex::new(ClientResponseBudget {
                     window_started: Instant::now(),
                     bytes: 0,
@@ -3172,6 +3186,66 @@ mod runtime {
                 return false;
             }
             budget.bytes = budget.bytes.saturating_add(bytes);
+            true
+        }
+
+        /// Bound encoded DNS egress for an identified client network over a
+        /// one-second window. The network key uses the same configured prefix
+        /// as the abuse breaker and the table is bounded like other admission
+        /// state.
+        pub(crate) fn allow_network_response_bytes(
+            &self,
+            client: Option<IpAddr>,
+            bytes: usize,
+        ) -> bool {
+            let Some(client) = client else {
+                return true;
+            };
+            let now = Instant::now();
+            let limit = self
+                .config
+                .admission
+                .max_response_bytes_per_network_per_second;
+            if bytes > limit {
+                return false;
+            }
+            let key = abuse_network_key(
+                client,
+                self.config.admission.network_abuse_ipv4_prefix,
+                self.config.admission.network_abuse_ipv6_prefix,
+            );
+            let mut budgets = self
+                .network_response_budgets
+                .lock()
+                .expect("network response budget lock");
+            if let Some(budget) = budgets.get_mut(&key) {
+                if now.duration_since(budget.window_started) >= Duration::from_secs(1) {
+                    budget.window_started = now;
+                    budget.bytes = bytes;
+                    return true;
+                }
+                if budget.bytes.saturating_add(bytes) > limit {
+                    return false;
+                }
+                budget.bytes = budget.bytes.saturating_add(bytes);
+                return true;
+            }
+            if budgets.len() >= MAX_CLIENT_RATE_ENTRIES {
+                if let Some(oldest) = budgets
+                    .iter()
+                    .min_by_key(|(_, budget)| budget.window_started)
+                    .map(|(key, _)| *key)
+                {
+                    budgets.remove(&oldest);
+                }
+            }
+            budgets.insert(
+                key,
+                ClientResponseBudget {
+                    window_started: now,
+                    bytes,
+                },
+            );
             true
         }
 
@@ -6005,6 +6079,21 @@ mod runtime {
         }
 
         #[test]
+        fn network_response_budget_covers_clients_in_the_same_network() {
+            let mut config = Config::default();
+            config.admission.max_response_bytes_per_network_per_second = 10;
+            let policy = Policy::new(config).expect("valid network response budget");
+            let first = Some("192.0.2.10".parse().expect("first client"));
+            let second = Some("192.0.2.11".parse().expect("second client"));
+            let other_network = Some("192.0.3.10".parse().expect("other client"));
+
+            assert!(policy.allow_network_response_bytes(first, 6));
+            assert!(!policy.allow_network_response_bytes(second, 5));
+            assert!(policy.allow_network_response_bytes(other_network, 5));
+            assert!(policy.allow_network_response_bytes(None, 4096));
+        }
+
+        #[test]
         fn global_response_budget_covers_unidentified_egress() {
             let mut config = Config::default();
             config.admission.max_response_bytes_per_second = 10;
@@ -6019,6 +6108,13 @@ mod runtime {
         fn zero_response_byte_budget_is_rejected() {
             let mut config = Config::default();
             config.admission.max_response_bytes_per_client_per_second = 0;
+            assert!(matches!(
+                Policy::new(config),
+                Err(policy::PolicyError::InvalidAdmission { .. })
+            ));
+
+            let mut config = Config::default();
+            config.admission.max_response_bytes_per_network_per_second = 0;
             assert!(matches!(
                 Policy::new(config),
                 Err(policy::PolicyError::InvalidAdmission { .. })

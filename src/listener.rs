@@ -180,6 +180,14 @@ async fn decide<'a>(
         let _ = state.transition(Event::Drop(DropReason::PolicyFailure));
         return Ok(None);
     }
+    if !policy.allow_network_response_bytes(client_ip, output.len()) {
+        policy.observe_failure("network_response_budget");
+        if policy.record_client_abuse(client_ip) {
+            policy.observe_failure("client_abuse_breaker_open");
+        }
+        let _ = state.transition(Event::Drop(DropReason::PolicyFailure));
+        return Ok(None);
+    }
     #[cfg(feature = "perf-instrument")]
     crate::perf::record_copy(crate::perf::Boundary::EncodeOutput, output.len());
     let event = if action == crate::Action::Forward {

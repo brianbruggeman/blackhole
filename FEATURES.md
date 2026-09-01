@@ -68,6 +68,8 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - A bounded per-client encoded-response-byte budget that sheds identified
   clients after their configured one-second egress budget is exhausted,
   without applying a shared identity to unidentified callers.
+- A bounded per-network encoded-response-byte budget that applies the same
+  egress ceiling across each configured IPv4/IPv6 prefix.
 - A bounded aggregate encoded-response-byte budget that sheds total DNS
   egress, including responses with no identified client, before transport
   write.
