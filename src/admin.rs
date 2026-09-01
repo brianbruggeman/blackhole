@@ -91,7 +91,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <h2>Admission limits</h2><textarea id="admission-config" rows="16" cols="80">loading…</textarea><pre id="admission-status">loading…</pre>
 <h2>Adaptive abuse controls</h2><pre id="abuse-status">loading…</pre>
 <h2>Policy bundle</h2><textarea id="policy-bundle" rows="12" cols="80">loading…</textarea>
-<h2>Blocklists</h2><pre id="blocklists">loading…</pre>
+<h2>Blocklists</h2><div id="blocklist-controls"></div><pre id="blocklists">loading…</pre>
 <h2>Country policy</h2><pre id="country-status">loading…</pre>
 <h2>Privacy status</h2><pre id="privacy-status">loading…</pre>
 <h2>Rules</h2><pre id="rules">loading…</pre>
@@ -102,6 +102,18 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <h2>Privacy log</h2><pre id="logs">loading…</pre>
 <script>
 const load = (path, target) => fetch(path).then(response => response.json()).then(value => {
+  if (path === '/blocklists') {
+    const controls = document.querySelector('#blocklist-controls');
+    controls.replaceChildren();
+    for (const source of value.sources || []) {
+      const button = document.createElement('button');
+      button.textContent = `${source.enabled ? 'Disable' : 'Enable'} ${source.path}`;
+      button.onclick = () => operate(`/reload/blocklists/${source.enabled ? 'disable' : 'enable'}`, {
+        method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify([source.path])
+      }).then(refresh);
+      controls.append(button);
+    }
+  }
   if (path === '/policy-bundle') document.querySelector(target).value = JSON.stringify(value, null, 2);
   else document.querySelector(target).textContent = JSON.stringify(value, null, 2);
   if (path === '/admission/status') document.querySelector('#admission-config').value = JSON.stringify(value, null, 2);
@@ -967,7 +979,7 @@ mod tests {
                 .windows(b"/reload/config".len())
                 .any(|window| window == b"/reload/config")
         );
-        assert!(ui.payload.len() < 4 * 1024);
+        assert!(ui.payload.len() < 5 * 1024);
         let clear =
             block_on(handler.call(request("POST", "/cache/clear"))).expect("cache clear response");
         assert_eq!(clear.status, 200);
