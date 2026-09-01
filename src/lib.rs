@@ -97,6 +97,7 @@ mod runtime {
         RecordingAppendFuture, RecordingEvent, RecordingSink, TelemetryHandle,
     };
     use proxima_core::ProximaError;
+    use proxima_core::live::{Live, LiveControl, live};
     use proxima_dns::{
         DnsAnswer, DnsAnswerRecord, DnsAnswerWithMetadata, DnsClientUpstream, DnsPipeReply,
         DnsPipeRequest,
@@ -1923,7 +1924,8 @@ mod runtime {
         blocklist_paths: Mutex<Vec<String>>,
         profiles: RwLock<Vec<ServiceProfileConfig>>,
         client_groups: RwLock<Vec<ClientGroupConfig>>,
-        client_identities: Vec<ClientIdentityConfig>,
+        client_identities: Live<Vec<ClientIdentityConfig>>,
+        client_identity_control: LiveControl<Vec<ClientIdentityConfig>>,
         country_policy: Arc<RwLock<Option<CountryPolicy>>>,
         reload_lock: RwLock<()>,
         legacy_domains: RwLock<Vec<String>>,
@@ -2275,6 +2277,7 @@ mod runtime {
             let default_action = config.policy.default_action;
             let rewrite_configs = config.policy.rewrites.clone();
             let admission = config.admission.clone();
+            let (client_identities, client_identity_control) = live(client_identities);
             let policy = Self {
                 config,
                 base_rules: Mutex::new(base_rules),
@@ -2284,6 +2287,7 @@ mod runtime {
                 profiles: RwLock::new(profiles),
                 client_groups: RwLock::new(client_groups),
                 client_identities,
+                client_identity_control,
                 country_policy: Arc::new(RwLock::new(country_policy)),
                 reload_lock: RwLock::new(()),
                 legacy_domains: RwLock::new(legacy_domains),
@@ -2758,6 +2762,26 @@ mod runtime {
             *self.profiles.write().expect("profiles lock") = profiles.to_vec();
             *self.client_groups.write().expect("client groups lock") = client_groups.to_vec();
             Ok(published)
+        }
+
+        /// Validate and atomically publish client-address identity mappings.
+        ///
+        /// The identity lookup reads the Proxima [`Live`] snapshot without a
+        /// table lock; this control-plane operation replaces the complete
+        /// immutable table, so readers observe either generation and never a
+        /// partial update. The broader reload coordinator still serializes
+        /// multi-table policy changes.
+        pub fn reload_client_identities(
+            &self,
+            identities: &[ClientIdentityConfig],
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
+            let started = Instant::now();
+            let next = validate_client_identities(identities)?;
+            self.client_identity_control.replace(next);
+            self.policy_generation.fetch_add(1, Ordering::Relaxed);
+            self.observe_reload_latency("client_identities", started);
+            Ok(ReloadState::Published)
         }
 
         /// Atomically replace or add named client groups while preserving the
@@ -3466,7 +3490,7 @@ mod runtime {
                     qtype: query.qtype,
                     qclass: query.qclass,
                     client,
-                    client_identity,
+                    client_identity: client_identity.as_deref(),
                 })
             });
             reference.or_else(|| {
@@ -3481,12 +3505,14 @@ mod runtime {
             }
         }
 
-        fn client_identity_for(&self, client: Option<std::net::IpAddr>) -> Option<&str> {
+        fn client_identity_for(&self, client: Option<std::net::IpAddr>) -> Option<String> {
             let client = client?;
-            self.client_identities
-                .iter()
-                .find(|identity| identity.clients.contains(&client))
-                .map(|identity| identity.name.as_str())
+            self.client_identities.read(|identities| {
+                identities
+                    .iter()
+                    .find(|identity| identity.clients.contains(&client))
+                    .map(|identity| identity.name.clone())
+            })
         }
 
         fn admission_config(&self) -> AdmissionConfig {
@@ -3937,7 +3963,9 @@ mod runtime {
             client_identity: Option<&str>,
         ) -> Action {
             let _reload = self.reload_lock.read().expect("reload lock");
-            let client_identity = client_identity.or_else(|| self.client_identity_for(client));
+            let resolved_identity = client_identity
+                .map(str::to_owned)
+                .or_else(|| self.client_identity_for(client));
             let name = query.name.to_dotted();
             if !self.rules_configured.load(Ordering::Acquire) {
                 if !self.matches(&name) {
@@ -3955,7 +3983,7 @@ mod runtime {
                     qtype: query.qtype,
                     qclass: query.qclass,
                     client,
-                    client_identity,
+                    client_identity: resolved_identity.as_deref(),
                 })
             });
             reference
@@ -4508,23 +4536,24 @@ mod runtime {
 
         pub(crate) fn admin_client_identities(&self) -> String {
             let _reload = self.reload_lock.read().expect("reload lock");
-            let identities = self
-                .client_identities
-                .iter()
-                .take(MAX_ADMIN_LOG_ENTRIES)
-                .map(|identity| {
-                    serde_json::json!({
-                        "name": identity.name,
-                        "clients": identity.clients.len(),
+            self.client_identities.read(|configured| {
+                let identities = configured
+                    .iter()
+                    .take(MAX_ADMIN_LOG_ENTRIES)
+                    .map(|identity| {
+                        serde_json::json!({
+                            "name": identity.name,
+                            "clients": identity.clients.len(),
+                        })
                     })
+                    .collect::<Vec<_>>();
+                serde_json::json!({
+                    "client_identities": identities,
+                    "total": configured.len(),
+                    "truncated": configured.len() > MAX_ADMIN_LOG_ENTRIES,
                 })
-                .collect::<Vec<_>>();
-            serde_json::json!({
-                "client_identities": identities,
-                "total": self.client_identities.len(),
-                "truncated": self.client_identities.len() > MAX_ADMIN_LOG_ENTRIES,
+                .to_string()
             })
-            .to_string()
         }
 
         pub(crate) fn admin_rewrites(&self) -> String {
@@ -5912,6 +5941,64 @@ mod runtime {
             assert_eq!(
                 policy.action_for_view_with_client(view, Some("192.0.2.11".parse().unwrap())),
                 Action::Pass
+            );
+        }
+
+        #[test]
+        fn client_identity_reload_publishes_a_complete_lock_free_snapshot() {
+            let mut config = Config::default();
+            config.policy.rules = vec![RuleConfig {
+                id: 4,
+                domain: "identity.example".into(),
+                action: Action::Reject,
+                priority: 0,
+                qtype: None,
+                qclass: None,
+                client: None,
+                client_cidr: None,
+                client_cidrs: Vec::new(),
+                client_identity: Some("family-router".into()),
+            }];
+            let policy = Policy::new(config).expect("valid identity policy");
+            let packet = [
+                0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 8, b'i', b'd', b'e', b'n', b't', b'i', b't',
+                b'y', 7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 0, 0, 1, 0, 1,
+            ];
+            let view = QueryView::parse(&packet).expect("valid query");
+            let family = "192.0.2.10".parse().expect("client address");
+            let guest = "192.0.2.11".parse().expect("client address");
+            assert_eq!(
+                policy.action_for_view_with_client(view, Some(family)),
+                Action::Pass
+            );
+            assert_eq!(
+                policy.reload_client_identities(&[ClientIdentityConfig {
+                    name: "family-router".into(),
+                    clients: vec![family],
+                }]),
+                Ok(ReloadState::Published)
+            );
+            assert_eq!(
+                policy.action_for_view_with_client(view, Some(family)),
+                Action::Reject
+            );
+            assert_eq!(
+                policy.action_for_view_with_client(view, Some(guest)),
+                Action::Pass
+            );
+            assert_eq!(
+                policy.reload_client_identities(&[ClientIdentityConfig {
+                    name: "family-router".into(),
+                    clients: Vec::new(),
+                }]),
+                Err(policy::PolicyError::InvalidClientIdentityMap {
+                    name: "family-router".into(),
+                    reason: "each identity must contain 1 to 256 client addresses".into(),
+                })
+            );
+            assert_eq!(
+                policy.action_for_view_with_client(view, Some(family)),
+                Action::Reject
             );
         }
 

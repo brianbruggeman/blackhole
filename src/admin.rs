@@ -10,8 +10,8 @@ use proxima::pipe::{PipeHandle, into_handle};
 use proxima::{ProximaError, Request, Response, SendPipe};
 
 use crate::{
-    AdmissionConfig, ClientGroupConfig, CountryPolicyConfig, Mode, Policy, RegexRuleConfig,
-    RewriteConfig, RuleConfig, ServiceProfileConfig,
+    AdmissionConfig, ClientGroupConfig, ClientIdentityConfig, CountryPolicyConfig, Mode, Policy,
+    RegexRuleConfig, RewriteConfig, RuleConfig, ServiceProfileConfig,
 };
 
 const MAX_POLICY_BODY_BYTES: usize = 64 * 1024;
@@ -168,6 +168,29 @@ impl SendPipe for AdminHandler {
             ("GET", "/client-groups") => Ok(Response::ok(self.policy.admin_client_groups())),
             ("GET", "/client-identities") => {
                 Ok(Response::ok(self.policy.admin_client_identities()))
+            }
+            ("POST", "/reload/client-identities") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let identities =
+                    match serde_json::from_slice::<Vec<ClientIdentityConfig>>(&request.payload) {
+                        Ok(identities) => identities,
+                        Err(error) => {
+                            return Ok(Response::new(400).with_body(format!(
+                                "{{\"status\":\"error\",\"message\":{}}}",
+                                serde_json::to_string(&error.to_string())
+                                    .unwrap_or_else(|_| "null".into())
+                            )));
+                        }
+                    };
+                match self.policy.reload_client_identities(&identities) {
+                    Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
             }
             ("GET", "/rewrites") => Ok(Response::ok(self.policy.admin_rewrites())),
             ("POST", "/reload/policy-bundle") => {
@@ -576,6 +599,7 @@ impl SendPipe for AdminHandler {
                 | "/reload/profiles/remove"
                 | "/reload/client-groups/upsert"
                 | "/reload/client-groups/remove"
+                | "/reload/client-identities"
                 | "/reload/policy-bundle"
                 | "/logs"
                 | "/cache/clear"
@@ -814,6 +838,28 @@ mod tests {
         let wrong_policy_bundle_method = block_on(handler.call(request("POST", "/policy-bundle")))
             .expect("405 policy bundle response");
         assert_eq!(wrong_policy_bundle_method.status, 405);
+    }
+
+    #[test]
+    fn client_identity_reload_route_replaces_the_live_snapshot() {
+        let handler = AdminHandler::new(Arc::new(
+            Policy::new(crate::Config::default()).expect("default policy"),
+        ));
+        let reload = Request::builder()
+            .method("POST")
+            .path("/reload/client-identities")
+            .payload(r#"[{"name":"family-router","clients":["192.0.2.10"]}]"#)
+            .build()
+            .expect("identity reload request");
+        let response = block_on(handler.call(reload)).expect("identity reload response");
+        assert_eq!(response.status, 200);
+
+        let status = block_on(handler.call(request("GET", "/client-identities")))
+            .expect("identity status response");
+        let status: serde_json::Value =
+            serde_json::from_slice(&status.payload).expect("identity status JSON");
+        assert_eq!(status["total"], 1);
+        assert_eq!(status["client_identities"][0]["name"], "family-router");
     }
 
     #[test]
