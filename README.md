@@ -113,8 +113,11 @@ and `POST /logs/clear`, `POST /cache/clear`, `POST /reload/blocklists`, bounded
 `POST /reload/policy/add` (a non-empty JSON array appended atomically to the current domain rules), bounded
 `POST /reload/policy/upsert` (a non-empty JSON array that replaces or adds rules by stable ID while preserving unspecified rules), and bounded
 `POST /reload/policy/remove` (a JSON array of stable rule IDs removed atomically), and bounded
-`POST /reload/regex` (a JSON array of regex rule objects), bounded `GET /profiles`
-and `GET /client-groups` metadata views, plus bounded privacy-safe
+`POST /reload/regex` (a JSON array of regex rule objects),
+`POST /reload/regex/upsert` (a JSON array that replaces or adds regex rules by
+stable ID), and `POST /reload/regex/remove` (a JSON array of regex rule IDs).
+It also provides bounded `GET /profiles`, `GET /client-groups`, and
+`GET /rewrites` metadata views, plus bounded privacy-safe
 query-decision inspection at `GET /logs` and deletion at `POST /logs/clear` when
 enabled. `POST /reload/profiles` atomically replaces the profile and client-group
 tables from a bounded JSON object with `profiles` and `client_groups` arrays.
@@ -127,6 +130,9 @@ while preserving profiles and validates the resulting profile expansion before
 publication.
 `POST /reload/client-groups/remove` removes named groups only when no profile
 references them; dependent removals fail without changing the live snapshot.
+`POST /reload/rewrites/upsert` replaces or adds local A/AAAA rewrites by
+normalized DNS name, while `POST /reload/rewrites/remove` removes named
+rewrites atomically; invalid and unknown updates fail without publication.
 `POST /reload/policy-bundle` replaces the domain, regex, profile, client-group,
 local-rewrite, and country-policy tables as one validated snapshot while
 retaining loaded blocklists. Its optional `mode`, `domains`, and
