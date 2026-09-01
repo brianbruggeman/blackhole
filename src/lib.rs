@@ -9,6 +9,66 @@
 
 extern crate alloc;
 
+#[cfg(all(not(feature = "std"), target_arch = "wasm32"))]
+mod wasm_runtime {
+    use core::alloc::{GlobalAlloc, Layout};
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    const HEAP_BYTES: usize = 1024 * 1024;
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    static mut HEAP: [u8; HEAP_BYTES] = [0; HEAP_BYTES];
+
+    struct BumpAllocator;
+
+    // This allocator is only for the bounded WASM edge experiment. The
+    // production scalar path does not use it, and deallocation is intentionally
+    // omitted because the module is short-lived for each benchmark instance.
+    unsafe impl GlobalAlloc for BumpAllocator {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            let base = core::ptr::addr_of_mut!(HEAP).cast::<u8>() as usize;
+            let mut current = NEXT.load(Ordering::Relaxed);
+            loop {
+                let Some(address) = base
+                    .checked_add(current)
+                    .and_then(|value| value.checked_add(layout.align().saturating_sub(1)))
+                else {
+                    return core::ptr::null_mut();
+                };
+                let aligned = address & !(layout.align().saturating_sub(1));
+                let Some(offset) = aligned.checked_sub(base) else {
+                    return core::ptr::null_mut();
+                };
+                let Some(next) = offset.checked_add(layout.size()) else {
+                    return core::ptr::null_mut();
+                };
+                if next > HEAP_BYTES {
+                    return core::ptr::null_mut();
+                }
+                match NEXT.compare_exchange(current, next, Ordering::Relaxed, Ordering::Relaxed) {
+                    Ok(_) => return (base + offset) as *mut u8,
+                    Err(observed) => current = observed,
+                }
+            }
+        }
+
+        unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {}
+    }
+
+    #[global_allocator]
+    static ALLOCATOR: BumpAllocator = BumpAllocator;
+
+    pub fn reset() {
+        NEXT.store(0, Ordering::Relaxed);
+    }
+
+    #[panic_handler]
+    fn panic(_info: &core::panic::PanicInfo<'_>) -> ! {
+        loop {
+            core::hint::spin_loop();
+        }
+    }
+}
+
 pub mod edge;
 pub mod fsm;
 pub mod policy;

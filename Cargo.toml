@@ -11,6 +11,9 @@ name = "blackhole"
 path = "src/main.rs"
 required-features = ["std"]
 
+[lib]
+crate-type = ["rlib", "cdylib"]
+
 [features]
 default = ["std"]
 std = [

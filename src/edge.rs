@@ -79,6 +79,33 @@ pub fn decide<'packet>(
     EdgePolicy::new(rules)?.decide(packet, client)
 }
 
+/// WASM-only probe for the pure edge experiment. It uses the same parser and
+/// matcher as the reusable edge path with an empty rule snapshot and returns
+/// `1` for a valid query, `0` for a valid unmatched query, and `-1` for an
+/// invalid pointer or packet. No transport or owned runtime is linked.
+#[cfg(target_arch = "wasm32")]
+#[unsafe(no_mangle)]
+pub extern "C" fn blackhole_edge_probe(packet_ptr: *const u8, packet_len: usize) -> i32 {
+    if packet_ptr.is_null() || packet_len > crate::query::MAX_QUERY_BYTES {
+        return -1;
+    }
+    // The benchmark owns the caller-provided range; the protocol bound keeps
+    // malformed lengths from creating an unbounded slice in this experiment.
+    let packet = unsafe { core::slice::from_raw_parts(packet_ptr, packet_len) };
+    match decide(packet, &[], None) {
+        Ok(Some(_)) => 1,
+        Ok(None) => 0,
+        Err(_) => -1,
+    }
+}
+
+/// Reset the bounded allocator between isolated WASM benchmark invocations.
+#[cfg(target_arch = "wasm32")]
+#[unsafe(no_mangle)]
+pub extern "C" fn blackhole_edge_reset() {
+    crate::wasm_runtime::reset();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
