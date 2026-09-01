@@ -215,3 +215,32 @@ production arm for this workload; chunked scanning was slower and memchr had
 materially worse tail latency and variance. This is a debug-profile
 provenance row only and does not establish a release performance, zero-copy,
 or production-grade claim.
+
+## Row 9 — current release reference after deployment verification
+
+`MEASURED` on 2026-09-01, Linux `x86_64`, rustc `1.98.0`, release build,
+source commit `1102d35`, GitHub Proxima revision `03ea2c7d`, and load average
+`1.59`. The running harness used `N=25` samples per workload:
+
+```text
+build p50_ns=55645841 p95_ns=56474926 p99_ns=56481819 cov=0.007439 allocs=250025 alloc_bytes=33722250
+match p50_ns=45558 p95_ns=47514 p99_ns=49138 cov=0.021283 allocs=2500 alloc_bytes=57500
+edge_parse_match p50_ns=46479 p95_ns=70463 p99_ns=91623 cov=0.200058 allocs=100 alloc_bytes=1375
+parse_short p50_ns=49 p95_ns=70 p99_ns=158 cov=0.394200 allocs=0 alloc_bytes=0
+parse_long p50_ns=227 p95_ns=264 p99_ns=291 cov=0.063032 allocs=0 alloc_bytes=0
+parse_adversarial p50_ns=83 p95_ns=85 p99_ns=117 cov=0.080319 allocs=0 alloc_bytes=0
+parse_mixed p50_ns=81 p95_ns=239 p99_ns=243 cov=0.631035 allocs=0 alloc_bytes=0
+name_scan_scalar p50_ns=42 p95_ns=60 p99_ns=77 cov=0.170613 allocs=0 alloc_bytes=0
+name_scan_chunked p50_ns=84 p95_ns=103 p99_ns=156 cov=0.169822 allocs=0 alloc_bytes=0
+name_scan_memchr p50_ns=20 p95_ns=45 p99_ns=1296 cov=3.438450 allocs=0 alloc_bytes=0
+owned p50_ns=120 p95_ns=144 p99_ns=321 cov=0.301765 allocs=50 alloc_bytes=400
+encode_response p50_ns=108 p95_ns=276 p99_ns=331 cov=0.427794 allocs=50 alloc_bytes=1450
+boundary_bytes=MEASURED policy_canonicalize=60600 borrowed_to_owned=300 tcp_frame_buffer=0 encode_output=0 transport_write=0 rss_kib=7264
+```
+
+Throughput is `DERIVED` from the measured durations and operation counts.
+The borrowed parser and scan arms measured zero allocations. Scalar remains
+the production arm: chunked scanning is slower, and memchr has materially
+higher tail variance. The edge path has `cov=0.200058`, so this row is an
+observed reference rather than a performance verdict; no zero-copy or
+production-grade claim is made.
