@@ -4554,7 +4554,7 @@ mod runtime {
             })
         }
 
-        fn admission_config(&self) -> AdmissionConfig {
+        pub(crate) fn admission_config(&self) -> AdmissionConfig {
             self.admission.snapshot().as_ref().clone()
         }
 

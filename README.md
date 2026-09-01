@@ -191,6 +191,8 @@ and `POST /logs/clear`, `POST /cache/clear`, `POST /reload/blocklists`, bounded
 `/reload/blocklists/disable` (atomic exact source-path management), bounded
 `POST /reload/admission` (a bounded JSON admission configuration; the global
 in-flight capacity remains startup-only), bounded
+`POST /reload/admission/denylist` (an atomic JSON array replacement for only
+the configured client CIDRs), bounded
 `POST /reload/country`, bounded `POST /reload/policy` (a JSON array of complete rule objects), bounded
 `POST /reload/country/replace` (an atomic country/CIDR selector and map
 configuration replacement), bounded

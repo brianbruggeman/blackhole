@@ -221,6 +221,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   admission, rate, response-budget, and abuse-breaker limits; the startup-sized
   global in-flight atomic permit pool is immutable and capacity changes fail
   closed.
+- Authenticated bounded `POST /reload/admission/denylist` atomically replaces
+  only the configured client CIDRs while preserving every other live admission
+  limit and rejecting invalid input without publication.
 - Authenticated bounded `POST /reload/config` publishes the validated policy
   bundle and live admission snapshot together, preserving the same startup-only
   capacity boundary as the separate admission route.

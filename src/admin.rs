@@ -224,6 +224,31 @@ impl SendPipe for AdminHandler {
                     ))),
                 }
             }
+            ("POST", "/reload/admission/denylist") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let deny_client_cidrs =
+                    match serde_json::from_slice::<Vec<String>>(&request.payload) {
+                        Ok(deny_client_cidrs) => deny_client_cidrs,
+                        Err(error) => {
+                            return Ok(Response::new(400).with_body(format!(
+                                "{{\"status\":\"error\",\"message\":{}}}",
+                                serde_json::to_string(&error.to_string())
+                                    .unwrap_or_else(|_| "null".into())
+                            )));
+                        }
+                    };
+                let mut admission = self.policy.admission_config();
+                admission.deny_client_cidrs = deny_client_cidrs;
+                match self.policy.reload_admission(&admission) {
+                    Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
             ("GET", "/country/status") => Ok(Response::ok(self.policy.admin_country_status())),
             ("POST", "/reload/country/replace") => {
                 if request.payload.len() > MAX_POLICY_BODY_BYTES {
@@ -830,6 +855,7 @@ impl SendPipe for AdminHandler {
                 | "/abuse/status"
                 | "/abuse/clear"
                 | "/reload/admission"
+                | "/reload/admission/denylist"
                 | "/country/status"
                 | "/reload/country/replace"
                 | "/policy/status"
@@ -1269,6 +1295,39 @@ mod tests {
         let status: serde_json::Value = serde_json::from_slice(&status.payload).expect("status");
         assert_eq!(status["reject_any"], true);
         assert_eq!(status["max_queries_per_second"], 7);
+    }
+
+    #[test]
+    fn denylist_route_replaces_only_the_live_client_denylist() {
+        let handler = AdminHandler::new(Arc::new(
+            Policy::new(crate::Config::default()).expect("default policy"),
+        ));
+        let reload = Request::builder()
+            .method("POST")
+            .path("/reload/admission/denylist")
+            .payload(r#"["192.0.2.10/32","2001:db8:42::/48"]"#)
+            .build()
+            .expect("valid denylist reload");
+        let response = block_on(handler.call(reload)).expect("denylist response");
+        assert_eq!(response.status, 200);
+        let status = block_on(handler.call(request("GET", "/admission/status")))
+            .expect("admission status response");
+        let status: serde_json::Value = serde_json::from_slice(&status.payload).expect("status");
+        assert_eq!(status["deny_client_cidr_count"], 2);
+        assert_eq!(status["max_queries_per_second"], 10_000);
+
+        let rejected = Request::builder()
+            .method("POST")
+            .path("/reload/admission/denylist")
+            .payload(r#"["not-a-cidr"]"#)
+            .build()
+            .expect("invalid denylist reload");
+        let response = block_on(handler.call(rejected)).expect("invalid response");
+        assert_eq!(response.status, 422);
+        let status = block_on(handler.call(request("GET", "/admission/status")))
+            .expect("admission status response");
+        let status: serde_json::Value = serde_json::from_slice(&status.payload).expect("status");
+        assert_eq!(status["deny_client_cidr_count"], 2);
     }
 
     #[test]
