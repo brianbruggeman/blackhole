@@ -35,7 +35,8 @@ mod runtime {
     };
     use proxima_core::ProximaError;
     use proxima_dns::{
-        DnsAnswer, DnsAnswerRecord, DnsClientUpstream, DnsPipeReply, DnsPipeRequest,
+        DnsAnswer, DnsAnswerRecord, DnsAnswerWithMetadata, DnsClientUpstream, DnsPipeReply,
+        DnsPipeRequest,
     };
     use proxima_primitives::pipe::SendPipe;
     use proxima_primitives::pipe::endpoint::PeerInfo;
@@ -1960,6 +1961,26 @@ mod runtime {
             Ok(())
         }
 
+        fn validate_upstream_response(
+            &self,
+            query: &proxima_dns::DnsQuery,
+            response: &DnsAnswerWithMetadata,
+        ) -> Result<(), &'static str> {
+            let Some(question) = response.metadata.question.as_ref() else {
+                return Err("upstream_question_mismatch");
+            };
+            if normalize(&question.name) != normalize(&query.name)
+                || question.qtype != query.qtype
+                || question.qclass != query.qclass
+            {
+                return Err("upstream_question_mismatch");
+            }
+            if response.metadata.truncated {
+                return Err("upstream_truncated");
+            }
+            self.validate_upstream_answer(query, &response.answer)
+        }
+
         /// Return the authoritative action for a validated borrowed query view.
         /// The wire adapter calls this before materializing the owned Proxima DNS
         /// request, so configured rules remain authoritative at the raw boundary.
@@ -2430,10 +2451,12 @@ mod runtime {
                         "upstream circuit breaker is open",
                     )));
                 }
-                let answer = upstream.query(&query.name, query.qtype, query.qclass).await;
-                let answer = match answer {
-                    Ok(answer) => {
-                        if let Err(cause) = self.validate_upstream_answer(&query, &answer) {
+                let response = upstream
+                    .query_with_metadata(&query.name, query.qtype, query.qclass)
+                    .await;
+                let answer = match response {
+                    Ok(response) => {
+                        if let Err(cause) = self.validate_upstream_response(&query, &response) {
                             self.breaker
                                 .lock()
                                 .expect("breaker lock")
@@ -2443,6 +2466,7 @@ mod runtime {
                             return Ok(DnsPipeReply::typed(200, server_failure_answer()));
                         }
                         self.breaker.lock().expect("breaker lock").success();
+                        let answer = response.answer;
                         if matches!(answer.rcode, 0 | 3) {
                             self.observe_cache_ttl(&answer);
                             let evicted = self.cache.lock().expect("cache lock").insert(
