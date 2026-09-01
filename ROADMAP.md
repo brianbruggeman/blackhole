@@ -24,11 +24,11 @@ below are future capabilities, grouped by the dependency layer they extend.
   additional policy controls beyond atomic enabled/disabled profile,
   identity, and network scope replacement/upsert/removal operations, including
   retained enable/disable state for profiles, groups, and identity mappings.
-- Extend adaptive DDoS response beyond the current configured CIDR denylist,
-  per-query response-ratio cap, and amplification controls for repeated
-  abusive patterns, including aggregate/per-client admission
-  limits, bounded client/network/global rate and response-budget breakers,
-  and durable client/network incident markers.
+- Add an operator-managed, bounded reputation lifecycle on top of the current
+  expiring DDoS breakers: explainable incident review, explicit approval and
+  revocation, bounded export/import, and safe recovery after restart. It must
+  remain separate from authentication and must never become an unbounded
+  permanent blacklist.
 - Add managed GeoIP/region/ASN data lifecycle and richer country policy beyond
   the current explicit country/CIDR/region/ASN map labels and bounded background
   refresh; uncertainty must remain explicit.
@@ -44,9 +44,10 @@ below are future capabilities, grouped by the dependency layer they extend.
   capability; until that upstream seam exists, keep original-destination and
   reply-routing metadata inside the platform adapter and do not synthesize it
   in policy, telemetry, or recordings.
-- Extend the current transactional systemd and launchd installers with
-  host-installed upgrade/rollback verification for the native package; the
-  archive installer and disposable-root transaction are already covered.
+- Add host-installed macOS launchd upgrade/rollback verification for the
+  native service; Linux package and systemd upgrade/rollback transactions are
+  already covered by the CI smoke fixtures. The archive installer and
+  disposable-root transactions remain covered as well.
 
 ## Incumbent parity and extensions
 
