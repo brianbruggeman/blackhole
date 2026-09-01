@@ -483,6 +483,37 @@ impl SendPipe for AdminHandler {
                     ))),
                 }
             }
+            ("POST", "/reload/blocklists/add" | "/reload/blocklists/remove") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let paths = match serde_json::from_slice::<Vec<String>>(&request.payload) {
+                    Ok(paths) => paths,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                let result = if path == "/reload/blocklists/add" {
+                    self.policy.add_blocklist_sources(&paths)
+                } else {
+                    self.policy.remove_blocklist_sources(&paths)
+                };
+                match result {
+                    Ok(_) => Ok(Response::ok(if path == "/reload/blocklists/add" {
+                        "{\"status\":\"added\"}"
+                    } else {
+                        "{\"status\":\"removed\"}"
+                    })),
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
             ("POST", "/reload/country") => match self.policy.reload_country_policy() {
                 Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
                 Err(error) => Ok(Response::new(422).with_body(format!(
@@ -717,6 +748,8 @@ impl SendPipe for AdminHandler {
                 | "/logs/clear"
                 | "/reload/blocklists"
                 | "/reload/blocklists/replace"
+                | "/reload/blocklists/add"
+                | "/reload/blocklists/remove"
                 | "/reload/country"
                 | "/reload/policy"
                 | "/reload/policy/add"
@@ -1130,7 +1163,72 @@ mod tests {
             status["blocklist_rules"], 2,
             "previous blocklist remains live"
         );
+        let second_path = path.with_file_name(format!(
+            "blackhole-admin-blocklist-second-{}-{}.txt",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        ));
+        std::fs::write(&second_path, "tracking.example\n").expect("write second blocklist");
+        let second_json = serde_json::to_string(&vec![second_path.to_string_lossy().into_owned()])
+            .expect("second blocklist JSON");
+        let added = block_on(
+            handler.call(
+                Request::builder()
+                    .method("POST")
+                    .path("/reload/blocklists/add")
+                    .payload(second_json)
+                    .build()
+                    .expect("addition request"),
+            ),
+        )
+        .expect("addition response");
+        assert_eq!(added.status, 200);
+        let status =
+            block_on(handler.call(request("GET", "/policy/status"))).expect("status response");
+        let status: serde_json::Value = serde_json::from_slice(&status.payload).expect("status");
+        assert_eq!(status["blocklist_sources"], 2);
+        assert_eq!(
+            status["blocklist_rules"], 4,
+            "both apex plus subdomain rules"
+        );
+
+        let first_json = serde_json::to_string(&vec![path.to_string_lossy().into_owned()])
+            .expect("first blocklist JSON");
+        let removed = block_on(
+            handler.call(
+                Request::builder()
+                    .method("POST")
+                    .path("/reload/blocklists/remove")
+                    .payload(first_json)
+                    .build()
+                    .expect("removal request"),
+            ),
+        )
+        .expect("removal response");
+        assert_eq!(removed.status, 200);
+        let status =
+            block_on(handler.call(request("GET", "/policy/status"))).expect("status response");
+        let status: serde_json::Value = serde_json::from_slice(&status.payload).expect("status");
+        assert_eq!(status["blocklist_sources"], 1);
+        assert_eq!(status["blocklist_rules"], 2);
+
+        let unknown = block_on(
+            handler.call(
+                Request::builder()
+                    .method("POST")
+                    .path("/reload/blocklists/remove")
+                    .payload(r#"["/definitely/missing/blackhole.list"]"#)
+                    .build()
+                    .expect("unknown removal request"),
+            ),
+        )
+        .expect("unknown removal response");
+        assert_eq!(unknown.status, 422);
         std::fs::remove_file(path).expect("remove blocklist");
+        std::fs::remove_file(second_path).expect("remove second blocklist");
     }
 
     #[test]

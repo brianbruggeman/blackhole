@@ -2931,6 +2931,73 @@ mod runtime {
         ) -> Result<ReloadState, policy::PolicyError> {
             let _reload = self.reload_lock.write().expect("reload lock");
             let started = Instant::now();
+            self.replace_blocklist_sources_locked(paths, started, "blocklists")
+        }
+
+        /// Atomically add blocklist source paths, preserving existing source
+        /// order and ignoring exact duplicates.
+        pub fn add_blocklist_sources(
+            &self,
+            additions: &[String],
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
+            if additions.is_empty() {
+                return Err(policy::PolicyError::InvalidBlocklist {
+                    path: "<sources>".into(),
+                    reason: "at least one source path is required".into(),
+                });
+            }
+            let started = Instant::now();
+            let mut paths = self
+                .blocklist_paths
+                .lock()
+                .expect("blocklist paths lock")
+                .clone();
+            for path in additions {
+                if !paths.contains(path) {
+                    paths.push(path.clone());
+                }
+            }
+            self.replace_blocklist_sources_locked(&paths, started, "blocklists_add")
+        }
+
+        /// Atomically remove exact blocklist source paths. Unknown paths fail
+        /// without changing the current source or rule snapshot.
+        pub fn remove_blocklist_sources(
+            &self,
+            removals: &[String],
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
+            if removals.is_empty() {
+                return Err(policy::PolicyError::InvalidBlocklist {
+                    path: "<sources>".into(),
+                    reason: "at least one source path is required".into(),
+                });
+            }
+            let mut paths = self
+                .blocklist_paths
+                .lock()
+                .expect("blocklist paths lock")
+                .clone();
+            let requested = removals.iter().collect::<BTreeSet<_>>();
+            let original_len = paths.len();
+            paths.retain(|path| !requested.contains(path));
+            if paths.len() == original_len {
+                return Err(policy::PolicyError::InvalidBlocklist {
+                    path: "<sources>".into(),
+                    reason: "no requested source path exists".into(),
+                });
+            }
+            let started = Instant::now();
+            self.replace_blocklist_sources_locked(&paths, started, "blocklists_remove")
+        }
+
+        fn replace_blocklist_sources_locked(
+            &self,
+            paths: &[String],
+            started: Instant,
+            reload_kind: &'static str,
+        ) -> Result<ReloadState, policy::PolicyError> {
             let replacement = load_blocklists(&paths)?;
             let base_rules = self.base_rules.lock().expect("base rules lock");
             let mut rules = base_rules.clone();
@@ -2956,7 +3023,7 @@ mod runtime {
                 next
             });
             self.policy_generation.fetch_add(1, Ordering::Relaxed);
-            self.observe_reload_latency("blocklists", started);
+            self.observe_reload_latency(reload_kind, started);
             Ok(published)
         }
 

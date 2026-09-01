@@ -141,6 +141,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Authenticated bounded `POST /reload/blocklists/replace` atomically replaces
   the blocklist source path set and retains the prior sources and rules when
   any replacement fails validation or loading.
+- Authenticated bounded `POST /reload/blocklists/add` and `/reload/blocklists/remove`
+  atomically add or remove exact source paths while retaining the prior live
+  snapshot when validation or loading fails.
 - Bounded authenticated `GET /policy/status` exposes effective rule, rewrite,
   blocklist-source, profile, group, and country-entry counts without source
   paths, query names, credentials, client identities, or packet payloads; its

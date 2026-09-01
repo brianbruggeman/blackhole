@@ -206,6 +206,8 @@ object and publishes policy tables and live admission limits together;
 startup-only capacity changes are rejected before either snapshot changes.
 `POST /reload/blocklists/replace` atomically replaces the blocklist source path
 set and preserves the previous sources and rules if a replacement fails.
+`POST /reload/blocklists/add` and `/reload/blocklists/remove` atomically manage
+individual source paths, preserving the last good snapshot on failure.
 `GET /privacy/status` exposes only privacy-recording enablement and configured
 limits; it does not expose recording paths, names, clients, or payloads. When
 `privacy.query_recording_rotation_enabled = true`, startup rotates an oversized
