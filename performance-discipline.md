@@ -113,3 +113,19 @@ Throughput is printed by the executable as `DERIVED` from the measured sample
 durations and operation count. The wide small-sample parse and owned tails are
 reported rather than hidden. This row improves observability; it does not
 authorize an optimization or a zero-copy claim.
+
+## Row 5 — reusable edge parse-to-match workload
+
+`MEASURED` on 2026-09-01, Linux `x86_64`, rustc `1.98.0`, release build,
+source commit `0baa84a`, GitHub Proxima revision `afca73c`, and load average
+`1.10`. The running harness used `N=25` samples and measured the reusable
+`EdgePolicy` over one real DNS packet per sample:
+
+```text
+edge_parse_match p50_ns=44074 p95_ns=56511 p99_ns=72481 cov=0.129911 allocs=100 alloc_bytes=1375
+boundary_bytes=MEASURED policy_canonicalize=60600 borrowed_to_owned=300
+arms=scalar-retained memchr-not-added simd-not-added wasm-edge-compile-only wasm-runtime-not-installed
+```
+
+This measures the pure parse-to-match path; it does not establish a
+production-performance or zero-copy claim.
