@@ -46,10 +46,14 @@ jobs:
             cc --version
           } > macos-toolchain.txt 2>&1
       - name: check all targets
+        id: macos-check
+        continue-on-error: true
         run: |
           set -o pipefail
           cargo check --all-targets 2>&1 | tee macos-cargo-check.log
-      - run: cargo test --lib
+      - name: test library
+        if: always()
+        run: cargo test --lib
       - if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -57,6 +61,9 @@ jobs:
           path: |
             macos-toolchain.txt
             macos-cargo-check.log
+      - name: fail if macOS check failed
+        if: steps.macos-check.outcome == 'failure'
+        run: exit 1
 
   wasm:
     runs-on: ubuntu-latest
