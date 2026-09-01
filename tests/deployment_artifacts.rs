@@ -203,6 +203,7 @@ fn deb_builder_contains_native_package_contract() {
     for required in [
         "usage: $0 BINARY OUTPUT_DIR",
         "command -v ar",
+        "BLACKHOLE_DEB_VERSION",
         "Package: blackhole",
         "Version: $version",
         "Architecture: $architecture",

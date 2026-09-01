@@ -18,7 +18,7 @@ command -v ar >/dev/null 2>&1 || {
 }
 
 repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$repo_dir/Cargo.toml" | head -n 1)
+version=${BLACKHOLE_DEB_VERSION:-$(sed -n 's/^version = "\([^\"]*\)"/\1/p' "$repo_dir/Cargo.toml" | head -n 1)}
 if [ -z "$version" ]; then
     echo "unable to read package version" >&2
     exit 1
