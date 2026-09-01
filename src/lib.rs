@@ -348,6 +348,8 @@ mod runtime {
         pub max_queries_per_client_per_second: usize,
         #[serde(default = "default_max_response_bytes_per_client_per_second")]
         pub max_response_bytes_per_client_per_second: usize,
+        #[serde(default = "default_max_response_bytes_per_second")]
+        pub max_response_bytes_per_second: usize,
         #[serde(default = "default_max_client_abuse_violations")]
         pub max_client_abuse_violations: usize,
         #[serde(default = "default_client_abuse_window_secs")]
@@ -380,6 +382,7 @@ mod runtime {
                 max_queries_per_client_per_second: default_max_queries_per_client_per_second(),
                 max_response_bytes_per_client_per_second:
                     default_max_response_bytes_per_client_per_second(),
+                max_response_bytes_per_second: default_max_response_bytes_per_second(),
                 max_client_abuse_violations: default_max_client_abuse_violations(),
                 client_abuse_window_secs: default_client_abuse_window_secs(),
                 client_abuse_cooldown_secs: default_client_abuse_cooldown_secs(),
@@ -848,6 +851,9 @@ mod runtime {
     }
     fn default_max_response_bytes_per_client_per_second() -> usize {
         1_048_576
+    }
+    fn default_max_response_bytes_per_second() -> usize {
+        16 * 1_048_576
     }
     const MAX_BLOCKLIST_BYTES: u64 = 16 * 1024 * 1024;
     const MAX_BLOCKLIST_LINE_BYTES: usize = 4096;
@@ -1462,6 +1468,7 @@ mod runtime {
         client_rates: Arc<Mutex<HashMap<IpAddr, ClientRate>>>,
         global_rate: Arc<Mutex<ClientRate>>,
         client_response_budgets: Arc<Mutex<HashMap<IpAddr, ClientResponseBudget>>>,
+        global_response_budget: Arc<Mutex<ClientResponseBudget>>,
         client_abuse: Arc<Mutex<HashMap<IpAddr, ClientAbuse>>>,
         network_abuse: Arc<Mutex<HashMap<AbuseNetworkKey, ClientAbuse>>>,
     }
@@ -1657,6 +1664,11 @@ mod runtime {
                     reason: "max_response_bytes_per_client_per_second must be non-zero".into(),
                 });
             }
+            if config.admission.max_response_bytes_per_second == 0 {
+                return Err(policy::PolicyError::InvalidAdmission {
+                    reason: "max_response_bytes_per_second must be non-zero".into(),
+                });
+            }
             if config.admission.max_network_abuse_violations == 0
                 || config.admission.network_abuse_window_secs == 0
                 || config.admission.network_abuse_cooldown_secs == 0
@@ -1766,6 +1778,10 @@ mod runtime {
                     requests: 0,
                 })),
                 client_response_budgets: Arc::new(Mutex::new(HashMap::new())),
+                global_response_budget: Arc::new(Mutex::new(ClientResponseBudget {
+                    window_started: Instant::now(),
+                    bytes: 0,
+                })),
                 client_abuse: Arc::new(Mutex::new(HashMap::new())),
                 network_abuse: Arc::new(Mutex::new(HashMap::new())),
             };
@@ -2625,6 +2641,32 @@ mod runtime {
                     bytes,
                 },
             );
+            true
+        }
+
+        /// Bound total encoded DNS egress over a one-second window. Unlike
+        /// the per-client budget, this also applies when the adapter cannot
+        /// identify a client, preventing aggregate amplification from
+        /// bypassing identity-scoped limits.
+        pub(crate) fn allow_global_response_bytes(&self, bytes: usize) -> bool {
+            let now = Instant::now();
+            let limit = self.config.admission.max_response_bytes_per_second;
+            if bytes > limit {
+                return false;
+            }
+            let mut budget = self
+                .global_response_budget
+                .lock()
+                .expect("global response budget lock");
+            if now.duration_since(budget.window_started) >= Duration::from_secs(1) {
+                budget.window_started = now;
+                budget.bytes = bytes;
+                return true;
+            }
+            if budget.bytes.saturating_add(bytes) > limit {
+                return false;
+            }
+            budget.bytes = budget.bytes.saturating_add(bytes);
             true
         }
 
@@ -5198,6 +5240,14 @@ mod runtime {
                 })
                 .is_err()
             );
+            assert!(
+                Policy::new({
+                    let mut config = Config::default();
+                    config.admission.max_response_bytes_per_second = 0;
+                    config
+                })
+                .is_err()
+            );
         }
 
         #[test]
@@ -5305,6 +5355,17 @@ mod runtime {
             assert!(!policy.allow_client_abuse(client));
             assert!(policy.allow_client_response_bytes(None, 4096));
             assert!(policy.allow_client_abuse(None));
+        }
+
+        #[test]
+        fn global_response_budget_covers_unidentified_egress() {
+            let mut config = Config::default();
+            config.admission.max_response_bytes_per_second = 10;
+            let policy = Policy::new(config).expect("valid policy");
+            assert!(policy.allow_global_response_bytes(6));
+            assert!(!policy.allow_global_response_bytes(5));
+            assert!(policy.allow_global_response_bytes(4));
+            assert!(!policy.allow_global_response_bytes(3));
         }
 
         #[test]

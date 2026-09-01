@@ -167,6 +167,11 @@ async fn decide<'a>(
         Some(PeerInfo::Tcp(address)) => Some(address.ip()),
         _ => None,
     };
+    if !policy.allow_global_response_bytes(output.len()) {
+        policy.observe_failure("global_response_budget");
+        let _ = state.transition(Event::Drop(DropReason::PolicyFailure));
+        return Ok(None);
+    }
     if !policy.allow_client_response_bytes(client_ip, output.len()) {
         policy.observe_failure("client_response_budget");
         if policy.record_client_abuse(client_ip) {
