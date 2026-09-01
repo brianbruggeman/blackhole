@@ -24,11 +24,11 @@ below are future capabilities, grouped by the dependency layer they extend.
   additional policy controls beyond atomic enabled/disabled profile,
   identity, and network scope replacement/upsert/removal operations, including
   retained enable/disable state for profiles, groups, and identity mappings.
-- Add an operator-managed, bounded reputation lifecycle on top of the current
-  expiring DDoS breakers: explainable incident review, explicit approval and
-  revocation, bounded export/import, and safe recovery after restart. It must
-  remain separate from authentication and must never become an unbounded
-  permanent blacklist.
+- Extend the current bounded operator-managed CIDR denylist and expiring DDoS
+  breakers into an explainable reputation lifecycle: incident review, durable
+  approval and revocation, bounded import/export, and safe recovery after
+  restart. It must remain separate from authentication and must never become
+  an unbounded permanent blacklist.
 - Add managed GeoIP/region/ASN data lifecycle and richer country policy beyond
   the current explicit country/CIDR/region/ASN map labels and bounded background
   refresh; uncertainty must remain explicit.
