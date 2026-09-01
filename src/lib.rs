@@ -1437,6 +1437,26 @@ mod runtime {
                 reason: "map contains no entries".into(),
             });
         }
+        if entries.iter().any(|entry| {
+            let denied = deny.contains(&entry.country)
+                || entry
+                    .region
+                    .as_ref()
+                    .is_some_and(|region| deny_regions.contains(region))
+                || entry.asn.is_some_and(|asn| deny_asns.contains(&asn));
+            let observed = observe.contains(&entry.country)
+                || entry
+                    .region
+                    .as_ref()
+                    .is_some_and(|region| observe_regions.contains(region))
+                || entry.asn.is_some_and(|asn| observe_asns.contains(&asn));
+            denied && observed
+        }) {
+            return Err(policy::PolicyError::InvalidCountryMap {
+                path: path.into(),
+                reason: "a mapped entry cannot be both denied and observed".into(),
+            });
+        }
         Ok(Some(CountryPolicy {
             entries,
             deny,
@@ -5540,6 +5560,30 @@ mod runtime {
             ));
             assert!(!country_map_is_fresh(now + Duration::from_secs(1), now, 60));
             assert!(!country_map_is_fresh(now, now, 0));
+        }
+
+        #[test]
+        fn country_map_rejects_cross_dimension_deny_observe_overlap() {
+            let path = std::env::temp_dir().join(format!(
+                "blackhole-country-conflict-{}-{}.txt",
+                std::process::id(),
+                1
+            ));
+            std::fs::write(&path, "US 192.0.2.0/24 US-CA AS64500\n").expect("write country map");
+            let mut config = Config::default();
+            config.country_policy = CountryPolicyConfig {
+                map_path: Some(path.to_string_lossy().into_owned()),
+                max_age_secs: None,
+                reload_interval_secs: 0,
+                deny: vec!["US".into()],
+                observe: Vec::new(),
+                deny_regions: Vec::new(),
+                observe_regions: vec!["US-CA".into()],
+                deny_asns: Vec::new(),
+                observe_asns: Vec::new(),
+            };
+            assert!(Policy::new(config).is_err());
+            std::fs::remove_file(path).expect("remove country map");
         }
 
         #[test]
