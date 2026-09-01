@@ -195,7 +195,7 @@ mod runtime {
         stale_until: Instant,
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     struct DnsCache {
         entries: HashMap<CacheKey, CacheEntry>,
         config: CacheConfig,
@@ -209,7 +209,7 @@ mod runtime {
             }
         }
 
-        fn fresh(&mut self, key: &CacheKey) -> Option<DnsAnswer> {
+        fn fresh(&self, key: &CacheKey) -> Option<DnsAnswer> {
             let now = Instant::now();
             let entry = self.entries.get(key)?;
             if now < entry.expires_at {
@@ -218,6 +218,13 @@ mod runtime {
             None
         }
 
+        fn stale_answer(&self, key: &CacheKey) -> Option<DnsAnswer> {
+            let now = Instant::now();
+            let entry = self.entries.get(key)?;
+            (now < entry.stale_until).then(|| entry.answer.clone())
+        }
+
+        #[cfg(test)]
         fn stale(&mut self, key: &CacheKey) -> Option<DnsAnswer> {
             let now = Instant::now();
             let entry = self.entries.get(key)?;
@@ -1952,7 +1959,8 @@ mod runtime {
         admission: RwLock<AdmissionConfig>,
         upstream: Option<DnsClientUpstream>,
         upstream_slots: Option<Arc<Semaphore>>,
-        cache: Arc<Mutex<DnsCache>>,
+        cache: Live<DnsCache>,
+        cache_control: LiveControl<DnsCache>,
         breaker: Arc<Mutex<ProximaCircuitBreaker>>,
         breaker_epoch: Instant,
         request_slots: Arc<Semaphore>,
@@ -2254,7 +2262,7 @@ mod runtime {
             let regex_rules = compile_regex_rules(&config.policy.regex_rules, rule_ids)?;
             config.policy.domains = config.policy.domains.into_iter().map(normalize).collect();
             let reference = PolicyStore::new(&config.policy.rules)?;
-            let cache = Arc::new(Mutex::new(DnsCache::new(&config.cache)));
+            let (cache, cache_control) = live(DnsCache::new(&config.cache));
             let max_inflight_requests = config.admission.max_inflight_requests;
             let breaker = Arc::new(Mutex::new(ProximaCircuitBreaker::new(
                 config
@@ -2321,6 +2329,7 @@ mod runtime {
                 upstream: None,
                 upstream_slots: None,
                 cache,
+                cache_control,
                 breaker,
                 breaker_epoch: Instant::now(),
                 request_slots: Arc::new(Semaphore::new(max_inflight_requests)),
@@ -2515,10 +2524,29 @@ mod runtime {
         /// Remove every cached answer and return the number of entries
         /// deleted. The operation is bounded by the configured cache size.
         pub fn clear_cache(&self) -> usize {
-            let mut cache = self.cache.lock().expect("cache lock");
-            let removed = cache.entries.len();
-            cache.clear();
+            let removed = self.cache.read(|cache| cache.entries.len());
+            self.cache_control.update(|cache| {
+                let mut next = cache.clone();
+                next.clear();
+                next
+            });
             removed
+        }
+
+        fn cache_fresh(&self, key: &CacheKey) -> Option<DnsAnswer> {
+            self.cache.read(|cache| cache.fresh(key))
+        }
+
+        fn cache_stale(&self, key: &CacheKey) -> Option<DnsAnswer> {
+            self.cache.read(|cache| cache.stale_answer(key))
+        }
+
+        fn cache_insert(&self, key: CacheKey, answer: DnsAnswer, now: Instant) {
+            self.cache_control.update(|cache| {
+                let mut next = cache.clone();
+                next.insert(key.clone(), answer.clone(), now);
+                next
+            });
         }
 
         /// Remove rules by stable ID and publish the resulting authoritative
@@ -2604,7 +2632,11 @@ mod runtime {
                         .is_empty(),
                 Ordering::Release,
             );
-            self.cache.lock().expect("cache lock").clear();
+            self.cache_control.update(|cache| {
+                let mut next = cache.clone();
+                next.clear();
+                next
+            });
             self.policy_generation.fetch_add(1, Ordering::Relaxed);
             self.observe_reload_latency(reload_kind, started);
             Ok(published)
@@ -2660,7 +2692,11 @@ mod runtime {
                         .is_empty(),
                 Ordering::Release,
             );
-            self.cache.lock().expect("cache lock").clear();
+            self.cache_control.update(|cache| {
+                let mut next = cache.clone();
+                next.clear();
+                next
+            });
             self.policy_generation.fetch_add(1, Ordering::Relaxed);
             self.observe_reload_latency("blocklists", started);
             Ok(published)
@@ -2709,7 +2745,11 @@ mod runtime {
                         .is_empty(),
                 Ordering::Release,
             );
-            self.cache.lock().expect("cache lock").clear();
+            self.cache_control.update(|cache| {
+                let mut next = cache.clone();
+                next.clear();
+                next
+            });
             self.policy_generation.fetch_add(1, Ordering::Relaxed);
             self.observe_reload_latency("blocklists", started);
             Ok(published)
@@ -3176,7 +3216,11 @@ mod runtime {
                 !published.is_empty() || !regex_configs.is_empty(),
                 Ordering::Release,
             );
-            self.cache.lock().expect("cache lock").clear();
+            self.cache_control.update(|cache| {
+                let mut next = cache.clone();
+                next.clear();
+                next
+            });
             self.policy_generation.fetch_add(1, Ordering::Relaxed);
             self.observe_reload_latency("policy_bundle", started);
             Ok(ReloadState::Published)
@@ -3284,7 +3328,11 @@ mod runtime {
             let compiled = compile_rewrites(configs)?;
             *self.rewrites.write().expect("rewrites lock") = compiled;
             *self.rewrite_configs.write().expect("rewrite configs lock") = configs.to_vec();
-            self.cache.lock().expect("cache lock").clear();
+            self.cache_control.update(|cache| {
+                let mut next = cache.clone();
+                next.clear();
+                next
+            });
             self.policy_generation.fetch_add(1, Ordering::Relaxed);
             self.observe_reload_latency(reload_kind, started);
             Ok(ReloadState::Published)
@@ -3305,7 +3353,11 @@ mod runtime {
                 self.domain_rules_configured.load(Ordering::Acquire) || !configs.is_empty(),
                 Ordering::Release,
             );
-            self.cache.lock().expect("cache lock").clear();
+            self.cache_control.update(|cache| {
+                let mut next = cache.clone();
+                next.clear();
+                next
+            });
             self.policy_generation.fetch_add(1, Ordering::Relaxed);
             self.observe_reload_latency("regex", started);
             Ok(ReloadState::Published)
@@ -3399,7 +3451,11 @@ mod runtime {
                 self.domain_rules_configured.load(Ordering::Acquire) || !configs.is_empty(),
                 Ordering::Release,
             );
-            self.cache.lock().expect("cache lock").clear();
+            self.cache_control.update(|cache| {
+                let mut next = cache.clone();
+                next.clear();
+                next
+            });
             self.policy_generation.fetch_add(1, Ordering::Relaxed);
             self.observe_reload_latency(reload_kind, started);
             Ok(ReloadState::Published)
@@ -4215,8 +4271,8 @@ mod runtime {
                 },
             )]);
             let (negative_ttl_secs, max_ttl_secs) = {
-                let cache = self.cache.lock().expect("cache lock");
-                (cache.config.negative_ttl_secs, cache.config.max_ttl_secs)
+                self.cache
+                    .read(|cache| (cache.config.negative_ttl_secs, cache.config.max_ttl_secs))
             };
             let ttl = answer
                 .records
@@ -4375,7 +4431,7 @@ mod runtime {
 
         pub(crate) fn admin_status(&self) -> String {
             let _reload = self.reload_lock.read().expect("reload lock");
-            let cache = self.cache.lock().expect("cache lock");
+            let cache = self.cache.snapshot();
             serde_json::json!({
                 "status": "ok",
                 "rules_configured": self.rules_configured.load(Ordering::Acquire),
@@ -4903,7 +4959,7 @@ mod runtime {
                     return Ok(DnsPipeReply::typed(204, DnsAnswer::ok(Vec::new())));
                 };
                 let key = CacheKey::from_query(&query);
-                if let Some(answer) = self.cache.lock().expect("cache lock").fresh(&key) {
+                if let Some(answer) = self.cache_fresh(&key) {
                     self.observe_cache("fresh_hit");
                     self.observe(forwarding_action);
                     return Ok(DnsPipeReply::typed(200, self.cap_answer(&query, answer)));
@@ -4915,7 +4971,7 @@ mod runtime {
                     .expect("breaker lock")
                     .allow(self.breaker_now_nanos())
                 {
-                    if let Some(answer) = self.cache.lock().expect("cache lock").stale(&key) {
+                    if let Some(answer) = self.cache_stale(&key) {
                         self.observe_cache("stale_hit");
                         self.observe(forwarding_action);
                         return Ok(DnsPipeReply::typed(200, self.cap_answer(&query, answer)));
@@ -4945,14 +5001,7 @@ mod runtime {
                         let answer = response.answer;
                         if matches!(answer.rcode, 0 | 3) {
                             self.observe_cache_ttl(&answer);
-                            let evicted = self.cache.lock().expect("cache lock").insert(
-                                key.clone(),
-                                answer.clone(),
-                                Instant::now(),
-                            );
-                            if evicted {
-                                self.observe_cache("eviction");
-                            }
+                            self.cache_insert(key.clone(), answer.clone(), Instant::now());
                         }
                         answer
                     }
@@ -4961,7 +5010,7 @@ mod runtime {
                             .lock()
                             .expect("breaker lock")
                             .on_failure(self.breaker_now_nanos());
-                        if let Some(answer) = self.cache.lock().expect("cache lock").stale(&key) {
+                        if let Some(answer) = self.cache_stale(&key) {
                             self.observe_cache("stale_hit");
                             self.observe(forwarding_action);
                             return Ok(DnsPipeReply::typed(200, self.cap_answer(&query, answer)));
@@ -5259,19 +5308,8 @@ mod runtime {
                 qtype: 1,
                 qclass: 1,
             };
-            policy.cache.lock().expect("cache lock").insert(
-                cached_key.clone(),
-                DnsAnswer::name_error(),
-                Instant::now(),
-            );
-            assert!(
-                policy
-                    .cache
-                    .lock()
-                    .expect("cache lock")
-                    .fresh(&cached_key)
-                    .is_some()
-            );
+            policy.cache_insert(cached_key.clone(), DnsAnswer::name_error(), Instant::now());
+            assert!(policy.cache_fresh(&cached_key).is_some());
             assert_eq!(
                 policy
                     .decision(&query("old.example."), None)
@@ -5295,14 +5333,7 @@ mod runtime {
                 }]),
                 Ok(ReloadState::Published)
             );
-            assert!(
-                policy
-                    .cache
-                    .lock()
-                    .expect("cache lock")
-                    .fresh(&cached_key)
-                    .is_none()
-            );
+            assert!(policy.cache_fresh(&cached_key).is_none());
             assert!(policy.decision(&query("old.example."), None).is_none());
             assert_eq!(
                 policy
