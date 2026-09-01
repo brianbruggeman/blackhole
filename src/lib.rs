@@ -463,6 +463,7 @@ mod runtime {
         Udp,
         Tcp,
         Tls,
+        Doh,
     }
 
     impl Default for UpstreamTransport {
@@ -1637,6 +1638,20 @@ mod runtime {
             self
         }
 
+        /// Use an existing Proxima HTTP pipe for every upstream exchange.
+        /// The DNS client retains ownership of DNS validation and bounds;
+        /// HTTP endpoint and TLS behavior stay in Proxima's pipe.
+        #[must_use]
+        pub fn with_doh_upstream(
+            mut self,
+            doh_upstream: proxima_primitives::pipe::handler::PipeHandle,
+        ) -> Self {
+            if let Some(upstream) = self.upstream.take() {
+                self.upstream = Some(upstream.with_doh_upstream(doh_upstream));
+            }
+            self
+        }
+
         fn validate_upstream(&self, upstream: &UpstreamConfig) -> Result<(), policy::PolicyError> {
             let resolver_ip = upstream
                 .resolver_ip
@@ -1673,11 +1688,13 @@ mod runtime {
                     reason: "breaker_failures and breaker_cooldown_secs must be non-zero".into(),
                 });
             }
-            if matches!(upstream.transport, UpstreamTransport::Tls)
-                && upstream
-                    .tls_server_name
-                    .as_deref()
-                    .is_none_or(|name| !valid_tls_server_name(name))
+            if matches!(
+                upstream.transport,
+                UpstreamTransport::Tls | UpstreamTransport::Doh
+            ) && upstream
+                .tls_server_name
+                .as_deref()
+                .is_none_or(|name| !valid_tls_server_name(name))
             {
                 return Err(policy::PolicyError::InvalidUpstream {
                     reason: "tls_server_name must be a valid ASCII DNS name or IP literal".into(),
@@ -3047,21 +3064,33 @@ mod runtime {
                 Err(policy::PolicyError::InvalidUpstream { .. })
             ));
 
-            let config = Config {
-                upstream: Some(UpstreamConfig {
-                    transport: UpstreamTransport::Tls,
-                    ..UpstreamConfig::default()
-                }),
-                ..Config::default()
-            };
-            assert!(matches!(
-                Policy::new(config),
-                Err(policy::PolicyError::InvalidUpstream { .. })
-            ));
+            for transport in [UpstreamTransport::Tls, UpstreamTransport::Doh] {
+                let config = Config {
+                    upstream: Some(UpstreamConfig {
+                        transport,
+                        ..UpstreamConfig::default()
+                    }),
+                    ..Config::default()
+                };
+                assert!(matches!(
+                    Policy::new(config),
+                    Err(policy::PolicyError::InvalidUpstream { .. })
+                ));
+            }
 
             let config = Config {
                 upstream: Some(UpstreamConfig {
                     transport: UpstreamTransport::Tls,
+                    tls_server_name: Some("resolver.example".into()),
+                    ..UpstreamConfig::default()
+                }),
+                ..Config::default()
+            };
+            assert!(Policy::new(config).is_ok());
+
+            let config = Config {
+                upstream: Some(UpstreamConfig {
+                    transport: UpstreamTransport::Doh,
                     tls_server_name: Some("resolver.example".into()),
                     ..UpstreamConfig::default()
                 }),

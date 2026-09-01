@@ -18,9 +18,9 @@ use bytes::Bytes;
 #[cfg(feature = "std")]
 use proxima::pipe::into_handle;
 #[cfg(feature = "std")]
-use proxima::{Listener, ListenerBuilderEntry, ProximaError};
+use proxima::{H1ClientUpstream, Request, Response, SendPipe};
 #[cfg(feature = "std")]
-use proxima::{Request, Response, SendPipe};
+use proxima::{Listener, ListenerBuilderEntry, ProximaError};
 #[cfg(feature = "std")]
 use proxima_net::prime::{PrimeDatagramFactory, PrimeTcpUpstream};
 #[cfg(feature = "std")]
@@ -279,32 +279,49 @@ async fn main() -> Result<(), ProximaError> {
             resolver,
             upstream.max_outstanding,
         );
-        let tcp_upstream: Arc<dyn StreamUpstream<Conn = Box<dyn StreamConnection>>> = match upstream
-            .transport
-        {
-            UpstreamTransport::Udp | UpstreamTransport::Tcp => {
-                PrimeTcpUpstream::boxed(resolver_addr)
-            }
-            UpstreamTransport::Tls => {
-                let server_name = upstream.tls_server_name.ok_or_else(|| {
-                    ProximaError::Config("tls_server_name is required for TLS upstreams".into())
-                })?;
-                let tls_config = TlsClientConfig {
-                    server_name,
-                    // DNS-over-TLS does not require an HTTP ALPN token.
-                    alpn_protocols: Vec::new(),
+        if matches!(upstream.transport, UpstreamTransport::Doh) {
+            let server_name = upstream.tls_server_name.clone().ok_or_else(|| {
+                ProximaError::Config("tls_server_name is required for DoH upstreams".into())
+            })?;
+            let tls = TlsStreamUpstream::with_webpki_roots(
+                PrimeTcpUpstream::new(resolver_addr),
+                server_name.clone(),
+            )
+            .map_err(|error| ProximaError::Config(format!("invalid DoH TLS upstream: {error}")))?;
+            let http = H1ClientUpstream::new(tls, server_name, "blackhole.doh");
+            policy = policy.with_doh_upstream(into_handle(http));
+        } else {
+            let tcp_upstream: Arc<dyn StreamUpstream<Conn = Box<dyn StreamConnection>>> =
+                match upstream.transport {
+                    UpstreamTransport::Udp | UpstreamTransport::Tcp => {
+                        PrimeTcpUpstream::boxed(resolver_addr)
+                    }
+                    UpstreamTransport::Tls => {
+                        let server_name = upstream.tls_server_name.ok_or_else(|| {
+                            ProximaError::Config(
+                                "tls_server_name is required for TLS upstreams".into(),
+                            )
+                        })?;
+                        let tls_config = TlsClientConfig {
+                            server_name,
+                            // DNS-over-TLS does not require an HTTP ALPN token.
+                            alpn_protocols: Vec::new(),
+                        };
+                        let tls = TlsStreamUpstream::from_config(
+                            PrimeTcpUpstream::new(resolver_addr),
+                            &tls_config,
+                        )
+                        .map_err(|error| {
+                            ProximaError::Config(format!("invalid TLS upstream: {error}"))
+                        })?;
+                        Arc::new(BoxedTlsUpstream { inner: tls })
+                    }
+                    UpstreamTransport::Doh => unreachable!("DoH handled above"),
                 };
-                let tls = TlsStreamUpstream::from_config(
-                    PrimeTcpUpstream::new(resolver_addr),
-                    &tls_config,
-                )
-                .map_err(|error| ProximaError::Config(format!("invalid TLS upstream: {error}")))?;
-                Arc::new(BoxedTlsUpstream { inner: tls })
+            policy = policy.with_tcp_upstream(tcp_upstream);
+            if !matches!(upstream.transport, UpstreamTransport::Udp) {
+                policy = policy.with_tcp_only();
             }
-        };
-        policy = policy.with_tcp_upstream(tcp_upstream);
-        if !matches!(upstream.transport, UpstreamTransport::Udp) {
-            policy = policy.with_tcp_only();
         }
     }
     let policy = Arc::new(policy);
