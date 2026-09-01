@@ -2187,9 +2187,12 @@ mod runtime {
         country_policy: Live<Option<CountryPolicy>>,
         country_policy_control: LiveControl<Option<CountryPolicy>>,
         reload_lock: RwLock<()>,
-        legacy_domains: RwLock<Vec<String>>,
-        legacy_mode: RwLock<Mode>,
-        default_action: RwLock<Action>,
+        legacy_domains: Live<Vec<String>>,
+        legacy_domains_control: LiveControl<Vec<String>>,
+        legacy_mode: Live<Mode>,
+        legacy_mode_control: LiveControl<Mode>,
+        default_action: Live<Action>,
+        default_action_control: LiveControl<Action>,
         rewrite_configs: RwLock<Vec<RewriteConfig>>,
         rewrites: Live<RewriteTable>,
         rewrite_control: LiveControl<RewriteTable>,
@@ -2491,6 +2494,9 @@ mod runtime {
             let (country_policy, country_policy_control) = live(country_policy);
             let (admission, admission_control) = live(admission);
             let (rewrites, rewrite_control) = live(rewrites);
+            let (legacy_domains, legacy_domains_control) = live(legacy_domains);
+            let (legacy_mode, legacy_mode_control) = live(legacy_mode);
+            let (default_action, default_action_control) = live(default_action);
             let policy = Self {
                 config,
                 base_rules: Mutex::new(base_rules),
@@ -2504,9 +2510,12 @@ mod runtime {
                 country_policy,
                 country_policy_control,
                 reload_lock: RwLock::new(()),
-                legacy_domains: RwLock::new(legacy_domains),
-                legacy_mode: RwLock::new(legacy_mode),
-                default_action: RwLock::new(default_action),
+                legacy_domains,
+                legacy_domains_control,
+                legacy_mode,
+                legacy_mode_control,
+                default_action,
+                default_action_control,
                 rewrite_configs: RwLock::new(rewrite_configs),
                 rewrites,
                 rewrite_control,
@@ -3389,13 +3398,13 @@ mod runtime {
             *self.rewrite_configs.write().expect("rewrite configs lock") = rewrite_configs.to_vec();
             self.country_policy_control.replace(country_policy);
             if let Some(domains) = normalized_legacy_domains {
-                *self.legacy_domains.write().expect("legacy domains lock") = domains;
+                self.legacy_domains_control.replace(domains);
             }
             if let Some(mode) = legacy_mode {
-                *self.legacy_mode.write().expect("legacy mode lock") = mode;
+                self.legacy_mode_control.replace(mode);
             }
             if let Some(action) = default_action {
-                *self.default_action.write().expect("default action lock") = action;
+                self.default_action_control.replace(action);
             }
             *self.blocklist_rules.lock().expect("blocklist rules lock") = replacement;
             if let Some(paths) = selected_paths {
@@ -4169,7 +4178,7 @@ mod runtime {
                 if !self.matches(&name) {
                     return Action::Pass;
                 }
-                return match *self.legacy_mode.read().expect("legacy mode lock") {
+                return match *self.legacy_mode.snapshot() {
                     Mode::Ignore => Action::Ignore,
                     Mode::Nxdomain => Action::Nxdomain,
                     Mode::Honeypot => Action::Honeypot,
@@ -4188,10 +4197,7 @@ mod runtime {
                 .or_else(|| {
                     self.regex_decision(&normalize(&name), query.qtype, query.qclass, client)
                 })
-                .map_or(
-                    *self.default_action.read().expect("default action lock"),
-                    |decision| decision.action,
-                )
+                .map_or(*self.default_action.snapshot(), |decision| decision.action)
         }
 
         fn regex_decision(
@@ -4238,16 +4244,14 @@ mod runtime {
         }
         fn matches(&self, name: &str) -> bool {
             let name = normalize(name);
-            self.legacy_domains
-                .read()
-                .expect("legacy domains lock")
-                .iter()
-                .any(|domain| {
+            self.legacy_domains.read(|domains| {
+                domains.iter().any(|domain| {
                     name == *domain
                         || (name.len() > domain.len()
                             && name.ends_with(domain)
                             && name.as_bytes()[name.len() - domain.len() - 1] == b'.')
                 })
+            })
         }
 
         pub fn evaluate(&self, query: &proxima_dns::DnsQuery) -> Option<DnsAnswer> {
@@ -4260,9 +4264,10 @@ mod runtime {
                     .evaluate_legacy(query)
                     .map(|answer| self.cap_answer(query, answer));
             }
-            let answer = match decision.map(|decision| decision.action).or(Some(
-                *self.default_action.read().expect("default action lock"),
-            )) {
+            let answer = match decision
+                .map(|decision| decision.action)
+                .or(Some(*self.default_action.snapshot()))
+            {
                 Some(Action::Ignore | Action::Drop | Action::Forward) => None,
                 Some(Action::Nxdomain) => Some(DnsAnswer::name_error()),
                 Some(Action::Reject) => Some(refused_answer()),
@@ -4283,7 +4288,7 @@ mod runtime {
             if !self.matches(&query.name) {
                 return Some(DnsAnswer::ok(Vec::new()));
             }
-            match *self.legacy_mode.read().expect("legacy mode lock") {
+            match *self.legacy_mode.snapshot() {
                 Mode::Ignore => None,
                 Mode::Nxdomain => Some(DnsAnswer::name_error()),
                 Mode::Honeypot => Some(honeypot(&query.name, query.qtype, &self.config.honeypot)),
@@ -4545,9 +4550,9 @@ mod runtime {
                 "country_deny_rules": country_policy.as_ref().as_ref().map_or(0, |policy| policy.deny.len()),
                 "country_observe_rules": country_policy.as_ref().as_ref().map_or(0, |policy| policy.observe.len()),
                 "country_reload_interval_secs": self.config.country_policy.reload_interval_secs,
-                "legacy_domain_count": self.legacy_domains.read().expect("legacy domains lock").len(),
-                "legacy_mode": mode_label(*self.legacy_mode.read().expect("legacy mode lock")),
-                "default_action": action_label(*self.default_action.read().expect("default action lock")),
+                "legacy_domain_count": self.legacy_domains.read(Vec::len),
+                "legacy_mode": mode_label(*self.legacy_mode.snapshot()),
+                "default_action": action_label(*self.default_action.snapshot()),
                 "legacy_mode_active": !self.rules_configured.load(Ordering::Acquire),
                 "policy_generation": self.policy_generation.load(Ordering::Acquire),
             })
@@ -4566,9 +4571,9 @@ mod runtime {
             let client_identities = self.client_identities.snapshot();
             let rewrites = self.rewrite_configs.read().expect("rewrite configs lock");
             let value = serde_json::json!({
-                "mode": mode_label(*self.legacy_mode.read().expect("legacy mode lock")),
-                "domains": self.legacy_domains.read().expect("legacy domains lock").clone(),
-                "default_action": action_label(*self.default_action.read().expect("default action lock")),
+                "mode": mode_label(*self.legacy_mode.snapshot()),
+                "domains": self.legacy_domains.snapshot().as_ref().clone(),
+                "default_action": action_label(*self.default_action.snapshot()),
                 "rules": rules.iter().map(|rule| serde_json::json!({
                     "id": rule.id,
                     "domain": rule.domain,
@@ -4970,21 +4975,21 @@ mod runtime {
             let action = selected_action.or_else(|| {
                 if !self.rules_configured.load(Ordering::Acquire) {
                     if self.matches(&query.name) {
-                        Some(match *self.legacy_mode.read().expect("legacy mode lock") {
+                        Some(match *self.legacy_mode.snapshot() {
                             Mode::Ignore => Action::Ignore,
                             Mode::Nxdomain => Action::Nxdomain,
                             Mode::Honeypot => Action::Honeypot,
                         })
                     } else if self.upstream.is_some() {
-                        Some(*self.default_action.read().expect("default action lock"))
+                        Some(*self.default_action.snapshot())
                     } else {
                         None
                     }
                 } else {
-                    Some(self.decision(&query, client).map_or(
-                        *self.default_action.read().expect("default action lock"),
-                        |decision| decision.action,
-                    ))
+                    Some(
+                        self.decision(&query, client)
+                            .map_or(*self.default_action.snapshot(), |decision| decision.action),
+                    )
                 }
             });
             // The borrowed listener records the action before handing the
