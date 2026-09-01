@@ -1520,7 +1520,7 @@ mod tests {
             .method("POST")
             .path("/reload/client-groups/upsert")
             .payload(
-                r#"{"client_groups":[{"name":"HOME","client_addresses":["192.0.2.53"],"client_cidrs":["198.51.100.0/24"]},{"name":"guest","client_cidrs":["203.0.113.0/24"]}]}"#,
+                r#"{"client_groups":[{"name":"HOME","enabled":false,"client_addresses":["192.0.2.53"],"client_cidrs":["198.51.100.0/24"]},{"name":"guest","client_cidrs":["203.0.113.0/24"]}]}"#,
             )
             .build()
             .expect("group upsert request");
@@ -1534,6 +1534,30 @@ mod tests {
         assert_eq!(
             groups["client_groups"][0]["client_addresses"][0],
             "192.0.2.53"
+        );
+        assert_eq!(groups["client_groups"][0]["enabled"], false);
+        let mut query_wire = vec![0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0];
+        query_wire.extend_from_slice(b"\x03ads\x07example\0\0\x01\0\x01");
+        let query = crate::query::QueryView::parse(&query_wire).expect("group query");
+        assert_eq!(
+            policy.action_for_view_with_client(query, Some("192.0.2.53".parse().unwrap())),
+            crate::Action::Pass
+        );
+
+        let reenable = Request::builder()
+            .method("POST")
+            .path("/reload/client-groups/upsert")
+            .payload(
+                r#"{"client_groups":[{"name":"HOME","enabled":true,"client_addresses":["192.0.2.53"],"client_cidrs":["198.51.100.0/24"]}]}"#,
+            )
+            .build()
+            .expect("group re-enable request");
+        let response = block_on(handler.call(reenable)).expect("group re-enable response");
+        assert_eq!(response.status, 200);
+        let query = crate::query::QueryView::parse(&query_wire).expect("group query");
+        assert_eq!(
+            policy.action_for_view_with_client(query, Some("192.0.2.53".parse().unwrap())),
+            crate::Action::Nxdomain
         );
 
         let invalid = Request::builder()
