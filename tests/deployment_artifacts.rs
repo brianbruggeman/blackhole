@@ -175,6 +175,10 @@ fn deb_builder_contains_native_package_contract() {
         "Architecture: $architecture",
         "blackhole.service",
         "blackhole.conf",
+        "cat > \"$staging/control/postinst\"",
+        "cat > \"$staging/control/prerm\"",
+        "systemctl enable --now blackhole.service",
+        "systemctl disable --now blackhole.service",
         "ar r",
         ".deb",
     ] {

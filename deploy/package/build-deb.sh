@@ -71,9 +71,40 @@ Maintainer: Brian Bruggeman
 Description: policy-driven DNS sinkhole and honeypot
  Blackhole is a privacy-first DNS resolver with bounded policy and forwarding.
 EOF
+cat > "$staging/control/postinst" <<'EOF'
+#!/bin/sh
+set -eu
+
+if ! getent group blackhole >/dev/null 2>&1; then
+    groupadd --system blackhole
+fi
+if ! getent passwd blackhole >/dev/null 2>&1; then
+    useradd --system --gid blackhole --home-dir /var/lib/blackhole \
+        --shell /usr/sbin/nologin blackhole
+fi
+install -d -o blackhole -g blackhole -m 0750 /var/lib/blackhole
+if command -v systemd-tmpfiles >/dev/null 2>&1; then
+    systemd-tmpfiles --create /etc/tmpfiles.d/blackhole.conf
+fi
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload
+    systemctl enable --now blackhole.service
+fi
+EOF
+cat > "$staging/control/prerm" <<'EOF'
+#!/bin/sh
+set -eu
+
+if [ "${1:-}" = remove ] && command -v systemctl >/dev/null 2>&1; then
+    systemctl disable --now blackhole.service || true
+    systemctl daemon-reload || true
+fi
+EOF
+chmod 0755 "$staging/control/postinst" "$staging/control/prerm"
 
 tar -C "$staging/control" --sort=name --mtime='UTC 1970-01-01' \
-    --owner=0 --group=0 --numeric-owner -czf "$staging/control.tar.gz" control
+    --owner=0 --group=0 --numeric-owner -czf "$staging/control.tar.gz" \
+    control postinst prerm
 tar -C "$staging/data" --sort=name --mtime='UTC 1970-01-01' \
     --owner=0 --group=0 --numeric-owner -czf "$staging/data.tar.gz" .
 printf '2.0\n' > "$staging/debian-binary"
