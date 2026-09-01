@@ -86,6 +86,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <h2>Admission limits</h2><textarea id="admission-config" rows="16" cols="80">loading…</textarea><pre id="admission-status">loading…</pre>
 <h2>Adaptive abuse controls</h2><pre id="abuse-status">loading…</pre>
 <h2>Policy bundle</h2><textarea id="policy-bundle" rows="12" cols="80">loading…</textarea>
+<h2>Blocklists</h2><pre id="blocklists">loading…</pre>
 <h2>Country policy</h2><pre id="country-status">loading…</pre>
 <h2>Privacy status</h2><pre id="privacy-status">loading…</pre>
 <h2>Rules</h2><pre id="rules">loading…</pre>
@@ -106,7 +107,7 @@ const operate = (path, options) => fetch(path, options).then(async response => {
   document.querySelector('#operation-status').textContent = `${path}: ${value.status || 'ok'}`;
   return value;
 }).catch(error => { document.querySelector('#operation-status').textContent = `${path}: ${error.message}`; throw error; });
-const refresh = () => Promise.all([load('/status','#status'), load('/admission/status','#admission-status'), load('/abuse/status','#abuse-status'), load('/policy-bundle','#policy-bundle'), load('/country/status','#country-status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/client-identities','#identities'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
+const refresh = () => Promise.all([load('/status','#status'), load('/admission/status','#admission-status'), load('/abuse/status','#abuse-status'), load('/policy-bundle','#policy-bundle'), load('/blocklists','#blocklists'), load('/country/status','#country-status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/client-identities','#identities'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
 document.querySelector('#clear-logs').onclick = () => operate('/logs/clear', {method:'POST'}).then(refresh);
 document.querySelector('#clear-cache').onclick = () => operate('/cache/clear', {method:'POST'}).then(refresh);
 document.querySelector('#clear-abuse').onclick = () => operate('/abuse/clear', {method:'POST'}).then(refresh);
@@ -887,6 +888,11 @@ mod tests {
             ui.payload
                 .windows(b"/reload/blocklists".len())
                 .any(|window| window == b"/reload/blocklists")
+        );
+        assert!(
+            ui.payload
+                .windows(b"/blocklists".len())
+                .any(|window| window == b"/blocklists")
         );
         assert!(
             ui.payload
