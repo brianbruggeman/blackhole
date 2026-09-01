@@ -1,4 +1,6 @@
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 const LAUNCHD_PLIST: &str = "deploy/launchd/com.brianbruggeman.blackhole.plist";
 const SYSTEMD_UNIT: &str = "deploy/systemd/blackhole.service";
@@ -118,5 +120,17 @@ fn launchd_installer_is_transactional_and_platform_native() {
             !installer.contains(forbidden),
             "launchd installer must not invoke {forbidden}"
         );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn installers_are_executable() {
+    for path in [SYSTEMD_INSTALLER, LAUNCHD_INSTALLER] {
+        let mode = fs::metadata(path)
+            .unwrap_or_else(|error| panic!("read metadata for {path}: {error}"))
+            .permissions()
+            .mode();
+        assert_ne!(mode & 0o111, 0, "installer is not executable: {path}");
     }
 }
