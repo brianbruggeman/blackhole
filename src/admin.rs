@@ -10,8 +10,8 @@ use proxima::pipe::{PipeHandle, into_handle};
 use proxima::{ProximaError, Request, Response, SendPipe};
 
 use crate::{
-    ClientGroupConfig, CountryPolicyConfig, Mode, Policy, RegexRuleConfig, RewriteConfig,
-    RuleConfig, ServiceProfileConfig,
+    AdmissionConfig, ClientGroupConfig, CountryPolicyConfig, Mode, Policy, RegexRuleConfig,
+    RewriteConfig, RuleConfig, ServiceProfileConfig,
 };
 
 const MAX_POLICY_BODY_BYTES: usize = 64 * 1024;
@@ -131,6 +131,28 @@ impl SendPipe for AdminHandler {
             ("GET", "/health") => Ok(Response::ok("{\"status\":\"ok\"}")),
             ("GET", "/status") => Ok(Response::ok(self.policy.admin_status())),
             ("GET", "/admission/status") => Ok(Response::ok(self.policy.admin_admission_status())),
+            ("POST", "/reload/admission") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let admission = match serde_json::from_slice::<AdmissionConfig>(&request.payload) {
+                    Ok(admission) => admission,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                match self.policy.reload_admission(&admission) {
+                    Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
             ("GET", "/country/status") => Ok(Response::ok(self.policy.admin_country_status())),
             ("GET", "/policy/status") => Ok(Response::ok(self.policy.admin_policy_status())),
             ("GET", "/privacy/status") => Ok(Response::ok(self.policy.admin_privacy_status())),
@@ -529,6 +551,7 @@ impl SendPipe for AdminHandler {
                 | "/health"
                 | "/status"
                 | "/admission/status"
+                | "/reload/admission"
                 | "/country/status"
                 | "/policy/status"
                 | "/privacy/status"
@@ -741,6 +764,40 @@ mod tests {
         let wrong_rules_method =
             block_on(handler.call(request("POST", "/rules"))).expect("405 rules response");
         assert_eq!(wrong_rules_method.status, 405);
+    }
+
+    #[test]
+    fn admission_reload_updates_live_limits_and_rejects_capacity_changes() {
+        let handler = AdminHandler::new(Arc::new(
+            Policy::new(crate::Config::default()).expect("default policy"),
+        ));
+        let reload = Request::builder()
+            .method("POST")
+            .path("/reload/admission")
+            .payload(r#"{"reject_any":true,"max_queries_per_second":7}"#)
+            .build()
+            .expect("valid admission reload");
+        let response = block_on(handler.call(reload)).expect("admission reload response");
+        assert_eq!(response.status, 200);
+        let status = block_on(handler.call(request("GET", "/admission/status")))
+            .expect("admission status response");
+        let status: serde_json::Value = serde_json::from_slice(&status.payload).expect("status");
+        assert_eq!(status["reject_any"], true);
+        assert_eq!(status["max_queries_per_second"], 7);
+
+        let rejected = Request::builder()
+            .method("POST")
+            .path("/reload/admission")
+            .payload(r#"{"max_inflight_requests":1}"#)
+            .build()
+            .expect("valid capacity reload");
+        let response = block_on(handler.call(rejected)).expect("capacity response");
+        assert_eq!(response.status, 422);
+        let status = block_on(handler.call(request("GET", "/admission/status")))
+            .expect("admission status response");
+        let status: serde_json::Value = serde_json::from_slice(&status.payload).expect("status");
+        assert_eq!(status["reject_any"], true);
+        assert_eq!(status["max_queries_per_second"], 7);
     }
 
     #[test]

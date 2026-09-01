@@ -387,7 +387,7 @@ mod runtime {
         }
     }
 
-    #[derive(Debug, Clone, Deserialize)]
+    #[derive(Debug, Clone, Deserialize, serde::Serialize)]
     pub struct AdmissionConfig {
         #[serde(default = "default_max_name_bytes")]
         pub max_name_bytes: usize,
@@ -1859,6 +1859,7 @@ mod runtime {
         telemetry: Option<TelemetryHandle>,
         recording: Option<DynRecordingSink>,
         query_log: Option<Arc<QueryLog>>,
+        admission: RwLock<AdmissionConfig>,
         upstream: Option<DnsClientUpstream>,
         upstream_slots: Option<Arc<Semaphore>>,
         cache: Arc<Mutex<DnsCache>>,
@@ -2191,6 +2192,7 @@ mod runtime {
             let legacy_mode = config.policy.mode;
             let default_action = config.policy.default_action;
             let rewrite_configs = config.policy.rewrites.clone();
+            let admission = config.admission.clone();
             let policy = Self {
                 config,
                 base_rules: Mutex::new(base_rules),
@@ -2214,6 +2216,7 @@ mod runtime {
                 telemetry: None,
                 recording: None,
                 query_log,
+                admission: RwLock::new(admission),
                 upstream: None,
                 upstream_slots: None,
                 cache,
@@ -2286,6 +2289,55 @@ mod runtime {
             let mut combined = rules.to_vec();
             combined.extend(generated);
             self.publish_rules_locked(&combined, rules, &mut base_rules, "rules", started)
+        }
+
+        /// Atomically replace the live admission limits. The in-flight
+        /// semaphore is intentionally fixed at startup; changing its capacity
+        /// would make existing permits ambiguous, so such a replacement is
+        /// rejected without changing any live limits.
+        pub fn reload_admission(
+            &self,
+            admission: &AdmissionConfig,
+        ) -> Result<ReloadState, policy::PolicyError> {
+            if admission.max_inflight_requests != self.config.admission.max_inflight_requests {
+                return Err(policy::PolicyError::InvalidAdmission {
+                    reason: "max_inflight_requests is startup-only".into(),
+                });
+            }
+            if admission.max_name_bytes == 0 || admission.max_name_bytes > 253 {
+                return Err(policy::PolicyError::InvalidAdmission {
+                    reason: "max_name_bytes must be between 1 and 253".into(),
+                });
+            }
+            if admission.max_response_records == 0
+                || admission.max_response_bytes < 12
+                || admission.max_response_amplification == 0
+                || admission.max_queries_per_second == 0
+                || admission.max_queries_per_second > MAX_GLOBAL_QUERIES_PER_SECOND
+                || admission.max_inflight_per_client == 0
+                || admission.max_queries_per_client_per_second == 0
+                || admission.max_response_bytes_per_client_per_second == 0
+                || admission.max_response_bytes_per_network_per_second == 0
+                || admission.max_response_bytes_per_second == 0
+                || admission.max_network_abuse_violations == 0
+                || admission.network_abuse_window_secs == 0
+                || admission.network_abuse_cooldown_secs == 0
+                || admission.network_abuse_ipv4_prefix > 32
+                || admission.network_abuse_ipv6_prefix > 128
+                || admission.max_client_abuse_violations == 0
+                || admission.client_abuse_window_secs == 0
+                || admission.client_abuse_cooldown_secs == 0
+            {
+                return Err(policy::PolicyError::InvalidAdmission {
+                    reason: "admission limits are invalid or zero".into(),
+                });
+            }
+            let _reload = self.reload_lock.write().expect("reload lock");
+            let started = Instant::now();
+            *self.admission.write().expect("admission lock") = admission.clone();
+            self.policy_generation.fetch_add(1, Ordering::Relaxed);
+            self.observe_reload_latency("admission", started);
+            Ok(ReloadState::Published)
         }
 
         /// Append validated rules to the current authoritative table and
@@ -3344,11 +3396,16 @@ mod runtime {
             }
         }
 
+        fn admission_config(&self) -> AdmissionConfig {
+            self.admission.read().expect("admission lock").clone()
+        }
+
         fn try_client_admission(&self, client: Option<IpAddr>) -> Option<ClientPermit> {
             let client = client?;
+            let admission = self.admission_config();
             let mut active = self.client_admission.lock().expect("client admission lock");
             let count = active.entry(client).or_default();
-            if *count >= self.config.admission.max_inflight_per_client {
+            if *count >= admission.max_inflight_per_client {
                 return None;
             }
             *count += 1;
@@ -3362,6 +3419,7 @@ mod runtime {
             let Some(client) = client else {
                 return true;
             };
+            let admission = self.admission_config();
             let now = Instant::now();
             let mut rates = self.client_rates.lock().expect("client rate lock");
             if let Some(rate) = rates.get_mut(&client) {
@@ -3370,7 +3428,7 @@ mod runtime {
                     rate.requests = 1;
                     return true;
                 }
-                if rate.requests >= self.config.admission.max_queries_per_client_per_second {
+                if rate.requests >= admission.max_queries_per_client_per_second {
                     return false;
                 }
                 rate.requests += 1;
@@ -3396,6 +3454,7 @@ mod runtime {
         }
 
         fn allow_global_rate(&self) -> bool {
+            let admission = self.admission_config();
             let now = Instant::now();
             let mut rate = self.global_rate.lock().expect("global rate lock");
             if now.duration_since(rate.window_started) >= Duration::from_secs(1) {
@@ -3403,7 +3462,7 @@ mod runtime {
                 rate.requests = 1;
                 return true;
             }
-            if rate.requests >= self.config.admission.max_queries_per_second {
+            if rate.requests >= admission.max_queries_per_second {
                 return false;
             }
             rate.requests += 1;
@@ -3423,10 +3482,8 @@ mod runtime {
                 return true;
             };
             let now = Instant::now();
-            let limit = self
-                .config
-                .admission
-                .max_response_bytes_per_client_per_second;
+            let admission = self.admission_config();
+            let limit = admission.max_response_bytes_per_client_per_second;
             if bytes > limit {
                 return false;
             }
@@ -3471,7 +3528,7 @@ mod runtime {
         /// bypassing identity-scoped limits.
         pub(crate) fn allow_global_response_bytes(&self, bytes: usize) -> bool {
             let now = Instant::now();
-            let limit = self.config.admission.max_response_bytes_per_second;
+            let limit = self.admission_config().max_response_bytes_per_second;
             if bytes > limit {
                 return false;
             }
@@ -3504,17 +3561,15 @@ mod runtime {
                 return true;
             };
             let now = Instant::now();
-            let limit = self
-                .config
-                .admission
-                .max_response_bytes_per_network_per_second;
+            let admission = self.admission_config();
+            let limit = admission.max_response_bytes_per_network_per_second;
             if bytes > limit {
                 return false;
             }
             let key = abuse_network_key(
                 client,
-                self.config.admission.network_abuse_ipv4_prefix,
-                self.config.admission.network_abuse_ipv6_prefix,
+                admission.network_abuse_ipv4_prefix,
+                admission.network_abuse_ipv6_prefix,
             );
             let mut budgets = self
                 .network_response_budgets
@@ -3555,6 +3610,7 @@ mod runtime {
             let Some(client) = client else {
                 return true;
             };
+            let admission = self.admission_config();
             let now = Instant::now();
             let exact_allowed = self
                 .client_abuse
@@ -3565,13 +3621,13 @@ mod runtime {
                     abuse_state_allows(
                         state,
                         now,
-                        Duration::from_secs(self.config.admission.client_abuse_window_secs),
+                        Duration::from_secs(admission.client_abuse_window_secs),
                     )
                 });
             let network = abuse_network_key(
                 client,
-                self.config.admission.network_abuse_ipv4_prefix,
-                self.config.admission.network_abuse_ipv6_prefix,
+                admission.network_abuse_ipv4_prefix,
+                admission.network_abuse_ipv6_prefix,
             );
             let network_allowed = self
                 .network_abuse
@@ -3582,7 +3638,7 @@ mod runtime {
                     abuse_state_allows(
                         state,
                         now,
-                        Duration::from_secs(self.config.admission.network_abuse_window_secs),
+                        Duration::from_secs(admission.network_abuse_window_secs),
                     )
                 });
             exact_allowed && network_allowed
@@ -3592,40 +3648,39 @@ mod runtime {
             let Some(client) = client else {
                 return false;
             };
+            let admission = self.admission_config();
             let now = Instant::now();
             let exact_opened = record_abuse(
                 &mut self.client_abuse.lock().expect("client abuse lock"),
                 client,
                 now,
-                Duration::from_secs(self.config.admission.client_abuse_window_secs),
-                Duration::from_secs(self.config.admission.client_abuse_cooldown_secs),
-                self.config.admission.max_client_abuse_violations,
+                Duration::from_secs(admission.client_abuse_window_secs),
+                Duration::from_secs(admission.client_abuse_cooldown_secs),
+                admission.max_client_abuse_violations,
             );
             let network = abuse_network_key(
                 client,
-                self.config.admission.network_abuse_ipv4_prefix,
-                self.config.admission.network_abuse_ipv6_prefix,
+                admission.network_abuse_ipv4_prefix,
+                admission.network_abuse_ipv6_prefix,
             );
             let network_opened = record_abuse(
                 &mut self.network_abuse.lock().expect("network abuse lock"),
                 network,
                 now,
-                Duration::from_secs(self.config.admission.network_abuse_window_secs),
-                Duration::from_secs(self.config.admission.network_abuse_cooldown_secs),
-                self.config.admission.max_network_abuse_violations,
+                Duration::from_secs(admission.network_abuse_window_secs),
+                Duration::from_secs(admission.network_abuse_cooldown_secs),
+                admission.max_network_abuse_violations,
             );
             exact_opened || network_opened
         }
 
         fn admission_allows(&self, query: &proxima_dns::DnsQuery) -> bool {
+            let admission = self.admission_config();
             let name = query.name.trim_end_matches('.');
-            if name.len() > self.config.admission.max_name_bytes
-                || query.qtype == 0
-                || query.qclass == 0
-            {
+            if name.len() > admission.max_name_bytes || query.qtype == 0 || query.qclass == 0 {
                 return false;
             }
-            if self.config.admission.reject_any && query.qtype == 255 {
+            if admission.reject_any && query.qtype == 255 {
                 return false;
             }
             if name.is_empty() {
@@ -3636,17 +3691,14 @@ mod runtime {
         }
 
         fn cap_answer(&self, query: &proxima_dns::DnsQuery, mut answer: DnsAnswer) -> DnsAnswer {
-            answer
-                .records
-                .truncate(self.config.admission.max_response_records);
+            let admission = self.admission_config();
+            answer.records.truncate(admission.max_response_records);
             let mut bytes = 12usize
                 .saturating_add(wire_name_bytes(&query.name))
                 .saturating_add(4);
-            let max_bytes = self
-                .config
-                .admission
+            let max_bytes = admission
                 .max_response_bytes
-                .min(bytes.saturating_mul(self.config.admission.max_response_amplification));
+                .min(bytes.saturating_mul(admission.max_response_amplification));
             answer.records.retain(|record| {
                 let record_bytes = wire_name_bytes(&record.name)
                     .saturating_add(10)
@@ -3668,7 +3720,7 @@ mod runtime {
             if answer.rcode > 0x0f {
                 return Err("upstream_malformed");
             }
-            if answer.records.len() > self.config.admission.max_response_records {
+            if answer.records.len() > self.admission_config().max_response_records {
                 return Err("upstream_overflow");
             }
             let query_name = normalize(&query.name);
@@ -4061,7 +4113,7 @@ mod runtime {
         /// Return bounded admission and amplification limits without exposing
         /// client keys, counters, or other request metadata.
         pub(crate) fn admin_admission_status(&self) -> String {
-            let admission = &self.config.admission;
+            let admission = self.admission_config();
             serde_json::json!({
                 "max_name_bytes": admission.max_name_bytes,
                 "reject_any": admission.reject_any,
@@ -6445,6 +6497,35 @@ mod runtime {
                     config
                 })
                 .is_err()
+            );
+        }
+
+        #[test]
+        fn admission_reload_publishes_limits_and_rejects_capacity_changes() {
+            let policy = Policy::new(Config::default()).expect("valid policy");
+            let mut replacement = AdmissionConfig::default();
+            replacement.reject_any = true;
+            replacement.max_queries_per_second = 7;
+            assert_eq!(
+                policy.reload_admission(&replacement),
+                Ok(ReloadState::Published)
+            );
+            let status: serde_json::Value =
+                serde_json::from_str(&policy.admin_admission_status()).expect("admission status");
+            assert_eq!(status["reject_any"], true);
+            assert_eq!(status["max_queries_per_second"], 7);
+
+            let mut capacity_change = replacement.clone();
+            capacity_change.max_inflight_requests += 1;
+            assert!(matches!(
+                policy.reload_admission(&capacity_change),
+                Err(policy::PolicyError::InvalidAdmission { .. })
+            ));
+            let status: serde_json::Value =
+                serde_json::from_str(&policy.admin_admission_status()).expect("admission status");
+            assert_eq!(
+                status["max_inflight_requests"],
+                AdmissionConfig::default().max_inflight_requests
             );
         }
 
