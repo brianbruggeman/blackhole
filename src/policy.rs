@@ -68,6 +68,7 @@ pub enum PolicyError {
     InvalidWildcard { id: u32, domain: String },
     InvalidClientCidr { id: u32, value: String },
     InvalidClientIdentity { id: u32, value: String },
+    InvalidClientIdentityMap { name: String, reason: String },
     DuplicateRule { id: u32 },
     TooManyRules { max: usize },
     DomainTooLong { id: u32 },
@@ -104,6 +105,9 @@ impl core::fmt::Display for PolicyError {
                     formatter,
                     "rule {id} has an invalid client identity: {value}"
                 )
+            }
+            Self::InvalidClientIdentityMap { name, reason } => {
+                write!(formatter, "invalid client identity {name}: {reason}")
             }
             Self::DuplicateRule { id } => write!(formatter, "duplicate rule id: {id}"),
             Self::TooManyRules { max } => write!(formatter, "rule count exceeds {max}"),

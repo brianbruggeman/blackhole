@@ -869,6 +869,8 @@ mod runtime {
         pub profiles: Vec<ServiceProfileConfig>,
         #[serde(default)]
         pub client_groups: Vec<ClientGroupConfig>,
+        #[serde(default)]
+        pub client_identities: Vec<ClientIdentityConfig>,
         #[serde(default = "default_action")]
         pub default_action: Action,
     }
@@ -884,6 +886,7 @@ mod runtime {
                 rewrites: Vec::new(),
                 profiles: Vec::new(),
                 client_groups: Vec::new(),
+                client_identities: Vec::new(),
                 default_action: default_action(),
             }
         }
@@ -904,6 +907,13 @@ mod runtime {
         pub client: Option<IpAddr>,
         #[serde(default)]
         pub client_cidrs: Vec<String>,
+    }
+
+    #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+    pub struct ClientIdentityConfig {
+        pub name: String,
+        #[serde(default)]
+        pub clients: Vec<IpAddr>,
     }
 
     #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -1913,6 +1923,7 @@ mod runtime {
         blocklist_paths: Mutex<Vec<String>>,
         profiles: RwLock<Vec<ServiceProfileConfig>>,
         client_groups: RwLock<Vec<ClientGroupConfig>>,
+        client_identities: Vec<ClientIdentityConfig>,
         country_policy: Arc<RwLock<Option<CountryPolicy>>>,
         reload_lock: RwLock<()>,
         legacy_domains: RwLock<Vec<String>>,
@@ -2257,6 +2268,7 @@ mod runtime {
                 .then(|| Arc::new(QueryLog::new(&config.privacy)));
             let profiles = config.policy.profiles.clone();
             let client_groups = config.policy.client_groups.clone();
+            let client_identities = validate_client_identities(&config.policy.client_identities)?;
             let blocklist_paths = config.policy.blocklists.clone();
             let legacy_domains = config.policy.domains.clone();
             let legacy_mode = config.policy.mode;
@@ -2271,6 +2283,7 @@ mod runtime {
                 blocklist_paths: Mutex::new(blocklist_paths),
                 profiles: RwLock::new(profiles),
                 client_groups: RwLock::new(client_groups),
+                client_identities,
                 country_policy: Arc::new(RwLock::new(country_policy)),
                 reload_lock: RwLock::new(()),
                 legacy_domains: RwLock::new(legacy_domains),
@@ -3446,13 +3459,14 @@ mod runtime {
             client: Option<std::net::IpAddr>,
         ) -> Option<policy::Decision> {
             let _reload = self.reload_lock.read().expect("reload lock");
+            let client_identity = self.client_identity_for(client);
             let reference = self.reference.read(|reference| {
                 reference.decide(QueryContext {
                     name: &query.name,
                     qtype: query.qtype,
                     qclass: query.qclass,
                     client,
-                    client_identity: None,
+                    client_identity,
                 })
             });
             reference.or_else(|| {
@@ -3465,6 +3479,14 @@ mod runtime {
                 Some(PeerInfo::Tcp(address)) => Some(address.ip()),
                 _ => None,
             }
+        }
+
+        fn client_identity_for(&self, client: Option<std::net::IpAddr>) -> Option<&str> {
+            let client = client?;
+            self.client_identities
+                .iter()
+                .find(|identity| identity.clients.contains(&client))
+                .map(|identity| identity.name.as_str())
         }
 
         fn admission_config(&self) -> AdmissionConfig {
@@ -3915,6 +3937,7 @@ mod runtime {
             client_identity: Option<&str>,
         ) -> Action {
             let _reload = self.reload_lock.read().expect("reload lock");
+            let client_identity = client_identity.or_else(|| self.client_identity_for(client));
             let name = query.name.to_dotted();
             if !self.rules_configured.load(Ordering::Acquire) {
                 if !self.matches(&name) {
@@ -4597,6 +4620,46 @@ mod runtime {
         }
         let _ = (server, subnet_mask);
         Ok(())
+    }
+
+    fn validate_client_identities(
+        identities: &[ClientIdentityConfig],
+    ) -> Result<Vec<ClientIdentityConfig>, policy::PolicyError> {
+        if identities.len() > 1024 {
+            return Err(policy::PolicyError::InvalidClientIdentityMap {
+                name: "<config>".into(),
+                reason: "identity count exceeds 1024".into(),
+            });
+        }
+        let mut names = BTreeSet::new();
+        let mut clients = HashMap::new();
+        for identity in identities {
+            if identity.name.is_empty()
+                || identity.name.len() > policy::MAX_CLIENT_IDENTITY_BYTES
+                || !identity.name.is_ascii()
+                || !names.insert(identity.name.clone())
+            {
+                return Err(policy::PolicyError::InvalidClientIdentityMap {
+                    name: identity.name.clone(),
+                    reason: "names must be unique, non-empty, and bounded ASCII".into(),
+                });
+            }
+            if identity.clients.is_empty() || identity.clients.len() > 256 {
+                return Err(policy::PolicyError::InvalidClientIdentityMap {
+                    name: identity.name.clone(),
+                    reason: "each identity must contain 1 to 256 client addresses".into(),
+                });
+            }
+            for client in &identity.clients {
+                if let Some(previous) = clients.insert(*client, identity.name.clone()) {
+                    return Err(policy::PolicyError::InvalidClientIdentityMap {
+                        name: identity.name.clone(),
+                        reason: format!("client already belongs to identity {previous}"),
+                    });
+                }
+            }
+        }
+        Ok(identities.to_vec())
     }
 
     impl Policy {
@@ -5740,6 +5803,85 @@ mod runtime {
             let packet = [
                 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 6, b'c', b'l', b'i', b'e', b'n', b't', 7, b'e',
                 b'x', b'a', b'm', b'p', b'l', b'e', 0, 0, 1, 0, 1,
+            ];
+            let view = QueryView::parse(&packet).expect("valid query");
+            assert_eq!(
+                policy.action_for_view_with_client(view, Some("192.0.2.10".parse().unwrap())),
+                Action::Reject
+            );
+            assert_eq!(
+                policy.action_for_view_with_client(view, Some("192.0.2.11".parse().unwrap())),
+                Action::Pass
+            );
+        }
+
+        #[test]
+        fn identity_scoped_rules_use_borrowed_adapter_metadata() {
+            let mut config = Config::default();
+            config.policy.rules = vec![RuleConfig {
+                id: 2,
+                domain: "identity.example".into(),
+                action: Action::Reject,
+                priority: 0,
+                qtype: None,
+                qclass: None,
+                client: None,
+                client_cidr: None,
+                client_cidrs: Vec::new(),
+                client_identity: Some("family-router".into()),
+            }];
+            let policy = Policy::new(config).expect("valid identity policy");
+            let packet = [
+                0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 8, b'i', b'd', b'e', b'n', b't', b'i', b't',
+                b'y', 7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 0, 0, 1, 0, 1,
+            ];
+            let view = QueryView::parse(&packet).expect("valid query");
+            assert_eq!(
+                policy.action_for_view_with_client_identity(
+                    view,
+                    Some("192.0.2.10".parse().unwrap()),
+                    Some("family-router"),
+                ),
+                Action::Reject
+            );
+            assert_eq!(
+                policy.action_for_view_with_client_identity(
+                    view,
+                    Some("192.0.2.10".parse().unwrap()),
+                    Some("guest-router"),
+                ),
+                Action::Pass
+            );
+            assert_eq!(policy.action_for_view(view), Action::Pass);
+            let status: serde_json::Value =
+                serde_json::from_str(&policy.admin_policy_status()).expect("policy status");
+            assert_eq!(status["identity_rules"], 1);
+            assert!(!status.to_string().contains("family-router"));
+        }
+
+        #[test]
+        fn configured_client_identity_reaches_the_listener_decision_path() {
+            let mut config = Config::default();
+            config.policy.client_identities = vec![ClientIdentityConfig {
+                name: "family-router".into(),
+                clients: vec!["192.0.2.10".parse().expect("client")],
+            }];
+            config.policy.rules = vec![RuleConfig {
+                id: 3,
+                domain: "identity.example".into(),
+                action: Action::Reject,
+                priority: 0,
+                qtype: None,
+                qclass: None,
+                client: None,
+                client_cidr: None,
+                client_cidrs: Vec::new(),
+                client_identity: Some("family-router".into()),
+            }];
+            let policy = Policy::new(config).expect("valid identity map");
+            let packet = [
+                0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 8, b'i', b'd', b'e', b'n', b't', b'i', b't',
+                b'y', 7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 0, 0, 1, 0, 1,
             ];
             let view = QueryView::parse(&packet).expect("valid query");
             assert_eq!(
