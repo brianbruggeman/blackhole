@@ -210,6 +210,7 @@ impl SendPipe for AdminHandler {
                 }
             }
             ("GET", "/policy/status") => Ok(Response::ok(self.policy.admin_policy_status())),
+            ("GET", "/blocklists") => Ok(Response::ok(self.policy.admin_blocklists())),
             ("GET", "/policy-bundle") => Ok(Response::ok(self.policy.admin_policy_bundle())),
             ("GET", "/privacy/status") => Ok(Response::ok(self.policy.admin_privacy_status())),
             ("GET", "/rules") => Ok(Response::ok(self.policy.admin_rules())),
@@ -758,6 +759,7 @@ impl SendPipe for AdminHandler {
                 | "/country/status"
                 | "/reload/country/replace"
                 | "/policy/status"
+                | "/blocklists"
                 | "/policy-bundle"
                 | "/privacy/status"
                 | "/rules"
@@ -1194,6 +1196,14 @@ mod tests {
         let status: serde_json::Value = serde_json::from_slice(&status.payload).expect("status");
         assert_eq!(status["blocklist_sources"], 1);
         assert_eq!(status["blocklist_rules"], 2, "apex plus subdomain rule");
+        let blocklists = block_on(handler.call(request("GET", "/blocklists")))
+            .expect("blocklist inspection response");
+        assert_eq!(blocklists.status, 200);
+        let blocklists: serde_json::Value =
+            serde_json::from_slice(&blocklists.payload).expect("blocklist inspection JSON");
+        assert_eq!(blocklists["source_count"], 1);
+        assert_eq!(blocklists["rule_count"], 2);
+        assert_eq!(blocklists["sources"][0], path.to_string_lossy().as_ref());
 
         let failed = block_on(
             handler.call(

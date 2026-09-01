@@ -5009,6 +5009,23 @@ mod runtime {
             .to_string()
         }
 
+        /// Return the authenticated operator's bounded blocklist source
+        /// configuration and loaded rule count. This is configuration
+        /// inspection, not query telemetry; it never reads source contents.
+        pub(crate) fn admin_blocklists(&self) -> String {
+            let _reload = self.reload_lock.read().expect("reload lock");
+            let paths = self.blocklist_paths.lock().expect("blocklist paths lock");
+            let rules = self.blocklist_rules.lock().expect("blocklist rules lock");
+            serde_json::json!({
+                "sources": paths.as_slice(),
+                "source_count": paths.len(),
+                "rule_count": rules.len(),
+                "reload_interval_secs": self.config.policy.blocklist_reload_interval_secs,
+                "policy_generation": self.policy_generation.load(Ordering::Acquire),
+            })
+            .to_string()
+        }
+
         /// Return the live operator-managed bundle for the authenticated
         /// editor. The blocklist source field is null intentionally: the
         /// bundle reload contract treats null as retaining the loaded map.
