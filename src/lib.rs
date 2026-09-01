@@ -1407,6 +1407,7 @@ mod runtime {
         base_rules: Mutex<Vec<RuleConfig>>,
         explicit_rules: Mutex<Vec<RuleConfig>>,
         blocklist_rules: Mutex<Vec<RuleConfig>>,
+        blocklist_paths: Mutex<Vec<String>>,
         profiles: RwLock<Vec<ServiceProfileConfig>>,
         client_groups: RwLock<Vec<ClientGroupConfig>>,
         country_policy: Arc<RwLock<Option<CountryPolicy>>>,
@@ -1691,11 +1692,13 @@ mod runtime {
                 .then(|| Arc::new(QueryLog::new(&config.privacy)));
             let profiles = config.policy.profiles.clone();
             let client_groups = config.policy.client_groups.clone();
+            let blocklist_paths = config.policy.blocklists.clone();
             let policy = Self {
                 config,
                 base_rules: Mutex::new(base_rules),
                 explicit_rules: Mutex::new(explicit_rules),
                 blocklist_rules: Mutex::new(retained_blocklist_rules),
+                blocklist_paths: Mutex::new(blocklist_paths),
                 profiles: RwLock::new(profiles),
                 client_groups: RwLock::new(client_groups),
                 country_policy: Arc::new(RwLock::new(country_policy)),
@@ -1904,7 +1907,12 @@ mod runtime {
         /// so an unreadable or malformed update keeps the last good generation.
         pub fn reload_blocklists(&self) -> Result<ReloadState, policy::PolicyError> {
             let started = Instant::now();
-            let replacement = load_blocklists(&self.config.policy.blocklists)?;
+            let paths = self
+                .blocklist_paths
+                .lock()
+                .expect("blocklist paths lock")
+                .clone();
+            let replacement = load_blocklists(&paths)?;
             let base_rules = self.base_rules.lock().expect("base rules lock");
             let mut rules = base_rules.clone();
             rules.extend(replacement.iter().cloned());
@@ -1987,21 +1995,27 @@ mod runtime {
             client_groups: &[ClientGroupConfig],
             rewrite_configs: &[RewriteConfig],
             country_config: &CountryPolicyConfig,
+            blocklist_paths: Option<&[String]>,
         ) -> Result<ReloadState, policy::PolicyError> {
             let started = Instant::now();
             let generated = compile_profiles(profiles, client_groups)?;
             let rewrites = compile_rewrites(rewrite_configs)?;
             let country_policy = load_country_policy(country_config)?;
+            let (replacement, selected_paths) = if let Some(paths) = blocklist_paths {
+                (load_blocklists(paths)?, Some(paths.to_vec()))
+            } else {
+                (
+                    self.blocklist_rules
+                        .lock()
+                        .expect("blocklist rules lock")
+                        .clone(),
+                    None,
+                )
+            };
             let mut base = rules.to_vec();
             base.extend(generated);
             let mut published = base.clone();
-            published.extend(
-                self.blocklist_rules
-                    .lock()
-                    .expect("blocklist rules lock")
-                    .iter()
-                    .cloned(),
-            );
+            published.extend(replacement.iter().cloned());
             let rule_ids = published
                 .iter()
                 .map(|rule| rule.id)
@@ -2015,6 +2029,10 @@ mod runtime {
             *self.client_groups.write().expect("client groups lock") = client_groups.to_vec();
             *self.rewrites.write().expect("rewrites lock") = rewrites;
             *self.country_policy.write().expect("country policy lock") = country_policy;
+            *self.blocklist_rules.lock().expect("blocklist rules lock") = replacement;
+            if let Some(paths) = selected_paths {
+                *self.blocklist_paths.lock().expect("blocklist paths lock") = paths;
+            }
             self.domain_rules_configured
                 .store(!published.is_empty(), Ordering::Release);
             self.rules_configured.store(
@@ -3567,10 +3585,33 @@ mod runtime {
             assert_eq!(policy.evaluate(&query("old.example.")).unwrap().rcode, 0);
             assert_eq!(policy.evaluate(&query("new.example.")).unwrap().rcode, 3);
 
-            std::fs::write(&path, "bad..name\n").expect("write invalid blocklist");
+            let replacement_path = std::env::temp_dir().join(format!(
+                "blackhole-blocklist-reload-{}-{}.txt",
+                std::process::id(),
+                2
+            ));
+            std::fs::write(&replacement_path, "bundle.example\n").expect("write bundle blocklist");
+            let replacement_paths = vec![replacement_path.to_string_lossy().into_owned()];
+            assert_eq!(
+                policy.reload_policy_bundle(
+                    &[],
+                    &[],
+                    &[],
+                    &[],
+                    &[],
+                    &CountryPolicyConfig::default(),
+                    Some(&replacement_paths),
+                ),
+                Ok(ReloadState::Published)
+            );
+            assert_eq!(policy.evaluate(&query("new.example.")).unwrap().rcode, 0);
+            assert_eq!(policy.evaluate(&query("bundle.example.")).unwrap().rcode, 3);
+
+            std::fs::write(&replacement_path, "bad..name\n").expect("write invalid blocklist");
             assert!(policy.reload_blocklists().is_err());
-            assert_eq!(policy.evaluate(&query("new.example.")).unwrap().rcode, 3);
+            assert_eq!(policy.evaluate(&query("bundle.example.")).unwrap().rcode, 3);
             std::fs::remove_file(path).expect("remove blocklist");
+            std::fs::remove_file(replacement_path).expect("remove replacement blocklist");
         }
 
         #[test]
