@@ -5539,6 +5539,11 @@ mod runtime {
                 ("nxdomain.example", Action::Nxdomain),
                 ("sink.example", Action::Sink),
                 ("honeypot.example", Action::Honeypot),
+                ("pass.example", Action::Pass),
+                ("observe.example", Action::Observe),
+                ("ignore.example", Action::Ignore),
+                ("drop.example", Action::Drop),
+                ("forward.example", Action::Forward),
             ];
             for (domain, action) in actions {
                 let mut config = Config::default();
@@ -5554,13 +5559,23 @@ mod runtime {
                     client_cidrs: Vec::new(),
                 }];
                 let policy = Policy::new(config).expect("valid policy");
-                let answer = policy.evaluate(&query(domain)).expect("wire answer");
                 match action {
-                    Action::Reject => assert_eq!(answer.rcode, 5),
-                    Action::Nxdomain => assert_eq!(answer.rcode, 3),
-                    Action::Sink => assert!(answer.records.is_empty()),
-                    Action::Honeypot => assert_eq!(answer.records.len(), 1),
-                    _ => unreachable!("test action set"),
+                    Action::Reject => assert_eq!(policy.evaluate(&query(domain)).unwrap().rcode, 5),
+                    Action::Nxdomain => {
+                        assert_eq!(policy.evaluate(&query(domain)).unwrap().rcode, 3)
+                    }
+                    Action::Sink => {
+                        assert!(policy.evaluate(&query(domain)).unwrap().records.is_empty())
+                    }
+                    Action::Honeypot => {
+                        assert_eq!(policy.evaluate(&query(domain)).unwrap().records.len(), 1)
+                    }
+                    Action::Pass | Action::Observe => {
+                        assert!(policy.evaluate(&query(domain)).unwrap().records.is_empty())
+                    }
+                    Action::Ignore | Action::Drop | Action::Forward => {
+                        assert!(policy.evaluate(&query(domain)).is_none())
+                    }
                 }
             }
         }
