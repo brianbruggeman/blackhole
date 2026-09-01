@@ -6,6 +6,7 @@ const LAUNCHD_PLIST: &str = "deploy/launchd/com.brianbruggeman.blackhole.plist";
 const SYSTEMD_UNIT: &str = "deploy/systemd/blackhole.service";
 const SYSTEMD_TMPFILES: &str = "deploy/systemd/blackhole.conf";
 const SYSTEMD_INSTALLER: &str = "deploy/systemd/install.sh";
+const SYSTEMD_SMOKE: &str = "deploy/systemd/smoke.sh";
 const LAUNCHD_INSTALLER: &str = "deploy/launchd/install.sh";
 const PACKAGE_BUILDER: &str = "deploy/package/build.sh";
 const DEB_BUILDER: &str = "deploy/package/build-deb.sh";
@@ -105,6 +106,23 @@ fn systemd_state_and_installer_are_scoped() {
 }
 
 #[test]
+fn systemd_smoke_covers_install_and_rollback() {
+    let smoke = fs::read_to_string(SYSTEMD_SMOKE).expect("read systemd smoke harness");
+    for required in [
+        "set -eu",
+        "BLACKHOLE_INSTALL_ROOT",
+        "install.sh",
+        "BLACKHOLE_INSTALL_ROOT=",
+        "rollback_root",
+        "rollback fixture unexpectedly succeeded",
+        "sha256sum",
+        "systemd disposable install and rollback smoke passed",
+    ] {
+        assert!(smoke.contains(required), "missing smoke step: {required}");
+    }
+}
+
+#[test]
 fn launchd_installer_is_transactional_and_platform_native() {
     let installer = fs::read_to_string(LAUNCHD_INSTALLER).expect("read launchd installer");
     for required in [
@@ -136,6 +154,7 @@ fn launchd_installer_is_transactional_and_platform_native() {
 fn installers_are_executable() {
     for path in [
         SYSTEMD_INSTALLER,
+        SYSTEMD_SMOKE,
         LAUNCHD_INSTALLER,
         PACKAGE_BUILDER,
         DEB_BUILDER,

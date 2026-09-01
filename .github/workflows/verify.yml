@@ -36,6 +36,7 @@ jobs:
       - name: validate deployment scripts
         run: |
           sh -n deploy/systemd/install.sh
+          sh -n deploy/systemd/smoke.sh
           sh -n deploy/launchd/install.sh
           sh -n deploy/package/build.sh
           sh -n deploy/package/build-deb.sh
@@ -62,6 +63,8 @@ jobs:
           path: dist/
       - name: build capture smoke
         run: cargo build --locked --example capture_smoke
+      - name: run systemd install and rollback smoke
+        run: sudo -n env BLACKHOLE_BINARY="$PWD/target/release/blackhole" BLACKHOLE_CONFIG="$PWD/blackhole.example.toml" deploy/systemd/smoke.sh
       - name: run privileged capture smoke
         run: sudo -n target/debug/examples/capture_smoke
 
