@@ -33,8 +33,8 @@ below are future capabilities, grouped by the dependency layer they extend.
 - Add managed GeoIP/region/ASN data lifecycle and richer country policy beyond
   the current explicit country-to-CIDR map; the current optional map freshness
   bound is the first lifecycle safeguard, and uncertainty must remain explicit.
-- Add authenticated configuration reload and incremental background updates on
-  top of the current in-process atomic rule-table reload API.
+- Add authenticated full-configuration reload and incremental background
+  updates beyond the current in-process atomic policy-bundle reload API.
 
 ## Interception and deployment
 

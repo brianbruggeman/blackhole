@@ -1954,6 +1954,50 @@ mod runtime {
             Ok(published)
         }
 
+        /// Atomically replace all operator-managed policy tables while
+        /// retaining the current blocklist snapshot. Every generated rule,
+        /// regex, and cross-table ID is validated before publication.
+        pub fn reload_policy_bundle(
+            &self,
+            rules: &[RuleConfig],
+            regex_configs: &[RegexRuleConfig],
+            profiles: &[ServiceProfileConfig],
+            client_groups: &[ClientGroupConfig],
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let started = Instant::now();
+            let generated = compile_profiles(profiles, client_groups)?;
+            let mut base = rules.to_vec();
+            base.extend(generated);
+            let mut published = base.clone();
+            published.extend(
+                self.blocklist_rules
+                    .lock()
+                    .expect("blocklist rules lock")
+                    .iter()
+                    .cloned(),
+            );
+            let rule_ids = published
+                .iter()
+                .map(|rule| rule.id)
+                .collect::<BTreeSet<_>>();
+            let compiled_regex = compile_regex_rules(regex_configs, rule_ids)?;
+            self.reference.reload(&published)?;
+            *self.base_rules.lock().expect("base rules lock") = base;
+            *self.explicit_rules.lock().expect("explicit rules lock") = rules.to_vec();
+            *self.regex_rules.lock().expect("regex rules lock") = compiled_regex;
+            *self.profiles.write().expect("profiles lock") = profiles.to_vec();
+            *self.client_groups.write().expect("client groups lock") = client_groups.to_vec();
+            self.domain_rules_configured
+                .store(!published.is_empty(), Ordering::Release);
+            self.rules_configured.store(
+                !published.is_empty() || !regex_configs.is_empty(),
+                Ordering::Release,
+            );
+            self.cache.lock().expect("cache lock").clear();
+            self.observe_reload_latency("policy_bundle", started);
+            Ok(ReloadState::Published)
+        }
+
         /// Compile and atomically replace regex rules. Invalid updates leave
         /// the last good regex generation in place.
         pub fn reload_regex_rules(

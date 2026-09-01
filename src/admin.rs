@@ -19,6 +19,18 @@ struct ProfileReload {
     #[serde(default)]
     client_groups: Vec<ClientGroupConfig>,
 }
+
+#[derive(Debug, serde::Deserialize)]
+struct PolicyBundle {
+    #[serde(default)]
+    rules: Vec<RuleConfig>,
+    #[serde(default)]
+    regex_rules: Vec<RegexRuleConfig>,
+    #[serde(default)]
+    profiles: Vec<ServiceProfileConfig>,
+    #[serde(default)]
+    client_groups: Vec<ClientGroupConfig>,
+}
 const ADMIN_UI: &str = r#"<!doctype html>
 <meta charset="utf-8">
 <title>Blackhole DNS</title>
@@ -84,6 +96,33 @@ impl SendPipe for AdminHandler {
             ("GET", "/rules") => Ok(Response::ok(self.policy.admin_rules())),
             ("GET", "/profiles") => Ok(Response::ok(self.policy.admin_profiles())),
             ("GET", "/client-groups") => Ok(Response::ok(self.policy.admin_client_groups())),
+            ("POST", "/reload/policy-bundle") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let bundle = match serde_json::from_slice::<PolicyBundle>(&request.payload) {
+                    Ok(bundle) => bundle,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            r#"{{"status":"error","message":{}}}"#,
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                match self.policy.reload_policy_bundle(
+                    &bundle.rules,
+                    &bundle.regex_rules,
+                    &bundle.profiles,
+                    &bundle.client_groups,
+                ) {
+                    Ok(_) => Ok(Response::ok(r#"{"status":"reloaded"}"#)),
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        r#"{{"status":"error","message":{}}}"#,
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
             ("POST", "/reload/profiles") => {
                 if request.payload.len() > MAX_POLICY_BODY_BYTES {
                     return Ok(Response::new(413));
@@ -222,6 +261,7 @@ impl SendPipe for AdminHandler {
                 | "/profiles"
                 | "/client-groups"
                 | "/reload/profiles"
+                | "/reload/policy-bundle"
                 | "/logs"
                 | "/cache/clear"
                 | "/logs/clear"
@@ -441,6 +481,47 @@ mod tests {
         let profiles: serde_json::Value =
             serde_json::from_slice(&profiles.payload).expect("profiles JSON");
         assert_eq!(profiles["total"], 0);
+    }
+
+    #[test]
+    fn policy_bundle_replaces_all_tables_in_one_validated_snapshot() {
+        let policy = Arc::new(Policy::new(crate::Config::default()).expect("default policy"));
+        let handler = AdminHandler::new(Arc::clone(&policy));
+        let bundle = Request::builder()
+            .method("POST")
+            .path("/reload/policy-bundle")
+            .payload(
+                r#"{"rules":[{"id":7,"domain":"blocked.example","action":"nxdomain"}],"regex_rules":[{"id":8,"pattern":"^ads\\.","action":"drop"}],"profiles":[{"id":9,"name":"family","domains":["family.example"],"action":"reject"}],"client_groups":[]}"#,
+            )
+            .build()
+            .expect("policy bundle request");
+        let response = block_on(handler.call(bundle)).expect("bundle response");
+        assert_eq!(response.status, 200);
+        let profiles = block_on(handler.call(request("GET", "/profiles"))).expect("profiles");
+        let profiles: serde_json::Value =
+            serde_json::from_slice(&profiles.payload).expect("profiles JSON");
+        assert_eq!(profiles["total"], 1);
+        let mut wire = vec![0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0];
+        wire.extend_from_slice(b"familyexample   ");
+        wire.extend_from_slice(&[6, b'f', b'a', b'm', b'i', b'l', b'y', 7]);
+        wire.extend_from_slice(b"example");
+        wire.extend_from_slice(&[0, 0, 1, 0, 1]);
+        let query = crate::query::QueryView::parse(&wire).expect("profile query");
+        assert_eq!(policy.action_for_view(query), crate::Action::Reject);
+        let invalid = Request::builder()
+            .method("POST")
+            .path("/reload/policy-bundle")
+            .payload(
+                r#"{"rules":[{"id":7,"domain":"other.example","action":"drop"}],"regex_rules":[{"id":7,"pattern":"^other$","action":"drop"}]}"#,
+            )
+            .build()
+            .expect("invalid policy bundle request");
+        let response = block_on(handler.call(invalid)).expect("invalid bundle response");
+        assert_eq!(response.status, 422);
+        let profiles = block_on(handler.call(request("GET", "/profiles"))).expect("profiles");
+        let profiles: serde_json::Value =
+            serde_json::from_slice(&profiles.payload).expect("profiles JSON");
+        assert_eq!(profiles["profiles"][0]["name"], "family");
     }
 
     #[test]
