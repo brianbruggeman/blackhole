@@ -238,7 +238,7 @@ fn main() {
         load_average()
     );
     println!(
-        "arms=scalar-production name-scan-chunked-measured name-scan-memchr-measured simd-not-added wasm-edge-compile-only wasm-runtime-not-installed"
+        "arms=scalar-production name-scan-chunked-measured name-scan-memchr-measured simd-not-added wasm-edge-runtime-measured-separately"
     );
 }
 

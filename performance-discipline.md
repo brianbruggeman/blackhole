@@ -20,15 +20,23 @@ arms=scalar-retained memchr-not-added simd-not-added wasm-not-built
 
 This row is a baseline only. It predates boundary instrumentation.
 
-## Row 3 — pure edge-path WASM build
+## Row 3 — pure edge-path WASM build and runtime probe
 
 `MEASURED` on 2026-09-01, `wasm32-unknown-unknown`, default features disabled,
-source commit `df0a437`. `cargo build --locked --no-default-features
---target wasm32-unknown-unknown --lib` completed successfully. The compiler
-reported `/home/bix/.cache/cargo/wasm32-unknown-unknown/debug/libblackhole.rlib`.
-The edge correctness test also passed on the host. No WASM runtime is installed
-in this environment, so runtime latency, throughput, allocations, and RSS are
-not measured and no WASM performance win is claimed.
+source commit `f8ebc00`. `cargo build --locked --no-default-features
+--target wasm32-unknown-unknown --lib` completed successfully and produced a
+5,565,632-byte `blackhole.wasm` artifact. The Node harness then ran three fresh
+100,000-call probes with 2,162,688 bytes of linear memory:
+
+```text
+valid_result=0 short_result=-1 ns_per_call=2018.50412
+valid_result=0 short_result=-1 ns_per_call=1958.42081
+valid_result=0 short_result=-1 ns_per_call=1987.62586
+```
+
+This is runtime evidence for the bounded pure edge probe only. It does not
+measure allocations or establish a production-performance or zero-copy claim;
+the scalar production path remains unchanged.
 
 ## Row 1 — scalar reference with boundary counters
 
@@ -147,4 +155,5 @@ rss_kib=6556..6604
 The memchr median is lower but its tail and variance are materially worse;
 the chunked arm is slower than scalar on this workload. These are benchmark
 arms only, not replacements for Proxima's validated parser. Scalar remains
-the production arm; no SIMD or WASM runtime result is claimed.
+the production arm; no SIMD or zero-copy claim is made. The separate WASM
+runtime probe is recorded in Row 3.
