@@ -91,6 +91,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <h2>Decision statistics</h2><pre id="stats">loading…</pre>
 <h2>Admission limits</h2><textarea id="admission-config" rows="16" cols="80">loading…</textarea><pre id="admission-status">loading…</pre>
 <h2>Adaptive abuse controls</h2><pre id="abuse-status">loading…</pre>
+<h2>Managed client denylist</h2><textarea id="denylist-config" rows="5" cols="80">loading…</textarea><p><button id="add-denylist">Add entries</button> <button id="remove-denylist">Revoke entries</button></p>
 <h2>Policy bundle</h2><textarea id="policy-bundle" rows="12" cols="80">loading…</textarea>
 <h2>Blocklists</h2><div id="blocklist-controls"></div><pre id="blocklists">loading…</pre>
 <h2>Country policy</h2><pre id="country-status">loading…</pre>
@@ -136,6 +137,7 @@ const load = (path, target) => fetch(path).then(response => response.json()).the
     toggle('#identity-controls', value.client_identities, '/reload/client-identities/upsert', 'client_identities', '');
   }
   if (path === '/policy-bundle') document.querySelector(target).value = JSON.stringify(value, null, 2);
+  else if (path === '/abuse/denylist') document.querySelector(target).value = JSON.stringify(value, null, 2);
   else document.querySelector(target).textContent = JSON.stringify(value, null, 2);
   if (path === '/admission/status') document.querySelector('#admission-config').value = JSON.stringify(value, null, 2);
 });
@@ -145,11 +147,14 @@ const operate = (path, options) => fetch(path, options).then(async response => {
   document.querySelector('#operation-status').textContent = `${path}: ${value.status || 'ok'}`;
   return value;
 }).catch(error => { document.querySelector('#operation-status').textContent = `${path}: ${error.message}`; throw error; });
-const refresh = () => Promise.all([load('/status','#status'), load('/stats','#stats'), load('/admission/status','#admission-status'), load('/abuse/status','#abuse-status'), load('/policy-bundle','#policy-bundle'), load('/blocklists','#blocklists'), load('/country/status','#country-status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/client-identities','#identities'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
+const refresh = () => Promise.all([load('/status','#status'), load('/stats','#stats'), load('/admission/status','#admission-status'), load('/abuse/status','#abuse-status'), load('/abuse/denylist','#denylist-config'), load('/policy-bundle','#policy-bundle'), load('/blocklists','#blocklists'), load('/country/status','#country-status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/client-identities','#identities'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
 document.querySelector('#clear-logs').onclick = () => operate('/logs/clear', {method:'POST'}).then(refresh);
 document.querySelector('#clear-stats').onclick = () => operate('/stats/clear', {method:'POST'}).then(refresh);
 document.querySelector('#clear-cache').onclick = () => operate('/cache/clear', {method:'POST'}).then(refresh);
 document.querySelector('#clear-abuse').onclick = () => operate('/abuse/clear', {method:'POST'}).then(refresh);
+const updateDenylist = path => operate(path, {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#denylist-config').value}).then(refresh);
+document.querySelector('#add-denylist').onclick = () => updateDenylist('/abuse/denylist/add');
+document.querySelector('#remove-denylist').onclick = () => updateDenylist('/abuse/denylist/remove');
 document.querySelector('#reload-blocklists').onclick = () => operate('/reload/blocklists', {method:'POST'}).then(refresh);
 document.querySelector('#reload-country').onclick = () => operate('/reload/country', {method:'POST'}).then(refresh);
 document.querySelector('#reload-admission').onclick = () => operate('/reload/admission', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#admission-config').value}).then(refresh);
@@ -1007,6 +1012,16 @@ mod tests {
         );
         assert!(
             ui.payload
+                .windows(b"/abuse/denylist".len())
+                .any(|window| window == b"/abuse/denylist")
+        );
+        assert!(
+            ui.payload
+                .windows(b"add-denylist".len())
+                .any(|window| window == b"add-denylist")
+        );
+        assert!(
+            ui.payload
                 .windows(b"/admission/status".len())
                 .any(|window| window == b"/admission/status")
         );
@@ -1097,7 +1112,7 @@ mod tests {
                     .any(|window| window == control)
             );
         }
-        assert!(ui.payload.len() < 6 * 1024);
+        assert!(ui.payload.len() < 7 * 1024);
         let clear =
             block_on(handler.call(request("POST", "/cache/clear"))).expect("cache clear response");
         assert_eq!(clear.status, 200);
