@@ -174,6 +174,10 @@ to compile the full Proxima Tokio capability set as well.
 
 An optional authenticated control plane can be enabled with `[admin]`:
 
+The control plane includes `GET /stats`, a privacy-safe aggregate view of
+decision counts for every action identity. It contains no DNS names, client
+metadata, or packet payloads.
+
 ```toml
 [admin]
 listen = "127.0.0.1:8081"

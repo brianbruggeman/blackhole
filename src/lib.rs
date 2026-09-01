@@ -2514,6 +2514,7 @@ mod runtime {
         telemetry: Option<TelemetryHandle>,
         recording: Option<DynRecordingSink>,
         query_log: Option<Arc<QueryLog>>,
+        decision_counts: [AtomicU64; 9],
         admission: Live<AdmissionConfig>,
         admission_control: LiveControl<AdmissionConfig>,
         upstream: Option<DnsClientUpstream>,
@@ -2883,6 +2884,7 @@ mod runtime {
                 telemetry: None,
                 recording: None,
                 query_log,
+                decision_counts: core::array::from_fn(|_| AtomicU64::new(0)),
                 admission,
                 admission_control,
                 upstream: None,
@@ -5169,6 +5171,7 @@ mod runtime {
         }
 
         fn observe(&self, action: Action) {
+            self.decision_counts[action_index(action)].fetch_add(1, Ordering::Relaxed);
             let Some(telemetry) = self.telemetry.as_ref() else {
                 return;
             };
@@ -5358,6 +5361,35 @@ mod runtime {
                 "query_recording_max_files": self.config.privacy.query_recording_max_files,
                 "payload_recording": "disabled",
                 "client_identity_recording": "disabled",
+            })
+            .to_string()
+        }
+
+        /// Return aggregate action counts without exposing names, client
+        /// metadata, or payloads. Atomic counters keep this projection off
+        /// the request path's lock discipline.
+        pub(crate) fn admin_stats(&self) -> String {
+            let actions = [
+                Action::Pass,
+                Action::Ignore,
+                Action::Drop,
+                Action::Reject,
+                Action::Nxdomain,
+                Action::Sink,
+                Action::Honeypot,
+                Action::Forward,
+                Action::Observe,
+            ];
+            let mut total = 0_u64;
+            let mut counts = BTreeMap::new();
+            for action in actions {
+                let count = self.decision_counts[action_index(action)].load(Ordering::Relaxed);
+                total = total.saturating_add(count);
+                counts.insert(action_label(action), count);
+            }
+            serde_json::json!({
+                "total": total,
+                "actions": counts,
             })
             .to_string()
         }
@@ -6265,6 +6297,20 @@ mod runtime {
             Action::Honeypot => "honeypot",
             Action::Forward => "forward",
             Action::Observe => "observe",
+        }
+    }
+
+    fn action_index(action: Action) -> usize {
+        match action {
+            Action::Pass => 0,
+            Action::Ignore => 1,
+            Action::Drop => 2,
+            Action::Reject => 3,
+            Action::Nxdomain => 4,
+            Action::Sink => 5,
+            Action::Honeypot => 6,
+            Action::Forward => 7,
+            Action::Observe => 8,
         }
     }
 
