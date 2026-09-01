@@ -104,11 +104,11 @@ impl NftRulePlan {
     pub fn for_destination(
         chain: impl Into<String>,
         destination: SocketAddr,
+        inbound_port: u16,
         redirect_port: u16,
         mark: u32,
     ) -> Result<Self, CaptureError> {
-        let mut plan =
-            Self::for_table("blackhole", chain, destination.port(), redirect_port, mark)?;
+        let mut plan = Self::for_table("blackhole", chain, inbound_port, redirect_port, mark)?;
         plan.original_destination = Some(destination);
         Ok(plan)
     }
@@ -561,22 +561,32 @@ mod tests {
 
     #[test]
     fn dns_capture_matches_the_configured_ipv4_destination() {
-        let plan =
-            NftRulePlan::for_destination("capture", "192.0.2.53:53".parse().unwrap(), 5353, 42)
-                .unwrap();
+        let plan = NftRulePlan::for_destination(
+            "capture",
+            "192.0.2.53:53".parse().unwrap(),
+            5353,
+            5353,
+            42,
+        )
+        .unwrap();
         let rendered = plan.render();
-        assert!(rendered.contains("ip daddr 192.0.2.53 tcp dport 53"));
-        assert!(rendered.contains("ip daddr 192.0.2.53 udp dport 53"));
+        assert!(rendered.contains("ip daddr 192.0.2.53 tcp dport 5353"));
+        assert!(rendered.contains("ip daddr 192.0.2.53 udp dport 5353"));
     }
 
     #[test]
     fn dns_capture_matches_the_configured_ipv6_destination() {
-        let plan =
-            NftRulePlan::for_destination("capture", "[2001:db8::53]:53".parse().unwrap(), 5353, 42)
-                .unwrap();
+        let plan = NftRulePlan::for_destination(
+            "capture",
+            "[2001:db8::53]:53".parse().unwrap(),
+            5353,
+            5353,
+            42,
+        )
+        .unwrap();
         let rendered = plan.render();
-        assert!(rendered.contains("ip6 daddr 2001:db8::53 tcp dport 53"));
-        assert!(rendered.contains("ip6 daddr 2001:db8::53 udp dport 53"));
+        assert!(rendered.contains("ip6 daddr 2001:db8::53 tcp dport 5353"));
+        assert!(rendered.contains("ip6 daddr 2001:db8::53 udp dport 5353"));
     }
 
     #[test]

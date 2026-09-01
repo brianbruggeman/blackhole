@@ -712,6 +712,7 @@ fn validate_capture(
     NftRulePlan::for_destination(
         &config.chain,
         original_destination,
+        config.inbound_port,
         listen_port,
         config.mark,
     )
@@ -733,6 +734,7 @@ fn install_capture(
     let plan = NftRulePlan::for_destination(
         &config.chain,
         original_destination,
+        config.inbound_port,
         listen_port,
         config.mark,
     )
