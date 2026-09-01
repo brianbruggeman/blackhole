@@ -7,14 +7,14 @@ only for the exact command and scope that ran. Missing evidence remains open.
 
 | Gate | Evidence |
 | --- | --- |
-| Formatting | `cargo fmt --all -- --check` passed at Blackhole `a5cde62` with Rust `1.98.0`. |
-| Compilation | `cargo check --offline --all-targets` passed with GitHub Proxima revision `d8cf174e`, Rust `1.98.0`, and Cargo `1.98.0`. |
-| Unit and integration tests | `cargo test --offline --all-targets` passed with 109 tests, 109 passed, including the privacy-safe recording proof, scoped regex policy proof, the real HTTP admin fixture, 4 real loopback UDP/TCP resolver fixture tests (including `listener_retries_a_truncated_upstream_reply_over_tcp`), and 10 fake-upstream tests against GitHub Proxima revision `d8cf174e`. |
+| Formatting | `cargo fmt --all -- --check` passed at Blackhole `ce3b7d1` with Rust `1.98.0`. |
+| Compilation | `cargo check --offline --all-targets` passed at Blackhole `ce3b7d1` with GitHub Proxima revision `d8cf174e`, Rust `1.98.0`, and Cargo `1.98.0`. |
+| Unit and integration tests | `cargo test --offline --all-targets` passed at Blackhole `ce3b7d1` with 109 tests, 109 passed, including the privacy-safe recording proof, scoped regex policy proof, the real HTTP admin fixture, 4 real loopback UDP/TCP resolver fixtures (including `listener_retries_a_truncated_upstream_reply_over_tcp`), and 10 fake-upstream tests against GitHub Proxima revision `d8cf174e`. |
 | Cache failure behavior | `fake_upstream_servfail_is_not_cached` passes in the current 103-test run at Blackhole `c23c1ac`; SERVFAIL causes a second upstream exchange rather than a reusable negative cache entry. |
-| Nextest | `cargo nextest run --offline --workspace` passed at Blackhole `a5cde62`: 108 tests, 108 passed, 0 skipped, against GitHub Proxima revision `0652a0c0`; the real admin and resolver fixtures use OS-assigned loopback ports and pass under the parallel runner. |
-| Doctests | `cargo test --doc --offline` passed at Blackhole `a5cde62`: 1 doctest. |
-| No-std and WASM | `cargo build --offline --no-default-features --target thumbv7m-none-eabi` and the equivalent `wasm32-unknown-unknown` command passed at Blackhole `a5cde62` with GitHub Proxima revision `0652a0c0`; both completed without warnings. |
-| Tokio compatibility build | `cargo check --offline --features tokio-compat --all-targets` passed at Blackhole `e8d1a9d` with GitHub Proxima revision `0652a0c0`; the lane compiles Tokio capability support while the default executable remains Prime-backed. |
+| Nextest | `cargo nextest run --offline --workspace` passed at Blackhole `ce3b7d1`: 109 tests, 109 passed, 0 skipped, against GitHub Proxima revision `d8cf174e`; the real admin and resolver fixtures use OS-assigned loopback ports and pass under the parallel runner. |
+| Doctests | `cargo test --doc --offline` passed at Blackhole `ce3b7d1`: 1 doctest. |
+| No-std and WASM | `cargo build --offline --no-default-features --target thumbv7m-none-eabi` and the equivalent `wasm32-unknown-unknown` command passed at Blackhole `ce3b7d1` with GitHub Proxima revision `d8cf174e`; both completed without warnings. |
+| Tokio compatibility build | `cargo check --offline --features tokio-compat --all-targets` passed at Blackhole `ce3b7d1` with GitHub Proxima revision `d8cf174e`; the lane compiles Tokio capability support while the default executable remains Prime-backed. |
 | Dependency audit | Root `cargo audit --no-fetch` and `cargo audit --no-fetch --file fuzz/Cargo.lock` passed at Blackhole `6cf5a71`; the root graph reports one allowed warning for unmaintained `paste` (`RUSTSEC-2024-0436`), while the fuzz lockfile reports no findings. |
 | Fuzz smoke | The installed nightly `rustc 1.100.0-nightly` `query_view` target ran 1,000 iterations over the 56 tracked corpus inputs without a crash at Blackhole `0f48c4e`; generated corpus files were discarded after the smoke run. |
 | Resolver fixture | The actual loopback UDP/TCP listener fixture passed. |
