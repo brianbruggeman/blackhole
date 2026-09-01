@@ -69,7 +69,7 @@ jobs:
             escaped=${escaped//$'\r'/'%0D'}
             escaped=${escaped//$'\n'/'%0A'}
             echo "::error title=macOS cargo check::$escaped"
-          done < <(tail -n 80 macos-cargo-check.log)
+          done < <(grep -Ei 'error|failed|caused by|could not|unsupported|timeout' macos-cargo-check.log | tail -n 40)
           exit 1
 
   wasm:
