@@ -1582,51 +1582,44 @@ mod runtime {
             .then_some((base, path))
     }
 
-    fn read_remote_blocklist(source: &str) -> Result<Vec<u8>, policy::PolicyError> {
-        let (base, path) =
-            http_source_parts(source).ok_or_else(|| policy::PolicyError::InvalidBlocklist {
-                path: source.into(),
-                reason: "remote source must be an absolute http:// or https:// URL".into(),
-            })?;
-        let client = Client::http(base).map_err(|error| policy::PolicyError::InvalidBlocklist {
-            path: source.into(),
-            reason: format!("create Proxima HTTP client: {error}"),
+    fn read_remote_bytes(source: &str, max_bytes: u64) -> Result<Vec<u8>, String> {
+        let (base, path) = http_source_parts(source).ok_or_else(|| {
+            "remote source must be an absolute http:// or https:// URL".to_owned()
         })?;
+        let client =
+            Client::http(base).map_err(|error| format!("create Proxima HTTP client: {error}"))?;
         futures::executor::block_on(async {
-            let response = client.get(path).send().await.map_err(|error| {
-                policy::PolicyError::InvalidBlocklist {
-                    path: source.into(),
-                    reason: format!("fetch through Proxima: {error}"),
-                }
-            })?;
+            let response = client
+                .get(path)
+                .send()
+                .await
+                .map_err(|error| format!("fetch through Proxima: {error}"))?;
             if !response.ok() {
-                return Err(policy::PolicyError::InvalidBlocklist {
-                    path: source.into(),
-                    reason: format!("remote source returned HTTP {}", response.status()),
-                });
+                return Err(format!("remote source returned HTTP {}", response.status()));
             }
             let mut stream = response.into_body().into_chunk_stream();
             let mut contents = Vec::new();
             while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
-                let chunk = chunk.map_err(|error| policy::PolicyError::InvalidBlocklist {
-                    path: source.into(),
-                    reason: format!("read through Proxima: {error}"),
-                })?;
-                let next_len = contents.len().checked_add(chunk.len()).ok_or_else(|| {
-                    policy::PolicyError::InvalidBlocklist {
-                        path: source.into(),
-                        reason: "remote source size overflow".into(),
-                    }
-                })?;
-                if next_len > MAX_BLOCKLIST_BYTES as usize {
-                    return Err(policy::PolicyError::InvalidBlocklist {
-                        path: source.into(),
-                        reason: format!("remote source exceeds {MAX_BLOCKLIST_BYTES} bytes"),
-                    });
+                let chunk = chunk.map_err(|error| format!("read through Proxima: {error}"))?;
+                let next_len = contents
+                    .len()
+                    .checked_add(chunk.len())
+                    .ok_or_else(|| "remote source size overflow".to_owned())?;
+                if next_len > max_bytes as usize {
+                    return Err(format!("remote source exceeds {max_bytes} bytes"));
                 }
                 contents.extend_from_slice(&chunk);
             }
             Ok(contents)
+        })
+    }
+
+    fn read_remote_blocklist(source: &str) -> Result<Vec<u8>, policy::PolicyError> {
+        read_remote_bytes(source, MAX_BLOCKLIST_BYTES).map_err(|reason| {
+            policy::PolicyError::InvalidBlocklist {
+                path: source.into(),
+                reason,
+            }
         })
     }
 
@@ -2029,58 +2022,80 @@ mod runtime {
                 reason: "a region or ASN cannot be both denied and observed".into(),
             });
         }
-        let metadata =
-            std::fs::metadata(path).map_err(|error| policy::PolicyError::InvalidCountryMap {
-                path: path.into(),
-                reason: error.to_string(),
-            })?;
-        let initial_length = metadata.len();
-        let initial_modified = metadata.modified().ok();
-        if let Some(max_age_secs) = config.max_age_secs {
-            if max_age_secs == 0 {
+        let contents = if http_source_parts(path).is_some() {
+            if config.max_age_secs.is_some() {
                 return Err(policy::PolicyError::InvalidCountryMap {
                     path: path.into(),
-                    reason: "max_age_secs must be non-zero when configured".into(),
+                    reason: "max_age_secs is only supported for local map files".into(),
                 });
             }
-            let modified =
-                metadata
-                    .modified()
-                    .map_err(|error| policy::PolicyError::InvalidCountryMap {
+            let bytes = read_remote_bytes(path, MAX_COUNTRY_MAP_BYTES).map_err(|reason| {
+                policy::PolicyError::InvalidCountryMap {
+                    path: path.into(),
+                    reason,
+                }
+            })?;
+            String::from_utf8(bytes).map_err(|error| policy::PolicyError::InvalidCountryMap {
+                path: path.into(),
+                reason: format!("remote map is not UTF-8: {error}"),
+            })?
+        } else {
+            let metadata = std::fs::metadata(path).map_err(|error| {
+                policy::PolicyError::InvalidCountryMap {
+                    path: path.into(),
+                    reason: error.to_string(),
+                }
+            })?;
+            let initial_length = metadata.len();
+            let initial_modified = metadata.modified().ok();
+            if let Some(max_age_secs) = config.max_age_secs {
+                if max_age_secs == 0 {
+                    return Err(policy::PolicyError::InvalidCountryMap {
+                        path: path.into(),
+                        reason: "max_age_secs must be non-zero when configured".into(),
+                    });
+                }
+                let modified = metadata.modified().map_err(|error| {
+                    policy::PolicyError::InvalidCountryMap {
                         path: path.into(),
                         reason: format!("cannot read map modification time: {error}"),
-                    })?;
-            let now = std::time::SystemTime::now();
-            if !country_map_is_fresh(modified, now, max_age_secs) {
+                    }
+                })?;
+                if !country_map_is_fresh(modified, std::time::SystemTime::now(), max_age_secs) {
+                    return Err(policy::PolicyError::InvalidCountryMap {
+                        path: path.into(),
+                        reason: format!(
+                            "map is older than configured {max_age_secs}s freshness bound"
+                        ),
+                    });
+                }
+            }
+            if initial_length > MAX_COUNTRY_MAP_BYTES {
                 return Err(policy::PolicyError::InvalidCountryMap {
                     path: path.into(),
-                    reason: format!("map is older than configured {max_age_secs}s freshness bound"),
+                    reason: format!("file exceeds {MAX_COUNTRY_MAP_BYTES} bytes"),
                 });
             }
-        }
-        if initial_length > MAX_COUNTRY_MAP_BYTES {
-            return Err(policy::PolicyError::InvalidCountryMap {
-                path: path.into(),
-                reason: format!("file exceeds {MAX_COUNTRY_MAP_BYTES} bytes"),
-            });
-        }
-        let contents = std::fs::read_to_string(path).map_err(|error| {
-            policy::PolicyError::InvalidCountryMap {
-                path: path.into(),
-                reason: error.to_string(),
-            }
-        })?;
-        let final_metadata =
-            std::fs::metadata(path).map_err(|error| policy::PolicyError::InvalidCountryMap {
-                path: path.into(),
-                reason: error.to_string(),
+            let contents = std::fs::read_to_string(path).map_err(|error| {
+                policy::PolicyError::InvalidCountryMap {
+                    path: path.into(),
+                    reason: error.to_string(),
+                }
             })?;
-        if country_map_changed(initial_length, initial_modified, &final_metadata) {
-            return Err(policy::PolicyError::InvalidCountryMap {
-                path: path.into(),
-                reason: "map changed while it was being read".into(),
-            });
-        }
+            let final_metadata = std::fs::metadata(path).map_err(|error| {
+                policy::PolicyError::InvalidCountryMap {
+                    path: path.into(),
+                    reason: error.to_string(),
+                }
+            })?;
+            if country_map_changed(initial_length, initial_modified, &final_metadata) {
+                return Err(policy::PolicyError::InvalidCountryMap {
+                    path: path.into(),
+                    reason: "map changed while it was being read".into(),
+                });
+            }
+            contents
+        };
         let mut entries = Vec::new();
         for (line_number, raw_line) in contents.lines().enumerate() {
             if raw_line.len() > MAX_COUNTRY_MAP_LINE_BYTES {
@@ -7293,6 +7308,52 @@ mod runtime {
             let rules = load_blocklists(&[source]).expect("load hosted blocklist");
             assert!(rules.iter().any(|rule| rule.domain == "remote.example"));
             thread.join().expect("join blocklist fixture");
+        }
+
+        #[test]
+        fn hosted_country_maps_use_proxima_http_and_reject_file_age_semantics() {
+            use std::io::{Read, Write};
+
+            let server = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+                .expect("bind country map fixture");
+            let address = server.local_addr().expect("country map fixture address");
+            let thread = std::thread::spawn(move || {
+                let (mut stream, _) = server.accept().expect("accept country map request");
+                let mut request = [0_u8; 2048];
+                let size = stream.read(&mut request).expect("read country map request");
+                assert!(
+                    std::str::from_utf8(&request[..size])
+                        .expect("request is UTF-8")
+                        .contains("GET /maps/country.txt HTTP/1.1")
+                );
+                let body = b"US 192.0.2.0/24 US-CA AS64500\n";
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                )
+                .expect("write country map headers");
+                stream.write_all(body).expect("write country map body");
+            });
+            let source = format!("http://{address}/maps/country.txt");
+            let config = CountryPolicyConfig {
+                map_path: Some(source),
+                deny: vec!["US".into()],
+                ..Default::default()
+            };
+            let loaded = load_country_policy(&config)
+                .expect("load hosted country map")
+                .expect("country policy");
+            assert!(loaded.denied("192.0.2.1".parse().expect("fixture address")));
+            thread.join().expect("join country map fixture");
+
+            let mut age_bound = config;
+            age_bound.max_age_secs = Some(60);
+            assert!(matches!(
+                load_country_policy(&age_bound),
+                Err(policy::PolicyError::InvalidCountryMap { reason, .. })
+                    if reason.contains("only supported for local map files")
+            ));
         }
 
         #[test]

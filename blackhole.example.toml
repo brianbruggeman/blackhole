@@ -195,7 +195,8 @@ query_log_retention_secs = 86400
 [country_policy]
 # Optional operator-supplied classification map. Each line is COUNTRY CIDR
 # [REGION] [ASN], for example: US 192.0.2.0/24 US-CA AS64500.
-# No GeoIP database is bundled; classification is only as current as this file.
+# This may be a local file or an http(s) URL. No GeoIP database is bundled;
+# hosted sources are bounded and file-age freshness applies only to local files.
 # map_path = "/etc/blackhole/country-cidrs.txt"
 # max_age_secs = 86400
 # reload_interval_secs = 3600

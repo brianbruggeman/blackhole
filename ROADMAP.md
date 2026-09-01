@@ -31,8 +31,8 @@ below are future capabilities, grouped by the dependency layer they extend.
   are delivered. It must remain separate from authentication and must never
   become an unbounded permanent blacklist.
 - Add managed GeoIP/region/ASN data lifecycle and richer country policy beyond
-  the current explicit country/CIDR/region/ASN map labels and bounded background
-  refresh; uncertainty must remain explicit.
+  the current explicit local or hosted country/CIDR/region/ASN map labels and
+  bounded background refresh; uncertainty must remain explicit.
 - Add incremental background updates for deployment-managed configuration
   sources beyond the bounded TOML policy-file reload; changes to startup-only
   listener, transport, capture, storage, and service settings still require a
