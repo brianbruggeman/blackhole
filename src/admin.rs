@@ -277,6 +277,28 @@ impl SendPipe for AdminHandler {
                     serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
                 ))),
             },
+            ("POST", "/reload/blocklists/replace") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let paths = match serde_json::from_slice::<Vec<String>>(&request.payload) {
+                    Ok(paths) => paths,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                match self.policy.replace_blocklist_sources(&paths) {
+                    Ok(_) => Ok(Response::ok("{\"status\":\"replaced\"}")),
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
             ("POST", "/reload/country") => match self.policy.reload_country_policy() {
                 Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
                 Err(error) => Ok(Response::new(422).with_body(format!(
@@ -387,6 +409,7 @@ impl SendPipe for AdminHandler {
                 | "/cache/clear"
                 | "/logs/clear"
                 | "/reload/blocklists"
+                | "/reload/blocklists/replace"
                 | "/reload/country"
                 | "/reload/policy"
                 | "/reload/policy/add"
@@ -454,7 +477,8 @@ mod tests {
             clear.payload,
             Bytes::from_static(b"{\"status\":\"cleared\",\"entries\":0}")
         );
-        let status = block_on(handler.call(request("GET", "/status"))).expect("status response");
+        let status =
+            block_on(handler.call(request("GET", "/policy/status"))).expect("status response");
         assert_eq!(status.status, 200);
         let status: serde_json::Value =
             serde_json::from_slice(&status.payload).expect("status JSON");
@@ -519,6 +543,62 @@ mod tests {
         let wrong_rules_method =
             block_on(handler.call(request("POST", "/rules"))).expect("405 rules response");
         assert_eq!(wrong_rules_method.status, 405);
+    }
+
+    #[test]
+    fn blocklist_source_replacement_is_atomic() {
+        let path = std::env::temp_dir().join(format!(
+            "blackhole-admin-blocklist-{}-{}.txt",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        ));
+        std::fs::write(&path, "ads.example\n").expect("write blocklist");
+        let policy = Arc::new(Policy::new(crate::Config::default()).expect("default policy"));
+        let handler = AdminHandler::new(Arc::clone(&policy));
+        let path_json = serde_json::to_string(&vec![path.to_string_lossy().into_owned()])
+            .expect("blocklist paths JSON");
+        let replaced = block_on(
+            handler.call(
+                Request::builder()
+                    .method("POST")
+                    .path("/reload/blocklists/replace")
+                    .payload(path_json)
+                    .build()
+                    .expect("replacement request"),
+            ),
+        )
+        .expect("replacement response");
+        assert_eq!(replaced.status, 200);
+        let status =
+            block_on(handler.call(request("GET", "/policy/status"))).expect("status response");
+        let status: serde_json::Value = serde_json::from_slice(&status.payload).expect("status");
+        assert_eq!(status["blocklist_sources"], 1);
+        assert_eq!(status["blocklist_rules"], 2, "apex plus subdomain rule");
+
+        let failed = block_on(
+            handler.call(
+                Request::builder()
+                    .method("POST")
+                    .path("/reload/blocklists/replace")
+                    .payload(r#"["/definitely/missing/blackhole.list"]"#)
+                    .build()
+                    .expect("invalid replacement request"),
+            ),
+        )
+        .expect("invalid replacement response");
+        assert_eq!(failed.status, 422);
+        let status =
+            block_on(handler.call(request("GET", "/policy/status"))).expect("status response");
+        let status: serde_json::Value = serde_json::from_slice(&status.payload).expect("status");
+        assert_eq!(status["blocklist_sources"], 1);
+        assert_eq!(
+            status["blocklist_rules"], 2,
+            "previous blocklist remains live"
+        );
+        std::fs::remove_file(path).expect("remove blocklist");
     }
 
     #[test]

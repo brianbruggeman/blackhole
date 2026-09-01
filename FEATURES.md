@@ -102,6 +102,9 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   read-only health, bounded rule metadata, and non-sensitive status endpoints, authenticated blocklist
   and country-map reloads, bounded complete domain and regex rule-table
   reloads from JSON, and an atomic bounded domain-rule append operation.
+- Authenticated bounded `POST /reload/blocklists/replace` atomically replaces
+  the blocklist source path set and retains the prior sources and rules when
+  any replacement fails validation or loading.
 - Bounded authenticated `GET /policy/status` exposes effective rule, rewrite,
   blocklist-source, profile, group, and country-entry counts without source
   paths, query names, credentials, client identities, or packet payloads; its

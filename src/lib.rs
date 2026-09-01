@@ -2136,13 +2136,23 @@ mod runtime {
         /// Files are read and validated before the live snapshot is touched,
         /// so an unreadable or malformed update keeps the last good generation.
         pub fn reload_blocklists(&self) -> Result<ReloadState, policy::PolicyError> {
-            let _reload = self.reload_lock.write().expect("reload lock");
-            let started = Instant::now();
             let paths = self
                 .blocklist_paths
                 .lock()
                 .expect("blocklist paths lock")
                 .clone();
+            self.replace_blocklist_sources(&paths)
+        }
+
+        /// Replace the configured blocklist source paths and publish their
+        /// validated rules atomically. A failed read, parse, or compilation
+        /// leaves both the previous paths and the previous live rules intact.
+        pub fn replace_blocklist_sources(
+            &self,
+            paths: &[String],
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
+            let started = Instant::now();
             let replacement = load_blocklists(&paths)?;
             let base_rules = self.base_rules.lock().expect("base rules lock");
             let mut rules = base_rules.clone();
@@ -2158,6 +2168,7 @@ mod runtime {
                 return Err(policy::PolicyError::DuplicateRule { id: rule.id });
             }
             let published = self.reference.reload(&rules)?;
+            *self.blocklist_paths.lock().expect("blocklist paths lock") = paths.to_vec();
             *self.blocklist_rules.lock().expect("blocklist rules lock") = replacement;
             self.domain_rules_configured
                 .store(!rules.is_empty(), Ordering::Release);
