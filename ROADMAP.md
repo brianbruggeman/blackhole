@@ -18,10 +18,6 @@ below are future capabilities, grouped by the dependency layer they extend.
 - Extend the authenticated policy administration with richer query rules and
   client/group workflows beyond the bounded source, rule, profile, identity,
   and network-scope operations in the current baseline.
-- Add a managed reputation lifecycle around DDoS incidents: bounded review
-  queues, operator approval, export/import, durable revocation, and safe
-  recovery after restart. It must remain separate from authentication and
-  must never become an unbounded permanent blacklist.
 - Add a managed GeoIP/region/ASN data lifecycle and richer country policy
   beyond the explicit operator-supplied map labels and bounded refresh in the
   current baseline; uncertainty must remain explicit.
