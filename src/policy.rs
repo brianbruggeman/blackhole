@@ -198,6 +198,7 @@ impl IpNetwork {
         }
     }
 
+    #[cfg(feature = "std")]
     pub(crate) fn overlaps(self, other: Self) -> bool {
         self.contains(other.address) || other.contains(self.address)
     }
