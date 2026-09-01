@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.brianbruggeman.blackhole</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/blackhole</string>
+    <string>/usr/local/etc/blackhole/blackhole.toml</string>
+  </array>
+
+  <key>UserName</key>
+  <string>_blackhole</string>
+  <key>GroupName</key>
+  <string>_blackhole</string>
+  <key>WorkingDirectory</key>
+  <string>/usr/local/var/lib/blackhole</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>2</integer>
+  <key>ExitTimeOut</key>
+  <integer>10</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>Umask</key>
+  <integer>63</integer>
+
+  <key>HardResourceLimits</key>
+  <dict>
+    <key>NumberOfFiles</key>
+    <integer>4096</integer>
+    <key>NumberOfProcesses</key>
+    <integer>32</integer>
+  </dict>
+</dict>
+</plist>

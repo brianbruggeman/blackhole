@@ -179,6 +179,8 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   after orderly shutdown.
 - A hardened Linux systemd deployment unit runs the resolver as a dedicated
   service user with bounded state access and only low-port bind capability;
+  a macOS launchd service runs directly as a dedicated unprivileged account
+  with bounded process resources and leaves PF capture separately authorized;
   firewall capture remains a separate opt-in operation.
 - Linux builds expose an explicit `nft` command capability; macOS builds
   expose the corresponding `pfctl` capability without including either

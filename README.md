@@ -172,3 +172,15 @@ sudo BLACKHOLE_BINARY="$PWD/target/release/blackhole" \
 
 The installer requires root and starts the service, but it does not install
 firewall capture rules.
+
+For an unprivileged macOS deployment, install
+`deploy/launchd/com.brianbruggeman.blackhole.plist` as
+`/Library/LaunchDaemons/com.brianbruggeman.blackhole.plist`. The launch daemon
+runs directly as the dedicated `_blackhole` user and reads
+`/usr/local/etc/blackhole/blackhole.toml`; create
+`/usr/local/var/lib/blackhole` owned by that account before loading it. Keep the
+example high-port listener unless a separately authorized PF redirect is
+installed: macOS does not provide Linux-style per-binary low-port capabilities.
+Validate the installed configuration with `blackhole --check` before running
+`launchctl bootstrap system` on the plist. The launch daemon neither installs
+nor removes PF rules.
