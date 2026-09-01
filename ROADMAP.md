@@ -31,6 +31,9 @@ below are future capabilities, grouped by the dependency layer they extend.
 - Extend adaptive amplification controls for repeated abusive patterns beyond
   the current per-query response-ratio cap, aggregate/per-client admission
   limits, and bounded rate/response-budget abuse breaker.
+- Add an authenticated, bounded operator view and explicit lifecycle controls
+  for temporary IP/network blacklist entries; preserve automatic expiry,
+  bounded state, fail-closed behavior, and adapter-owned client metadata.
 - Add managed GeoIP/region/ASN data lifecycle and richer country policy beyond
   the current explicit country/CIDR/region/ASN map labels and bounded background
   refresh; uncertainty must remain explicit.
@@ -52,6 +55,9 @@ below are future capabilities, grouped by the dependency layer they extend.
 - Extend the bounded privacy-safe query-decision log with operator-selected
   redaction and deletion-verification backends beyond the current metadata-only,
   byte-bounded Proxima JSONL destination and bounded startup rotation.
+- Add deterministic metadata-only replay tooling through Proxima's existing
+  recording primitives, with bounded input, authorization, and deletion
+  semantics; do not add a standalone replay abstraction.
 - Extend the current bounded authenticated status UI into a full optional web
   UI beyond the current bounded status and policy-bundle controls.
 - Add the remaining Pi-hole/AdGuard Home policy features, including richer

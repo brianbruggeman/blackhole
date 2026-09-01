@@ -71,6 +71,10 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   unrelated networks or unidentified callers.
 - A bounded global queries-per-second ceiling that sheds excess traffic,
   including unidentified callers, as a DDoS stopgap.
+- Automatic temporary IP and network blacklisting after repeated per-client
+  rate or encoded-response-budget violations; entries use bounded lock-free
+  keyed state, expire after a configured cooldown, and fail closed while
+  open. This is adaptive mitigation, not a permanent reputation database.
 - A bounded per-client encoded-response-byte budget that sheds identified
   clients after their configured one-second egress budget is exhausted,
   without applying a shared identity to unidentified callers.
@@ -104,6 +108,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   wraps a supplied backend in Proxima's bounded queue, and the executable can
   append the same events to an operator-selected Proxima JSONL destination
   with a hard encoded-byte ceiling.
+- Replay is not currently exposed: recording is a bounded metadata sink, and
+  future replay must use Proxima's existing recording primitives without
+  retaining DNS payloads by default.
 - The in-process query-decision log uses Proxima's lock-free live snapshot
   publication for concurrent append/read paths while retaining bounded count
   and age limits.
@@ -153,7 +160,8 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   identities, credentials, or payloads.
 - Authenticated bounded `POST /reload/admission` atomically publishes live
   admission, rate, response-budget, and abuse-breaker limits; the startup-sized
-  global in-flight semaphore is immutable and capacity changes fail closed.
+  global in-flight atomic permit pool is immutable and capacity changes fail
+  closed.
 - Per-client query-rate buckets use Proxima's bounded lock-free keyed table;
   full tagged IPv4/IPv6 bytes are retained as keys and eviction remains bounded.
 - Authenticated bounded `GET /country/status` exposes country-policy deny/
