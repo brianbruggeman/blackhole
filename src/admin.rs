@@ -1799,6 +1799,46 @@ mod tests {
     }
 
     #[test]
+    fn durable_recording_delete_route_removes_and_verifies_bounded_rotations() {
+        let path = std::env::temp_dir().join(format!(
+            "blackhole-admin-recording-{}-{}.jsonl",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        ));
+        let mut config = crate::Config::default();
+        config.privacy.query_recording_path = Some(path.to_string_lossy().into_owned());
+        let policy = Arc::new(Policy::new(config).expect("valid recording config"));
+        let handler = AdminHandler::new(policy);
+        let mut targets = vec![path.clone()];
+        for index in 1..=16 {
+            let mut rotated = path.as_os_str().to_os_string();
+            rotated.push(format!(".{index}"));
+            targets.push(std::path::PathBuf::from(rotated));
+        }
+        for target in &targets {
+            std::fs::write(target, b"metadata\n").expect("write recording fixture");
+        }
+
+        let response = block_on(handler.call(request("POST", "/logs/clear-durable")))
+            .expect("durable deletion response");
+        assert_eq!(response.status, 200);
+        let body: serde_json::Value =
+            serde_json::from_slice(&response.payload).expect("durable deletion JSON");
+        assert_eq!(body["status"], "deleted");
+        assert_eq!(body["files"], 17);
+        for target in targets {
+            assert!(
+                !target.exists(),
+                "deleted target remains: {}",
+                target.display()
+            );
+        }
+    }
+
+    #[test]
     fn blocklist_source_replacement_is_atomic() {
         let path = std::env::temp_dir().join(format!(
             "blackhole-admin-blocklist-{}-{}.txt",
