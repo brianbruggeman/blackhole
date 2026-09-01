@@ -59,6 +59,36 @@ fn doq_tls_config() -> Result<rustls::ClientConfig, ProximaError> {
 }
 
 #[cfg(feature = "std")]
+fn validate_query_recording_path(path: &str) -> Result<(), ProximaError> {
+    let destination = Path::new(path);
+    let parent = destination
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let metadata = std::fs::metadata(parent).map_err(|error| {
+        ProximaError::Config(format!(
+            "query recording parent {} is unavailable: {error}",
+            parent.display()
+        ))
+    })?;
+    if !metadata.is_dir() {
+        return Err(ProximaError::Config(format!(
+            "query recording parent {} is not a directory",
+            parent.display()
+        )));
+    }
+    if let Ok(metadata) = std::fs::metadata(destination)
+        && !metadata.is_file()
+    {
+        return Err(ProximaError::Config(format!(
+            "query recording destination {} is not a regular file",
+            destination.display()
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(feature = "std")]
 struct BoxedTlsUpstream {
     inner: TlsStreamUpstream<PrimeTcpUpstream>,
 }
@@ -333,6 +363,9 @@ async fn main() -> Result<(), ProximaError> {
     let country_reload_enabled =
         country_reload_interval != 0 && config.country_policy.map_path.is_some();
     let query_recording_path = config.privacy.query_recording_path.clone();
+    if let Some(path) = query_recording_path.as_deref() {
+        validate_query_recording_path(path)?;
+    }
     let mut capture = install_capture(&capture_config, bind.port())?;
     let upstream = config.upstream.clone();
     let mut policy = Policy::new(config)
