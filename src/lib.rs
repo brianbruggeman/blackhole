@@ -460,7 +460,7 @@ mod runtime {
         }
     }
 
-    #[derive(Debug, Clone, Deserialize, Default)]
+    #[derive(Debug, Clone, Deserialize, serde::Serialize, Default)]
     pub struct CountryPolicyConfig {
         /// Operator-supplied lines of `COUNTRY CIDR`; no database is bundled.
         #[serde(default)]
@@ -4219,6 +4219,78 @@ mod runtime {
                 "policy_generation": self.policy_generation.load(Ordering::Acquire),
             })
             .to_string()
+        }
+
+        /// Return the live operator-managed bundle for the authenticated
+        /// editor. The blocklist source field is null intentionally: the
+        /// bundle reload contract treats null as retaining the loaded map.
+        pub(crate) fn admin_policy_bundle(&self) -> String {
+            let _reload = self.reload_lock.read().expect("reload lock");
+            let rules = self.explicit_rules.lock().expect("explicit rules lock");
+            let regex_rules = self.regex_rules.lock().expect("regex rules lock");
+            let profiles = self.profiles.read().expect("profiles lock");
+            let client_groups = self.client_groups.read().expect("client groups lock");
+            let rewrites = self.rewrite_configs.read().expect("rewrite configs lock");
+            let value = serde_json::json!({
+                "mode": mode_label(*self.legacy_mode.read().expect("legacy mode lock")),
+                "domains": self.legacy_domains.read().expect("legacy domains lock").clone(),
+                "default_action": action_label(*self.default_action.read().expect("default action lock")),
+                "rules": rules.iter().map(|rule| serde_json::json!({
+                    "id": rule.id,
+                    "domain": rule.domain,
+                    "action": action_label(rule.action),
+                    "priority": rule.priority,
+                    "qtype": rule.qtype,
+                    "qclass": rule.qclass,
+                    "client": rule.client,
+                    "client_cidr": rule.client_cidr,
+                    "client_cidrs": rule.client_cidrs,
+                })).collect::<Vec<_>>(),
+                "regex_rules": regex_rules.iter().map(|rule| serde_json::json!({
+                    "id": rule.id,
+                    "pattern": rule.pattern.as_str(),
+                    "action": action_label(rule.action),
+                    "priority": rule.priority,
+                    "qtype": rule.qtype,
+                    "qclass": rule.qclass,
+                    "client": rule.client,
+                    "client_cidrs": rule.client_cidrs,
+                })).collect::<Vec<_>>(),
+                "profiles": profiles.iter().map(|profile| serde_json::json!({
+                    "id": profile.id,
+                    "name": profile.name,
+                    "domains": profile.domains,
+                    "action": action_label(profile.action),
+                    "groups": profile.groups,
+                    "priority": profile.priority,
+                    "client_cidrs": profile.client_cidrs,
+                    "qtype": profile.qtype,
+                    "qclass": profile.qclass,
+                })).collect::<Vec<_>>(),
+                "client_groups": client_groups.iter().map(|group| serde_json::json!({
+                    "name": group.name,
+                    "client_addresses": group.client_addresses,
+                    "client_cidrs": group.client_cidrs,
+                })).collect::<Vec<_>>(),
+                "rewrites": rewrites.iter().map(|rewrite| serde_json::json!({
+                    "name": rewrite.name,
+                    "ipv4": rewrite.ipv4,
+                    "ipv6": rewrite.ipv6,
+                    "ttl": rewrite.ttl,
+                })).collect::<Vec<_>>(),
+                "country_policy": self.config.country_policy,
+                "blocklists": serde_json::Value::Null,
+            });
+            let encoded = value.to_string();
+            if encoded.len() <= 64 * 1024 {
+                encoded
+            } else {
+                serde_json::json!({
+                    "status": "error",
+                    "message": "policy bundle exceeds the bounded editor response"
+                })
+                .to_string()
+            }
         }
 
         pub(crate) fn admin_rules(&self) -> String {

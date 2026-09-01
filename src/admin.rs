@@ -72,7 +72,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <p><button id="clear-logs">Clear privacy log</button> <button id="reload-blocklists">Reload blocklists</button> <button id="reload-admission">Reload admission JSON</button> <button id="reload-bundle">Publish policy bundle</button></p>
 <h2>Status</h2><pre id="status">loading…</pre>
 <h2>Admission limits</h2><textarea id="admission-config" rows="16" cols="80">loading…</textarea><pre id="admission-status">loading…</pre>
-<h2>Policy bundle</h2><textarea id="policy-bundle" rows="12" cols="80">{"rules":[],"regex_rules":[],"profiles":[],"client_groups":[],"rewrites":[],"country_policy":{}}</textarea>
+<h2>Policy bundle</h2><textarea id="policy-bundle" rows="12" cols="80">loading…</textarea>
 <h2>Country policy</h2><pre id="country-status">loading…</pre>
 <h2>Privacy status</h2><pre id="privacy-status">loading…</pre>
 <h2>Rules</h2><pre id="rules">loading…</pre>
@@ -82,10 +82,11 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <h2>Privacy log</h2><pre id="logs">loading…</pre>
 <script>
 const load = (path, target) => fetch(path).then(response => response.json()).then(value => {
-  document.querySelector(target).textContent = JSON.stringify(value, null, 2);
+  if (path === '/policy-bundle') document.querySelector(target).value = JSON.stringify(value, null, 2);
+  else document.querySelector(target).textContent = JSON.stringify(value, null, 2);
   if (path === '/admission/status') document.querySelector('#admission-config').value = JSON.stringify(value, null, 2);
 });
-const refresh = () => Promise.all([load('/status','#status'), load('/admission/status','#admission-status'), load('/country/status','#country-status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
+const refresh = () => Promise.all([load('/status','#status'), load('/admission/status','#admission-status'), load('/policy-bundle','#policy-bundle'), load('/country/status','#country-status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
 document.querySelector('#clear-logs').onclick = () => fetch('/logs/clear', {method:'POST'}).then(refresh);
 document.querySelector('#reload-blocklists').onclick = () => fetch('/reload/blocklists', {method:'POST'}).then(refresh);
 document.querySelector('#reload-admission').onclick = () => fetch('/reload/admission', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#admission-config').value}).then(refresh);
@@ -159,6 +160,7 @@ impl SendPipe for AdminHandler {
             }
             ("GET", "/country/status") => Ok(Response::ok(self.policy.admin_country_status())),
             ("GET", "/policy/status") => Ok(Response::ok(self.policy.admin_policy_status())),
+            ("GET", "/policy-bundle") => Ok(Response::ok(self.policy.admin_policy_bundle())),
             ("GET", "/privacy/status") => Ok(Response::ok(self.policy.admin_privacy_status())),
             ("GET", "/rules") => Ok(Response::ok(self.policy.admin_rules())),
             ("GET", "/profiles") => Ok(Response::ok(self.policy.admin_profiles())),
@@ -558,6 +560,7 @@ impl SendPipe for AdminHandler {
                 | "/reload/admission"
                 | "/country/status"
                 | "/policy/status"
+                | "/policy-bundle"
                 | "/privacy/status"
                 | "/rules"
                 | "/profiles"
@@ -663,6 +666,11 @@ mod tests {
                 .windows(b"/reload/admission".len())
                 .any(|window| window == b"/reload/admission")
         );
+        assert!(
+            ui.payload
+                .windows(b"/policy-bundle".len())
+                .any(|window| window == b"/policy-bundle")
+        );
         assert!(ui.payload.len() < 4 * 1024);
         let clear =
             block_on(handler.call(request("POST", "/cache/clear"))).expect("cache clear response");
@@ -688,6 +696,19 @@ mod tests {
         assert_eq!(policy_status["legacy_mode"], "nxdomain");
         assert_eq!(policy_status["default_action"], "pass");
         assert_eq!(policy_status["legacy_mode_active"], true);
+        let bundle = block_on(handler.call(request("GET", "/policy-bundle")))
+            .expect("policy bundle response");
+        assert_eq!(bundle.status, 200);
+        let bundle: serde_json::Value =
+            serde_json::from_slice(&bundle.payload).expect("policy bundle JSON");
+        assert_eq!(bundle["mode"], "nxdomain");
+        assert_eq!(bundle["default_action"], "pass");
+        assert_eq!(bundle["rules"], serde_json::json!([]));
+        assert_eq!(bundle["regex_rules"], serde_json::json!([]));
+        assert_eq!(bundle["profiles"], serde_json::json!([]));
+        assert_eq!(bundle["client_groups"], serde_json::json!([]));
+        assert_eq!(bundle["rewrites"], serde_json::json!([]));
+        assert_eq!(bundle["blocklists"], serde_json::Value::Null);
         let privacy_status =
             block_on(handler.call(request("GET", "/privacy/status"))).expect("privacy status");
         assert_eq!(privacy_status.status, 200);
@@ -773,6 +794,9 @@ mod tests {
         let wrong_rules_method =
             block_on(handler.call(request("POST", "/rules"))).expect("405 rules response");
         assert_eq!(wrong_rules_method.status, 405);
+        let wrong_policy_bundle_method = block_on(handler.call(request("POST", "/policy-bundle")))
+            .expect("405 policy bundle response");
+        assert_eq!(wrong_policy_bundle_method.status, 405);
     }
 
     #[test]
