@@ -47,10 +47,12 @@ cp "$repo_dir/deploy/systemd/blackhole.service" \
     "$staging/$package_name/share/blackhole/deploy/systemd/"
 cp "$repo_dir/deploy/launchd/com.brianbruggeman.blackhole.plist" \
     "$repo_dir/deploy/launchd/install.sh" \
+    "$repo_dir/deploy/launchd/smoke.sh" \
     "$staging/$package_name/share/blackhole/deploy/launchd/"
 chmod 0755 "$staging/$package_name/bin/blackhole" \
     "$staging/$package_name/share/blackhole/deploy/systemd/install.sh" \
-    "$staging/$package_name/share/blackhole/deploy/launchd/install.sh"
+    "$staging/$package_name/share/blackhole/deploy/launchd/install.sh" \
+    "$staging/$package_name/share/blackhole/deploy/launchd/smoke.sh"
 
 {
     printf 'package=%s\n' "$package_name"

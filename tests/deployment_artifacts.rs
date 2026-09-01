@@ -8,6 +8,7 @@ const SYSTEMD_TMPFILES: &str = "deploy/systemd/blackhole.conf";
 const SYSTEMD_INSTALLER: &str = "deploy/systemd/install.sh";
 const SYSTEMD_SMOKE: &str = "deploy/systemd/smoke.sh";
 const LAUNCHD_INSTALLER: &str = "deploy/launchd/install.sh";
+const LAUNCHD_SMOKE: &str = "deploy/launchd/smoke.sh";
 const PACKAGE_BUILDER: &str = "deploy/package/build.sh";
 const DEB_BUILDER: &str = "deploy/package/build-deb.sh";
 const DEB_SMOKE: &str = "deploy/package/smoke-deb.sh";
@@ -155,6 +156,26 @@ fn launchd_installer_is_transactional_and_platform_native() {
     }
 }
 
+#[test]
+fn launchd_smoke_covers_host_install_and_upgrade() {
+    let smoke = fs::read_to_string(LAUNCHD_SMOKE).expect("read launchd smoke harness");
+    for required in [
+        "set -eu",
+        "uname -s",
+        "launchctl print",
+        "refusing to overwrite an existing Blackhole launchd service",
+        "BLACKHOLE_PLIST",
+        "old_binary=$(shasum -a 256",
+        "second real install exercises the host upgrade path",
+        "launchd host install and upgrade smoke passed",
+    ] {
+        assert!(
+            smoke.contains(required),
+            "missing launchd smoke step: {required}"
+        );
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn installers_are_executable() {
@@ -162,6 +183,7 @@ fn installers_are_executable() {
         SYSTEMD_INSTALLER,
         SYSTEMD_SMOKE,
         LAUNCHD_INSTALLER,
+        LAUNCHD_SMOKE,
         PACKAGE_BUILDER,
         DEB_BUILDER,
     ] {
