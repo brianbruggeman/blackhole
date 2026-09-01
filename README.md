@@ -95,9 +95,13 @@ It provides an authenticated bounded status page at `GET /`, `GET /health`, auth
 `POST /reload/country`, bounded `POST /reload/policy` (a JSON array of complete rule objects), bounded
 `POST /reload/policy/add` (a non-empty JSON array appended atomically to the current domain rules), and bounded
 `POST /reload/policy/remove` (a JSON array of stable rule IDs removed atomically), and bounded
-`POST /reload/regex` (a JSON array of regex rule objects). Send the token
+`POST /reload/regex` (a JSON array of regex rule objects), plus bounded privacy-safe
+query-decision inspection at `GET /logs` and deletion at `POST /logs/clear` when
+enabled. Send the token
 as a Bearer credential; `/rules` returns only bounded policy metadata and no
-query payloads; keep the configuration file readable only by the service user.
+query payloads. Query logs are disabled by default and retain only timestamp,
+action, qtype, and qclass metadata; keep the configuration file readable only
+by the service user.
 
 For a hardened Linux local-network deployment, install the example unit at
 `deploy/systemd/blackhole.service`, create the `blackhole` service account,

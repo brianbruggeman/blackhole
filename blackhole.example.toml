@@ -131,6 +131,15 @@ max_response_bytes_per_client_per_second = 1048576
 # Prevent forwarded answers from rebinding clients to private/local networks.
 reject_private_upstream_addresses = true
 
+[privacy]
+# Query-decision logging is disabled by default. If enabled, only bounded
+# timestamp/action/qtype/qclass metadata is retained; names and wire payloads
+# are never recorded. The authenticated admin surface exposes GET /logs and
+# POST /logs/clear.
+query_log_enabled = false
+query_log_max_entries = 1024
+query_log_retention_secs = 86400
+
 [country_policy]
 # Optional operator-supplied classification map. Each line is COUNTRY CIDR.
 # No GeoIP database is bundled; classification is only as current as this file.
