@@ -114,6 +114,7 @@ impl SendPipe for AdminHandler {
             ("GET", "/health") => Ok(Response::ok("{\"status\":\"ok\"}")),
             ("GET", "/status") => Ok(Response::ok(self.policy.admin_status())),
             ("GET", "/policy/status") => Ok(Response::ok(self.policy.admin_policy_status())),
+            ("GET", "/privacy/status") => Ok(Response::ok(self.policy.admin_privacy_status())),
             ("GET", "/rules") => Ok(Response::ok(self.policy.admin_rules())),
             ("GET", "/profiles") => Ok(Response::ok(self.policy.admin_profiles())),
             ("GET", "/client-groups") => Ok(Response::ok(self.policy.admin_client_groups())),
@@ -372,6 +373,7 @@ impl SendPipe for AdminHandler {
                 | "/health"
                 | "/status"
                 | "/policy/status"
+                | "/privacy/status"
                 | "/rules"
                 | "/profiles"
                 | "/client-groups"
@@ -466,6 +468,15 @@ mod tests {
         assert_eq!(policy_status["domain_rules"], 0);
         assert_eq!(policy_status["blocklist_sources"], 0);
         assert_eq!(policy_status["legacy_mode_active"], true);
+        let privacy_status =
+            block_on(handler.call(request("GET", "/privacy/status"))).expect("privacy status");
+        assert_eq!(privacy_status.status, 200);
+        let privacy_status: serde_json::Value =
+            serde_json::from_slice(&privacy_status.payload).expect("privacy status JSON");
+        assert_eq!(privacy_status["query_log_enabled"], false);
+        assert_eq!(privacy_status["query_recording_enabled"], false);
+        assert_eq!(privacy_status["payload_recording"], "disabled");
+        assert_eq!(privacy_status["client_identity_recording"], "disabled");
         assert_eq!(status["profiles_configured"], 0);
         assert_eq!(status["client_groups_configured"], 0);
         assert_eq!(status["upstream_configured"], false);
@@ -501,6 +512,10 @@ mod tests {
         let wrong_status_method =
             block_on(handler.call(request("POST", "/status"))).expect("405 status response");
         assert_eq!(wrong_status_method.status, 405);
+        let wrong_privacy_status_method =
+            block_on(handler.call(request("POST", "/privacy/status")))
+                .expect("405 privacy status response");
+        assert_eq!(wrong_privacy_status_method.status, 405);
         let wrong_rules_method =
             block_on(handler.call(request("POST", "/rules"))).expect("405 rules response");
         assert_eq!(wrong_rules_method.status, 405);

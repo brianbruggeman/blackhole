@@ -114,6 +114,9 @@ implemented today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - The authenticated admin control plane includes a bounded status UI for
   status, rule metadata, and privacy-log inspection/clearing; it contains no
   packet payloads and uses the existing Proxima HTTP pipe.
+- Authenticated bounded `GET /privacy/status` exposes recording enablement and
+  retention ceilings without exposing recording paths, query names, clients,
+  credentials, or payloads.
 - Authenticated bounded `GET /profiles` and `GET /client-groups` routes expose
   configured service-profile and client-network metadata without exposing
   runtime client identity.

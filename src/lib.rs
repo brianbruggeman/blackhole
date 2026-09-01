@@ -3390,6 +3390,20 @@ mod runtime {
                 .to_string()
         }
 
+        pub(crate) fn admin_privacy_status(&self) -> String {
+            serde_json::json!({
+                "query_log_enabled": self.query_log.is_some(),
+                "query_log_max_entries": self.config.privacy.query_log_max_entries,
+                "query_log_retention_secs": self.config.privacy.query_log_retention_secs,
+                "query_recording_enabled": self.recording.is_some()
+                    || self.config.privacy.query_recording_path.is_some(),
+                "query_recording_max_bytes": self.config.privacy.query_recording_max_bytes,
+                "payload_recording": "disabled",
+                "client_identity_recording": "disabled",
+            })
+            .to_string()
+        }
+
         pub(crate) fn clear_query_log(&self) -> usize {
             self.query_log
                 .as_ref()
