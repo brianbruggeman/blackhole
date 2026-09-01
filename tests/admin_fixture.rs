@@ -1,3 +1,4 @@
+use std::fs;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -48,7 +49,19 @@ async fn request(
 
 #[proxima::test]
 async fn admin_http_listener_enforces_bearer_auth() {
+    let initial_blocklist = std::env::temp_dir().join(format!(
+        "blackhole-admin-blocklist-{}-initial.txt",
+        std::process::id()
+    ));
+    let replacement_blocklist = std::env::temp_dir().join(format!(
+        "blackhole-admin-blocklist-{}-replacement.txt",
+        std::process::id()
+    ));
+    fs::write(&initial_blocklist, "initial.example\n").expect("write initial blocklist");
+    fs::write(&replacement_blocklist, "replacement.example\n")
+        .expect("write replacement blocklist");
     let mut config = Config::default();
+    config.policy.blocklists = vec![initial_blocklist.to_string_lossy().into_owned()];
     config.policy.client_groups = vec![ClientGroupConfig {
         name: "home".into(),
         client_cidrs: vec!["192.0.2.0/24".into()],
@@ -153,7 +166,12 @@ async fn admin_http_listener_enforces_bearer_auth() {
         "POST",
         "/reload/policy-bundle",
         Some("Bearer integration-secret"),
-        Some(r#"{"rules":[],"regex_rules":[],"profiles":[{"id":700,"name":"bundle-family","domains":["bundle.example"],"action":"nxdomain"}],"client_groups":[]}"#),
+        Some(
+            &format!(
+                r#"{{"rules":[],"regex_rules":[],"profiles":[{{"id":700,"name":"bundle-family","domains":["bundle.example"],"action":"nxdomain"}}],"client_groups":[],"blocklists":["{}"]}}"#,
+                replacement_blocklist.display()
+            ),
+        ),
     )
     .await
     .expect("policy bundle response");
@@ -170,6 +188,24 @@ async fn admin_http_listener_enforces_bearer_auth() {
     .expect("bundle profiles response");
     let profiles = String::from_utf8_lossy(&profiles);
     assert!(profiles.contains("\"name\":\"bundle-family\""));
+    let query = |name: &str| proxima_dns::DnsQuery {
+        id: 1,
+        recursion_desired: true,
+        name: name.into(),
+        qtype: 1,
+        qclass: 1,
+    };
+    assert_eq!(
+        policy.evaluate(&query("initial.example.")).unwrap().rcode,
+        0
+    );
+    assert_eq!(
+        policy
+            .evaluate(&query("replacement.example."))
+            .unwrap()
+            .rcode,
+        3
+    );
     let logs = request(
         addr,
         "GET",
@@ -260,4 +296,6 @@ async fn admin_http_listener_enforces_bearer_auth() {
     assert!(regex.starts_with("HTTP/1.1 200"));
     assert!(regex.contains("{\"status\":\"reloaded\"}"));
     server.stop();
+    fs::remove_file(initial_blocklist).expect("remove initial blocklist");
+    fs::remove_file(replacement_blocklist).expect("remove replacement blocklist");
 }
