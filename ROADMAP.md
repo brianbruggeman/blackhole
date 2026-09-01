@@ -15,10 +15,11 @@ below are future capabilities, grouped by the dependency layer they extend.
 
 ## Policy and operator controls
 
-- Extend the authenticated blocklist and policy administration with richer
-  management operations beyond the current bounded background blocklist
-  reload/source replacement, atomic domain/regex-rule append/upsert/removal,
-  read-only status, and complete-snapshot reload routes.
+- Extend the authenticated blocklist and policy administration with source
+  health/freshness and richer policy management beyond the current bounded
+  source inspection, background reload, source replacement, atomic
+  domain/regex-rule append/upsert/removal, read-only status, and
+  complete-snapshot reload routes.
 - Extend the authenticated profile and client-group metadata views with
   additional policy controls beyond atomic profile, identity, and network
   scope replacement/upsert/removal operations.
