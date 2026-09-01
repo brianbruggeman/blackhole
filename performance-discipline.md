@@ -398,3 +398,23 @@ the reported value is process-wide and is not a cross-process server CPU
 measurement. TCP has higher tail variance in this run; no production
 performance claim follows without sustained offered-load and separated
 client/server CPU measurements.
+
+## Row 16 — sustained real listener workload
+
+`MEASURED` on 2026-09-01, Linux `x86_64`, rustc `1.98.0`, release build with
+`perf-instrument`, source commit `79201ea`, GitHub Proxima revision
+`03596bc908be7ae76179464f85ad867b311e2a65`, and load average `1.74`. The
+listener benchmark used `N=1,000` sequential requests per transport after 10
+UDP warmups:
+
+```text
+listener_udp samples=1000 errors=0 single_request_ns=80544 p50_ns=25985 p95_ns=30830 p99_ns=67962 min=21929 max=81544 cov=0.246334 throughput_ops_s=DERIVED 36198.97
+listener_tcp samples=1000 errors=0 single_request_ns=64452 p50_ns=32199 p95_ns=39782 p99_ns=86686 min=30357 max=492508 cov=0.502453 throughput_ops_s=DERIVED 28690.17
+listener_boundary_bytes=MEASURED policy_canonicalize=0 borrowed_to_owned=36198 tcp_frame_buffer=37000 encode_output=136748 transport_write=136748
+cpu_percent=MEASURED 108.59690375023841 cpu_clock_ticks_s=MEASURED 100 rss_kib=MEASURED 9156
+```
+
+Both transports completed without measured errors. The longer run made
+process CPU accounting measurable, but it remains process-wide rather than a
+separated server measurement; TCP tail variance is high in this sample and is
+retained as observed evidence rather than a performance claim.
