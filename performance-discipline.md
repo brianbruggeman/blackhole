@@ -157,3 +157,33 @@ the chunked arm is slower than scalar on this workload. These are benchmark
 arms only, not replacements for Proxima's validated parser. Scalar remains
 the production arm; no SIMD or zero-copy claim is made. The separate WASM
 runtime probe is recorded in Row 3.
+
+## Row 7 — current provenance-corrected scalar reference
+
+`MEASURED` on 2026-09-01, Linux `x86_64`, rustc `1.98.0`, release build,
+source commit `02c4d65`, GitHub Proxima revision `afca73c`, and load average
+`2.35`. The running harness used `N=25` samples per workload:
+
+```text
+build p50_ns=50203365 p95_ns=51205942 p99_ns=51986069 cov=0.009429 allocs=250025 alloc_bytes=27722250
+match p50_ns=43392 p95_ns=44067 p99_ns=44589 cov=0.008253 allocs=2500 alloc_bytes=57500
+edge_parse_match p50_ns=45601 p95_ns=55986 p99_ns=70251 cov=0.111887 allocs=100 alloc_bytes=1375
+parse_short p50_ns=52 p95_ns=63 p99_ns=165 cov=0.387821 allocs=0 alloc_bytes=0
+parse_long p50_ns=236 p95_ns=284 p99_ns=321 cov=0.079670 allocs=0 alloc_bytes=0
+parse_adversarial p50_ns=83 p95_ns=97 p99_ns=114 cov=0.083831 allocs=0 alloc_bytes=0
+parse_mixed p50_ns=84 p95_ns=256 p99_ns=280 cov=0.643827 allocs=0 alloc_bytes=0
+name_scan_scalar p50_ns=44 p95_ns=61 p99_ns=84 cov=0.186295 allocs=0 alloc_bytes=0
+name_scan_chunked p50_ns=86 p95_ns=102 p99_ns=175 cov=0.196117 allocs=0 alloc_bytes=0
+name_scan_memchr p50_ns=21 p95_ns=44 p99_ns=1402 cov=3.522717 allocs=0 alloc_bytes=0
+owned p50_ns=110 p95_ns=125 p99_ns=242 cov=0.222498 allocs=50 alloc_bytes=400
+encode_response p50_ns=110 p95_ns=264 p99_ns=447 cov=0.525206 allocs=50 alloc_bytes=1450
+rss_kib=6592
+arms=scalar-production name-scan-chunked-measured name-scan-memchr-measured simd-not-added wasm-edge-runtime-measured-separately
+```
+
+Throughput is `DERIVED` from the measured durations and operation counts.
+The borrowed parser and scan arms performed zero allocations in this run;
+the owned and response-encoding arms allocated as shown. Scalar remains the
+production arm because chunked scanning is slower and memchr has materially
+higher tail latency and variance. This row does not establish zero-copy or
+production-performance claims.
