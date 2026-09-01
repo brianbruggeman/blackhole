@@ -51,6 +51,9 @@ configuration path must exist and parse successfully before the listener is
 created. `ignore` is represented as a silent response by the current Proxima
 DNS edge. When `policy.rules` is configured, it is authoritative and legacy
 `mode`/`domains` are ignored; unmatched queries use `policy.default_action`.
+Set `policy.filtering_enabled = false` for an atomic temporary filtering
+pause; the policy remains loaded and can be re-enabled through the full
+configuration reload without losing rules, rewrites, or forwarding settings.
 Pass and observe queries use the configured Proxima upstream after local
 rewrites; explicit forward rules use the same bounded upstream path and fail
 closed when it is not configured. Forwarded positive and negative answers are

@@ -1173,6 +1173,10 @@ mod runtime {
 
     #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
     pub struct PolicyConfig {
+        /// Disable blocking while retaining the configured policy for a later
+        /// atomic re-enable. Rewrites and forwarding remain available.
+        #[serde(default = "default_filtering_enabled")]
+        pub filtering_enabled: bool,
         #[serde(default = "default_mode")]
         pub mode: Mode,
         #[serde(default)]
@@ -1200,6 +1204,7 @@ mod runtime {
     impl Default for PolicyConfig {
         fn default() -> Self {
             Self {
+                filtering_enabled: default_filtering_enabled(),
                 mode: default_mode(),
                 domains: Vec::new(),
                 rules: Vec::new(),
@@ -1369,6 +1374,9 @@ mod runtime {
     }
     fn default_action() -> Action {
         Action::Pass
+    }
+    fn default_filtering_enabled() -> bool {
+        true
     }
     fn default_resolver_ip() -> String {
         "1.1.1.1".into()
@@ -2343,6 +2351,8 @@ mod runtime {
         legacy_mode_control: LiveControl<Mode>,
         default_action: Live<Action>,
         default_action_control: LiveControl<Action>,
+        filtering_enabled: Live<bool>,
+        filtering_enabled_control: LiveControl<bool>,
         rewrite_configs: RwLock<Vec<RewriteConfig>>,
         rewrites: Live<RewriteTable>,
         rewrite_control: LiveControl<RewriteTable>,
@@ -2657,6 +2667,7 @@ mod runtime {
             let legacy_domains = config.policy.domains.clone();
             let legacy_mode = config.policy.mode;
             let default_action = config.policy.default_action;
+            let filtering_enabled = config.policy.filtering_enabled;
             let rewrite_configs = config.policy.rewrites.clone();
             let admission = config.admission.clone();
             let country_policy_config = config.country_policy.clone();
@@ -2667,6 +2678,7 @@ mod runtime {
             let (legacy_domains, legacy_domains_control) = live(legacy_domains);
             let (legacy_mode, legacy_mode_control) = live(legacy_mode);
             let (default_action, default_action_control) = live(default_action);
+            let (filtering_enabled, filtering_enabled_control) = live(filtering_enabled);
             let (regex_rules, regex_rules_control) = live(regex_rules);
             let policy = Self {
                 config,
@@ -2688,6 +2700,8 @@ mod runtime {
                 legacy_mode_control,
                 default_action,
                 default_action_control,
+                filtering_enabled,
+                filtering_enabled_control,
                 rewrite_configs: RwLock::new(rewrite_configs),
                 rewrites,
                 rewrite_control,
@@ -3281,6 +3295,7 @@ mod runtime {
                 Some(next.policy.mode),
                 Some(&next.policy.domains),
                 Some(next.policy.default_action),
+                Some(next.policy.filtering_enabled),
                 Some(&next.admission),
             )
         }
@@ -3643,6 +3658,7 @@ mod runtime {
                 None,
                 None,
                 None,
+                None,
             )
         }
 
@@ -3661,6 +3677,7 @@ mod runtime {
             legacy_mode: Option<Mode>,
             legacy_domains: Option<&[String]>,
             default_action: Option<Action>,
+            filtering_enabled: Option<bool>,
         ) -> Result<ReloadState, policy::PolicyError> {
             self.reload_policy_bundle_with_legacy_and_admission(
                 rules,
@@ -3674,6 +3691,7 @@ mod runtime {
                 legacy_mode,
                 legacy_domains,
                 default_action,
+                filtering_enabled,
                 None,
             )
         }
@@ -3693,6 +3711,7 @@ mod runtime {
             legacy_mode: Option<Mode>,
             legacy_domains: Option<&[String]>,
             default_action: Option<Action>,
+            filtering_enabled: Option<bool>,
             admission: Option<&AdmissionConfig>,
         ) -> Result<ReloadState, policy::PolicyError> {
             let _reload = self.reload_lock.write().expect("reload lock");
@@ -3751,6 +3770,9 @@ mod runtime {
             }
             if let Some(action) = default_action {
                 self.default_action_control.replace(action);
+            }
+            if let Some(enabled) = filtering_enabled {
+                self.filtering_enabled_control.replace(enabled);
             }
             *self.blocklist_rules.lock().expect("blocklist rules lock") = replacement;
             if let Some(paths) = selected_paths {
@@ -4611,6 +4633,9 @@ mod runtime {
             client: Option<std::net::IpAddr>,
             client_identity: Option<&str>,
         ) -> Action {
+            if !*self.filtering_enabled.snapshot() {
+                return Action::Pass;
+            }
             let resolved_identity = client_identity
                 .map(str::to_owned)
                 .or_else(|| self.client_identity_for(client));
@@ -4698,6 +4723,13 @@ mod runtime {
         pub fn evaluate(&self, query: &proxima_dns::DnsQuery) -> Option<DnsAnswer> {
             if !self.admission_allows(query) {
                 return Some(refused_answer());
+            }
+            if !*self.filtering_enabled.snapshot() {
+                return self
+                    .rewrites
+                    .read(|rewrites| rewrites.answer(query))
+                    .or_else(|| Some(DnsAnswer::ok(Vec::new())))
+                    .map(|answer| self.cap_answer(query, answer));
             }
             let decision = self.decision(query, None);
             if !self.rules_configured.load(Ordering::Acquire) {
@@ -5073,6 +5105,7 @@ mod runtime {
                 "legacy_domain_count": self.legacy_domains.read(Vec::len),
                 "legacy_mode": mode_label(*self.legacy_mode.snapshot()),
                 "default_action": action_label(*self.default_action.snapshot()),
+                "filtering_enabled": *self.filtering_enabled.snapshot(),
                 "legacy_mode_active": !self.rules_configured.load(Ordering::Acquire),
                 "policy_generation": self.policy_generation.load(Ordering::Acquire),
             })
@@ -5139,6 +5172,7 @@ mod runtime {
                 "mode": mode_label(*self.legacy_mode.snapshot()),
                 "domains": self.legacy_domains.snapshot().as_ref().clone(),
                 "default_action": action_label(*self.default_action.snapshot()),
+                "filtering_enabled": *self.filtering_enabled.snapshot(),
                 "rules": rules.iter().map(|rule| serde_json::json!({
                     "id": rule.id,
                     "domain": rule.domain,
@@ -5618,6 +5652,9 @@ mod runtime {
             // The raw listener supplies its borrowed decision here. The owned
             // facade passes None and performs the single policy lookup itself.
             let action = selected_action.or_else(|| {
+                if !*self.filtering_enabled.snapshot() {
+                    return Some(Action::Pass);
+                }
                 if !self.rules_configured.load(Ordering::Acquire) {
                     if self.matches(&query.name) {
                         Some(match *self.legacy_mode.snapshot() {

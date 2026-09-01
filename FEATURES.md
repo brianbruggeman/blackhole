@@ -22,6 +22,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   explicit domain-rule precedence.
 - Rule-table authority when rules are configured; legacy settings do not
   silently take over.
+- Atomic operator control to temporarily disable all filtering while retaining
+  the configured policy for a later re-enable; rewrites and forwarding remain
+  available during the disabled interval.
 - Client-scoped rules can match one exact address or a bounded list of IPv4
   and IPv6 CIDRs; the most specific matching network wins.
 - Bounded client identity labels can be mapped from exact IPv4/IPv6 addresses

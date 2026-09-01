@@ -53,6 +53,8 @@ struct PolicyBundle {
     #[serde(default)]
     default_action: Option<crate::Action>,
     #[serde(default)]
+    filtering_enabled: Option<bool>,
+    #[serde(default)]
     rules: Vec<RuleConfig>,
     #[serde(default)]
     regex_rules: Vec<RegexRuleConfig>,
@@ -318,6 +320,7 @@ impl SendPipe for AdminHandler {
                     bundle.mode,
                     bundle.domains.as_deref(),
                     bundle.default_action,
+                    bundle.filtering_enabled,
                 ) {
                     Ok(_) => Ok(Response::ok(r#"{"status":"reloaded"}"#)),
                     Err(error) => Ok(Response::new(422).with_body(format!(
@@ -356,6 +359,7 @@ impl SendPipe for AdminHandler {
                     config.mode,
                     config.domains.as_deref(),
                     config.default_action,
+                    config.filtering_enabled,
                     Some(admission),
                 ) {
                     Ok(_) => Ok(Response::ok(r#"{"status":"reloaded"}"#)),
@@ -948,6 +952,7 @@ mod tests {
         assert_eq!(policy_status["legacy_domain_count"], 0);
         assert_eq!(policy_status["legacy_mode"], "nxdomain");
         assert_eq!(policy_status["default_action"], "pass");
+        assert_eq!(policy_status["filtering_enabled"], true);
         assert_eq!(policy_status["legacy_mode_active"], true);
         let bundle = block_on(handler.call(request("GET", "/policy-bundle")))
             .expect("policy bundle response");
@@ -956,6 +961,7 @@ mod tests {
             serde_json::from_slice(&bundle.payload).expect("policy bundle JSON");
         assert_eq!(bundle["mode"], "nxdomain");
         assert_eq!(bundle["default_action"], "pass");
+        assert_eq!(bundle["filtering_enabled"], true);
         assert_eq!(bundle["rules"], serde_json::json!([]));
         assert_eq!(bundle["regex_rules"], serde_json::json!([]));
         assert_eq!(bundle["profiles"], serde_json::json!([]));
@@ -1813,6 +1819,29 @@ mod tests {
         let response = block_on(handler.call(replacement)).expect("legacy replacement response");
         assert_eq!(response.status, 200);
         assert_eq!(policy.evaluate(&query("old.example.")).unwrap().rcode, 0);
+        assert_eq!(policy.evaluate(&query("new.example.")).unwrap().rcode, 3);
+
+        let disabled = Request::builder()
+            .method("POST")
+            .path("/reload/policy-bundle")
+            .payload(r#"{"filtering_enabled":false}"#)
+            .build()
+            .expect("filtering toggle request");
+        let response = block_on(handler.call(disabled)).expect("filtering toggle response");
+        assert_eq!(response.status, 200);
+        assert_eq!(policy.evaluate(&query("new.example.")).unwrap().rcode, 0);
+        let status: serde_json::Value =
+            serde_json::from_str(&policy.admin_policy_status()).expect("policy status");
+        assert_eq!(status["filtering_enabled"], false);
+
+        let enabled = Request::builder()
+            .method("POST")
+            .path("/reload/policy-bundle")
+            .payload(r#"{"filtering_enabled":true}"#)
+            .build()
+            .expect("filtering re-enable request");
+        let response = block_on(handler.call(enabled)).expect("filtering re-enable response");
+        assert_eq!(response.status, 200);
         assert_eq!(policy.evaluate(&query("new.example.")).unwrap().rcode, 3);
 
         let invalid = Request::builder()
