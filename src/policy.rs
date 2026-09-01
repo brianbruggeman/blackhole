@@ -134,7 +134,7 @@ struct Rule {
     wildcard: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct IpNetwork {
     address: IpAddr,
     prefix: u8,

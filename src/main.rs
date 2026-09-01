@@ -102,6 +102,27 @@ struct BlocklistReloadHandler {
 }
 
 #[cfg(feature = "std")]
+struct CountryReloadHandler {
+    policy: Arc<Policy>,
+}
+
+#[cfg(feature = "std")]
+impl SendPipe for CountryReloadHandler {
+    type In = PipeRequest<Bytes>;
+    type Out = PipeResponse<Bytes>;
+    type Err = ProximaError;
+
+    async fn call(&self, _request: Self::In) -> Result<Self::Out, Self::Err> {
+        match self.policy.reload_country_policy_if_changed() {
+            Ok(_) => Ok(PipeResponse::ok(Bytes::new())),
+            Err(error) => Err(ProximaError::Config(format!(
+                "background country-map reload failed: {error}"
+            ))),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
 impl SendPipe for BlocklistReloadHandler {
     type In = PipeRequest<Bytes>;
     type Out = PipeResponse<Bytes>;
@@ -304,6 +325,9 @@ async fn main() -> Result<(), ProximaError> {
     let blocklist_reload_interval = config.policy.blocklist_reload_interval_secs;
     let blocklist_reload_enabled =
         blocklist_reload_interval != 0 && !config.policy.blocklists.is_empty();
+    let country_reload_interval = config.country_policy.reload_interval_secs;
+    let country_reload_enabled =
+        country_reload_interval != 0 && config.country_policy.map_path.is_some();
     let mut capture = install_capture(&capture_config, bind.port())?;
     let upstream = config.upstream.clone();
     let mut policy = Policy::new(config)
@@ -421,6 +445,22 @@ async fn main() -> Result<(), ProximaError> {
         println!(
             "blackhole blocklist reload enabled ({}s)",
             blocklist_reload_interval
+        );
+    }
+    if country_reload_enabled {
+        let reload_handler = into_pipe_handle(CountryReloadHandler {
+            policy: Arc::clone(&policy),
+        });
+        let reload_source = into_source_handle(IntervalPipe::new(
+            std::time::Duration::from_secs(country_reload_interval),
+            reload_handler,
+            IntervalPipe::empty_request_factory(),
+            "blackhole-country-reload",
+        ));
+        source_lifecycle.spawn_from_source("country-reload", &reload_source);
+        println!(
+            "blackhole country-map reload enabled ({}s)",
+            country_reload_interval
         );
     }
     let server = match Listener::builder()

@@ -403,6 +403,9 @@ mod runtime {
         /// Optional maximum age of the map file. Stale maps fail closed.
         #[serde(default)]
         pub max_age_secs: Option<u64>,
+        /// Optional bounded background reload interval. Zero disables polling.
+        #[serde(default)]
+        pub reload_interval_secs: u64,
         /// Country codes whose clients are denied before DNS policy evaluation.
         #[serde(default)]
         pub deny: Vec<String>,
@@ -411,13 +414,13 @@ mod runtime {
         pub observe: Vec<String>,
     }
 
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, PartialEq, Eq)]
     struct CountryEntry {
         country: String,
         network: policy::IpNetwork,
     }
 
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, PartialEq, Eq)]
     struct CountryPolicy {
         entries: Vec<CountryEntry>,
         deny: BTreeSet<String>,
@@ -1704,6 +1707,14 @@ mod runtime {
                     ),
                 });
             }
+            if config.country_policy.reload_interval_secs > MAX_BLOCKLIST_RELOAD_INTERVAL_SECS {
+                return Err(policy::PolicyError::InvalidCountryMap {
+                    path: "<config>".into(),
+                    reason: format!(
+                        "reload interval exceeds {MAX_BLOCKLIST_RELOAD_INTERVAL_SECS} seconds"
+                    ),
+                });
+            }
             let profile_rules =
                 compile_profiles(&config.policy.profiles, &config.policy.client_groups)?;
             let explicit_rules = config.policy.rules.clone();
@@ -2112,6 +2123,24 @@ mod runtime {
             let next = load_country_policy(&self.config.country_policy)?;
             *self.country_policy.write().expect("country policy lock") = next;
             self.policy_generation.fetch_add(1, Ordering::Relaxed);
+            self.observe_reload_latency("country", started);
+            Ok(ReloadState::Published)
+        }
+
+        /// Reload the country map only when its bounded contents changed.
+        pub fn reload_country_policy_if_changed(&self) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
+            let started = Instant::now();
+            let next = load_country_policy(&self.config.country_policy)?;
+            let unchanged = {
+                let current = self.country_policy.read().expect("country policy lock");
+                *current == next
+            };
+            if unchanged {
+                self.observe_reload_latency("country_unchanged", started);
+                return Ok(ReloadState::Unchanged);
+            }
+            *self.country_policy.write().expect("country policy lock") = next;
             self.observe_reload_latency("country", started);
             Ok(ReloadState::Published)
         }
@@ -4018,6 +4047,12 @@ mod runtime {
                 Policy::new(config),
                 Err(policy::PolicyError::InvalidBlocklist { path, .. }) if path == "<config>"
             ));
+            let mut config = Config::default();
+            config.country_policy.reload_interval_secs = MAX_BLOCKLIST_RELOAD_INTERVAL_SECS + 1;
+            assert!(matches!(
+                Policy::new(config),
+                Err(policy::PolicyError::InvalidCountryMap { path, .. }) if path == "<config>"
+            ));
         }
 
         #[test]
@@ -4532,6 +4567,7 @@ mod runtime {
             config.country_policy = CountryPolicyConfig {
                 map_path: Some(path.to_string_lossy().into_owned()),
                 max_age_secs: None,
+                reload_interval_secs: 0,
                 deny: vec!["us".into()],
                 observe: vec!["CA".into()],
             };
@@ -4539,18 +4575,35 @@ mod runtime {
             let denied = "192.0.2.10".parse().expect("client address");
             let observed = "198.51.100.10".parse().expect("client address");
             let outside = "203.0.113.10".parse().expect("client address");
-            let country_policy = policy.country_policy.read().expect("country policy lock");
-            let country_policy = country_policy.as_ref().expect("country policy");
-            assert!(country_policy.denied(denied));
-            assert!(country_policy.observed(observed));
-            assert!(!country_policy.denied(outside));
-            assert!(!country_policy.observed(outside));
+            {
+                let country_policy = policy.country_policy.read().expect("country policy lock");
+                let country_policy = country_policy.as_ref().expect("country policy");
+                assert!(country_policy.denied(denied));
+                assert!(country_policy.observed(observed));
+                assert!(!country_policy.denied(outside));
+                assert!(!country_policy.observed(outside));
+            }
+            assert_eq!(
+                policy.reload_country_policy_if_changed(),
+                Ok(ReloadState::Unchanged)
+            );
+            std::fs::write(
+                &path,
+                "US 192.0.2.0/24\nCA 198.51.100.0/24\nGB 203.0.113.0/24\n",
+            )
+            .expect("change country map");
+            assert_eq!(
+                policy.reload_country_policy_if_changed(),
+                Ok(ReloadState::Published)
+            );
             std::fs::write(&path, "not-a-country-map\n").expect("corrupt country map");
             assert!(policy.reload_country_policy().is_err());
-            let country_policy = policy.country_policy.read().expect("country policy lock");
-            let country_policy = country_policy.as_ref().expect("previous country policy");
-            assert!(country_policy.denied(denied));
-            assert!(country_policy.observed(observed));
+            {
+                let country_policy = policy.country_policy.read().expect("country policy lock");
+                let country_policy = country_policy.as_ref().expect("previous country policy");
+                assert!(country_policy.denied(denied));
+                assert!(country_policy.observed(observed));
+            }
 
             let request = |client| DnsPipeRequest {
                 method: proxima_primitives::pipe::method::Method::from_wire(
