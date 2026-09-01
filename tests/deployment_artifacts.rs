@@ -73,6 +73,14 @@ fn systemd_state_and_installer_are_scoped() {
     let installer = fs::read_to_string(SYSTEMD_INSTALLER).expect("read systemd installer");
     for required in [
         "set -eu",
+        "backup_file /usr/local/bin/blackhole",
+        "restore_file /usr/local/bin/blackhole",
+        "installation failed; restoring the previous service files",
+        "trap cleanup EXIT HUP INT TERM",
+        "service_was_active=0",
+        "systemctl restart blackhole.service",
+        "systemctl stop blackhole.service",
+        "rollback_needed=0",
         "install -d -o blackhole -g blackhole -m 0750 /var/lib/blackhole",
         "systemd-tmpfiles --create /etc/tmpfiles.d/blackhole.conf",
         "systemctl daemon-reload",
