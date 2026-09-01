@@ -8,6 +8,7 @@ const SYSTEMD_TMPFILES: &str = "deploy/systemd/blackhole.conf";
 const SYSTEMD_INSTALLER: &str = "deploy/systemd/install.sh";
 const LAUNCHD_INSTALLER: &str = "deploy/launchd/install.sh";
 const PACKAGE_BUILDER: &str = "deploy/package/build.sh";
+const DEB_BUILDER: &str = "deploy/package/build-deb.sh";
 
 #[test]
 fn launchd_service_is_unprivileged_and_direct() {
@@ -127,7 +128,12 @@ fn launchd_installer_is_transactional_and_platform_native() {
 #[cfg(unix)]
 #[test]
 fn installers_are_executable() {
-    for path in [SYSTEMD_INSTALLER, LAUNCHD_INSTALLER, PACKAGE_BUILDER] {
+    for path in [
+        SYSTEMD_INSTALLER,
+        LAUNCHD_INSTALLER,
+        PACKAGE_BUILDER,
+        DEB_BUILDER,
+    ] {
         let mode = fs::metadata(path)
             .unwrap_or_else(|error| panic!("read metadata for {path}: {error}"))
             .permissions()
@@ -156,4 +162,26 @@ fn package_builder_contains_provenance_and_bounded_inputs() {
         );
     }
     assert!(!builder.contains("rm -rf /"));
+}
+
+#[test]
+fn deb_builder_contains_native_package_contract() {
+    let builder = fs::read_to_string(DEB_BUILDER).expect("read Debian package builder");
+    for required in [
+        "usage: $0 BINARY OUTPUT_DIR",
+        "command -v ar",
+        "Package: blackhole",
+        "Version: $version",
+        "Architecture: $architecture",
+        "blackhole.service",
+        "blackhole.conf",
+        "ar r",
+        ".deb",
+    ] {
+        assert!(
+            builder.contains(required),
+            "missing Debian package step: {required}"
+        );
+    }
+    assert!(!builder.contains("dpkg -i"));
 }

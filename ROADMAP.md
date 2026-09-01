@@ -45,8 +45,9 @@ below are future capabilities, grouped by the dependency layer they extend.
   opt-in capture configuration and complete original-destination integration.
 - Keep client and original-destination metadata adapter-owned.
 - Support unprivileged DNS operation with privilege isolated to capture setup.
-- Extend the current transactional systemd and launchd installers with native
-  package-manager artifacts and host-installed upgrade/rollback verification.
+- Extend the current transactional systemd and launchd installers with
+  host-installed upgrade/rollback verification for the native package and
+  archive artifacts.
 
 ## Incumbent parity and extensions
 

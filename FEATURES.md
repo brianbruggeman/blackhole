@@ -184,6 +184,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   executable and output directory, including configuration, service assets,
   source/toolchain/lock provenance, and a SHA-256 manifest. Native package
   manager artifacts and host upgrade automation remain outside this artifact.
+- `deploy/package/build-deb.sh` creates a native Debian package from an explicit
+  executable and output directory, with bounded metadata and systemd payloads;
+  host installation and upgrade smoke verification remain separate.
 - Authenticated bounded `GET /admission/status` exposes configured query,
   response, amplification, and abuse limits without exposing counters, client
   identities, credentials, or payloads.
