@@ -12,6 +12,19 @@ use proxima::{ProximaError, Request, Response, SendPipe};
 use crate::{Policy, RegexRuleConfig, RuleConfig};
 
 const MAX_POLICY_BODY_BYTES: usize = 64 * 1024;
+const ADMIN_UI: &str = r#"<!doctype html>
+<meta charset="utf-8">
+<title>Blackhole DNS</title>
+<h1>Blackhole DNS</h1>
+<p>Authenticated operator control plane.</p>
+<pre id="status">loading status…</pre>
+<p><a href="/rules">View rule metadata</a></p>
+<script>
+fetch('/status').then(response => response.json()).then(value => {
+  document.querySelector('#status').textContent = JSON.stringify(value, null, 2);
+});
+</script>
+"#;
 
 /// The current control plane is HTTP bearer auth without TLS. Keep credentials
 /// on the local host until a TLS listener is added to the admin surface.
@@ -48,6 +61,9 @@ impl SendPipe for AdminHandler {
         let method = request.method.as_str().unwrap_or("");
         let path = std::str::from_utf8(&request.path).unwrap_or("");
         match (method, path) {
+            ("GET", "/") => {
+                Ok(Response::ok(ADMIN_UI).with_header("content-type", "text/html; charset=utf-8"))
+            }
             ("GET", "/health") => Ok(Response::ok("{\"status\":\"ok\"}")),
             ("GET", "/status") => Ok(Response::ok(self.policy.admin_status())),
             ("GET", "/rules") => Ok(Response::ok(self.policy.admin_rules())),
@@ -126,7 +142,7 @@ impl SendPipe for AdminHandler {
             }
             (
                 _,
-                "/health" | "/status" | "/rules" | "/reload/blocklists" | "/reload/country"
+                "/" | "/health" | "/status" | "/rules" | "/reload/blocklists" | "/reload/country"
                 | "/reload/policy" | "/reload/policy/add" | "/reload/regex",
             ) => Ok(Response::new(405)),
             _ => Ok(Response::not_found()),
@@ -177,6 +193,10 @@ mod tests {
         let health = block_on(handler.call(request("GET", "/health"))).expect("health response");
         assert_eq!(health.status, 200);
         assert_eq!(health.payload, Bytes::from_static(b"{\"status\":\"ok\"}"));
+        let ui = block_on(handler.call(request("GET", "/"))).expect("UI response");
+        assert_eq!(ui.status, 200);
+        assert!(ui.payload.starts_with(b"<!doctype html>"));
+        assert!(ui.payload.len() < 4 * 1024);
         let status = block_on(handler.call(request("GET", "/status"))).expect("status response");
         assert_eq!(status.status, 200);
         let status: serde_json::Value =
