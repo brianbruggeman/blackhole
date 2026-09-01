@@ -1355,6 +1355,18 @@ mod tests {
         }];
         let policy = Arc::new(Policy::new(config).expect("valid rewrite policy"));
         let handler = AdminHandler::new(Arc::clone(&policy));
+        let valid_reload = Request::builder()
+            .method("POST")
+            .path("/reload/rewrites")
+            .payload(r#"[{"name":"router.example","ipv4":"192.0.2.1","ttl":30}]"#)
+            .build()
+            .expect("valid rewrite reload request");
+        assert_eq!(
+            block_on(handler.call(valid_reload))
+                .expect("valid reload response")
+                .status,
+            200
+        );
         let invalid_reload = Request::builder()
             .method("POST")
             .path("/reload/rewrites")
