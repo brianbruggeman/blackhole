@@ -4897,28 +4897,39 @@ mod runtime {
         fn client_identity_for(&self, client: Option<std::net::IpAddr>) -> Option<String> {
             let client = client?;
             self.client_identities.read(|identities| {
-                if let Some(identity) = identities
-                    .iter()
-                    .filter(|identity| identity.enabled)
-                    .find(|identity| identity.clients.contains(&client))
-                {
-                    return Some(identity.name.clone());
-                }
-                identities
-                    .iter()
-                    .filter(|identity| identity.enabled)
-                    .filter_map(|identity| {
-                        identity
-                            .client_cidrs
-                            .iter()
-                            .filter_map(|cidr| policy::IpNetwork::parse(cidr))
-                            .filter(|network| network.contains(client))
-                            .max_by_key(|network| network.prefix())
-                            .map(|network| (network.prefix(), identity.name.clone()))
-                    })
-                    .max_by_key(|(prefix, _)| *prefix)
-                    .map(|(_, name)| name)
+                Self::client_identity_index(identities, client)
+                    .and_then(|index| identities.get(index))
+                    .map(|identity| identity.name.clone())
             })
+        }
+
+        fn client_identity_index(
+            identities: &[ClientIdentityConfig],
+            client: std::net::IpAddr,
+        ) -> Option<usize> {
+            if let Some((index, _)) = identities
+                .iter()
+                .enumerate()
+                .filter(|(_, identity)| identity.enabled)
+                .find(|(_, identity)| identity.clients.contains(&client))
+            {
+                return Some(index);
+            }
+            identities
+                .iter()
+                .enumerate()
+                .filter(|(_, identity)| identity.enabled)
+                .filter_map(|(index, identity)| {
+                    identity
+                        .client_cidrs
+                        .iter()
+                        .filter_map(|cidr| policy::IpNetwork::parse(cidr))
+                        .filter(|network| network.contains(client))
+                        .max_by_key(|network| network.prefix())
+                        .map(|network| (network.prefix(), index))
+                })
+                .max_by_key(|(prefix, _)| *prefix)
+                .map(|(_, index)| index)
         }
 
         pub(crate) fn admission_config(&self) -> AdmissionConfig {
@@ -5372,9 +5383,6 @@ mod runtime {
             if !*self.filtering_enabled.snapshot() {
                 return Action::Pass;
             }
-            let resolved_identity = client_identity
-                .map(str::to_owned)
-                .or_else(|| self.client_identity_for(client));
             let name = query.name.to_dotted();
             if !self.rules_configured.load(Ordering::Acquire) {
                 if !self.matches(&name) {
@@ -5386,13 +5394,21 @@ mod runtime {
                     Mode::Honeypot => Action::Honeypot,
                 };
             }
-            let reference = self.reference.read(|reference| {
-                reference.decide(QueryContext {
-                    name: &name,
-                    qtype: query.qtype,
-                    qclass: query.qclass,
-                    client,
-                    client_identity: resolved_identity.as_deref(),
+            let reference = self.client_identities.read(|identities| {
+                let resolved_identity = client_identity.or_else(|| {
+                    client
+                        .and_then(|client| Self::client_identity_index(identities, client))
+                        .and_then(|index| identities.get(index))
+                        .map(|identity| identity.name.as_str())
+                });
+                self.reference.read(|reference| {
+                    reference.decide(QueryContext {
+                        name: &name,
+                        qtype: query.qtype,
+                        qclass: query.qclass,
+                        client,
+                        client_identity: resolved_identity,
+                    })
                 })
             });
             reference
