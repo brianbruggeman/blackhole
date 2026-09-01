@@ -10,8 +10,8 @@ use proxima::pipe::{PipeHandle, into_handle};
 use proxima::{ProximaError, Request, Response, SendPipe};
 
 use crate::{
-    ClientGroupConfig, CountryPolicyConfig, Policy, RegexRuleConfig, RewriteConfig, RuleConfig,
-    ServiceProfileConfig,
+    ClientGroupConfig, CountryPolicyConfig, Mode, Policy, RegexRuleConfig, RewriteConfig,
+    RuleConfig, ServiceProfileConfig,
 };
 
 const MAX_POLICY_BODY_BYTES: usize = 64 * 1024;
@@ -35,6 +35,13 @@ struct ProfileUpsert {
 
 #[derive(Debug, serde::Deserialize)]
 struct PolicyBundle {
+    /// Optional legacy fallback mode; omitted fields retain their live value.
+    #[serde(default)]
+    mode: Option<Mode>,
+    #[serde(default)]
+    domains: Option<Vec<String>>,
+    #[serde(default)]
+    default_action: Option<crate::Action>,
     #[serde(default)]
     rules: Vec<RuleConfig>,
     #[serde(default)]
@@ -134,7 +141,7 @@ impl SendPipe for AdminHandler {
                         )));
                     }
                 };
-                match self.policy.reload_policy_bundle(
+                match self.policy.reload_policy_bundle_with_legacy(
                     &bundle.rules,
                     &bundle.regex_rules,
                     &bundle.profiles,
@@ -142,6 +149,9 @@ impl SendPipe for AdminHandler {
                     &bundle.rewrites,
                     &bundle.country_policy,
                     bundle.blocklists.as_deref(),
+                    bundle.mode,
+                    bundle.domains.as_deref(),
+                    bundle.default_action,
                 ) {
                     Ok(_) => Ok(Response::ok(r#"{"status":"reloaded"}"#)),
                     Err(error) => Ok(Response::new(422).with_body(format!(
@@ -928,6 +938,44 @@ mod tests {
         let status: serde_json::Value =
             serde_json::from_slice(&status.payload).expect("status JSON");
         assert_eq!(status["policy_generation"], 2);
+    }
+
+    #[test]
+    fn policy_bundle_reloads_legacy_defaults_atomically() {
+        let mut config = crate::Config::default();
+        config.policy.mode = crate::Mode::Ignore;
+        config.policy.domains = vec!["old.example".into()];
+        let policy = Arc::new(Policy::new(config).expect("legacy policy"));
+        let handler = AdminHandler::new(Arc::clone(&policy));
+        let query = |name: &str| proxima_dns::DnsQuery {
+            id: 1,
+            recursion_desired: true,
+            name: name.into(),
+            qtype: 1,
+            qclass: 1,
+        };
+        assert!(policy.evaluate(&query("old.example.")).is_none());
+
+        let replacement = Request::builder()
+            .method("POST")
+            .path("/reload/policy-bundle")
+            .payload(r#"{"mode":"nxdomain","domains":["new.example"],"default_action":"reject"}"#)
+            .build()
+            .expect("legacy replacement request");
+        let response = block_on(handler.call(replacement)).expect("legacy replacement response");
+        assert_eq!(response.status, 200);
+        assert_eq!(policy.evaluate(&query("old.example.")).unwrap().rcode, 0);
+        assert_eq!(policy.evaluate(&query("new.example.")).unwrap().rcode, 3);
+
+        let invalid = Request::builder()
+            .method("POST")
+            .path("/reload/policy-bundle")
+            .payload(r#"{"mode":"ignore","domains":["bad..name"]}"#)
+            .build()
+            .expect("invalid legacy replacement request");
+        let response = block_on(handler.call(invalid)).expect("invalid legacy response");
+        assert_eq!(response.status, 422);
+        assert_eq!(policy.evaluate(&query("new.example.")).unwrap().rcode, 3);
     }
 
     #[test]

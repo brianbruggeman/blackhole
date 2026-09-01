@@ -1545,6 +1545,9 @@ mod runtime {
         client_groups: RwLock<Vec<ClientGroupConfig>>,
         country_policy: Arc<RwLock<Option<CountryPolicy>>>,
         reload_lock: RwLock<()>,
+        legacy_domains: RwLock<Vec<String>>,
+        legacy_mode: RwLock<Mode>,
+        default_action: RwLock<Action>,
         rewrites: RwLock<RewriteTable>,
         reference: PolicyStore,
         regex_rules: Mutex<Vec<RegexRule>>,
@@ -1868,6 +1871,9 @@ mod runtime {
             let profiles = config.policy.profiles.clone();
             let client_groups = config.policy.client_groups.clone();
             let blocklist_paths = config.policy.blocklists.clone();
+            let legacy_domains = config.policy.domains.clone();
+            let legacy_mode = config.policy.mode;
+            let default_action = config.policy.default_action;
             let policy = Self {
                 config,
                 base_rules: Mutex::new(base_rules),
@@ -1878,6 +1884,9 @@ mod runtime {
                 client_groups: RwLock::new(client_groups),
                 country_policy: Arc::new(RwLock::new(country_policy)),
                 reload_lock: RwLock::new(()),
+                legacy_domains: RwLock::new(legacy_domains),
+                legacy_mode: RwLock::new(legacy_mode),
+                default_action: RwLock::new(default_action),
                 rewrites: RwLock::new(rewrites),
                 reference,
                 regex_rules: Mutex::new(regex_rules),
@@ -2530,8 +2539,39 @@ mod runtime {
             country_config: &CountryPolicyConfig,
             blocklist_paths: Option<&[String]>,
         ) -> Result<ReloadState, policy::PolicyError> {
+            self.reload_policy_bundle_with_legacy(
+                rules,
+                regex_configs,
+                profiles,
+                client_groups,
+                rewrite_configs,
+                country_config,
+                blocklist_paths,
+                None,
+                None,
+                None,
+            )
+        }
+
+        /// Atomically replace the complete policy bundle, including the
+        /// legacy fallback fields and the default action when supplied.
+        pub fn reload_policy_bundle_with_legacy(
+            &self,
+            rules: &[RuleConfig],
+            regex_configs: &[RegexRuleConfig],
+            profiles: &[ServiceProfileConfig],
+            client_groups: &[ClientGroupConfig],
+            rewrite_configs: &[RewriteConfig],
+            country_config: &CountryPolicyConfig,
+            blocklist_paths: Option<&[String]>,
+            legacy_mode: Option<Mode>,
+            legacy_domains: Option<&[String]>,
+            default_action: Option<Action>,
+        ) -> Result<ReloadState, policy::PolicyError> {
             let _reload = self.reload_lock.write().expect("reload lock");
             let started = Instant::now();
+            let normalized_legacy_domains =
+                legacy_domains.map(validate_legacy_domains).transpose()?;
             let generated = compile_profiles(profiles, client_groups)?;
             let rewrites = compile_rewrites(rewrite_configs)?;
             let country_policy = load_country_policy(country_config)?;
@@ -2563,6 +2603,15 @@ mod runtime {
             *self.client_groups.write().expect("client groups lock") = client_groups.to_vec();
             *self.rewrites.write().expect("rewrites lock") = rewrites;
             *self.country_policy.write().expect("country policy lock") = country_policy;
+            if let Some(domains) = normalized_legacy_domains {
+                *self.legacy_domains.write().expect("legacy domains lock") = domains;
+            }
+            if let Some(mode) = legacy_mode {
+                *self.legacy_mode.write().expect("legacy mode lock") = mode;
+            }
+            if let Some(action) = default_action {
+                *self.default_action.write().expect("default action lock") = action;
+            }
             *self.blocklist_rules.lock().expect("blocklist rules lock") = replacement;
             if let Some(paths) = selected_paths {
                 *self.blocklist_paths.lock().expect("blocklist paths lock") = paths;
@@ -3150,7 +3199,7 @@ mod runtime {
                 if !self.matches(&name) {
                     return Action::Pass;
                 }
-                return match self.config.policy.mode {
+                return match *self.legacy_mode.read().expect("legacy mode lock") {
                     Mode::Ignore => Action::Ignore,
                     Mode::Nxdomain => Action::Nxdomain,
                     Mode::Honeypot => Action::Honeypot,
@@ -3168,9 +3217,10 @@ mod runtime {
                 .or_else(|| {
                     self.regex_decision(&normalize(&name), query.qtype, query.qclass, client)
                 })
-                .map_or(self.config.policy.default_action, |decision| {
-                    decision.action
-                })
+                .map_or(
+                    *self.default_action.read().expect("default action lock"),
+                    |decision| decision.action,
+                )
         }
 
         fn regex_decision(
@@ -3217,12 +3267,16 @@ mod runtime {
         }
         fn matches(&self, name: &str) -> bool {
             let name = normalize(name);
-            self.config.policy.domains.iter().any(|domain| {
-                name == *domain
-                    || (name.len() > domain.len()
-                        && name.ends_with(domain)
-                        && name.as_bytes()[name.len() - domain.len() - 1] == b'.')
-            })
+            self.legacy_domains
+                .read()
+                .expect("legacy domains lock")
+                .iter()
+                .any(|domain| {
+                    name == *domain
+                        || (name.len() > domain.len()
+                            && name.ends_with(domain)
+                            && name.as_bytes()[name.len() - domain.len() - 1] == b'.')
+                })
         }
 
         pub fn evaluate(&self, query: &proxima_dns::DnsQuery) -> Option<DnsAnswer> {
@@ -3235,10 +3289,9 @@ mod runtime {
                     .evaluate_legacy(query)
                     .map(|answer| self.cap_answer(query, answer));
             }
-            let answer = match decision
-                .map(|decision| decision.action)
-                .or(Some(self.config.policy.default_action))
-            {
+            let answer = match decision.map(|decision| decision.action).or(Some(
+                *self.default_action.read().expect("default action lock"),
+            )) {
                 Some(Action::Ignore | Action::Drop | Action::Forward) => None,
                 Some(Action::Nxdomain) => Some(DnsAnswer::name_error()),
                 Some(Action::Reject) => Some(refused_answer()),
@@ -3261,7 +3314,7 @@ mod runtime {
             if !self.matches(&query.name) {
                 return Some(DnsAnswer::ok(Vec::new()));
             }
-            match self.config.policy.mode {
+            match *self.legacy_mode.read().expect("legacy mode lock") {
                 Mode::Ignore => None,
                 Mode::Nxdomain => Some(DnsAnswer::name_error()),
                 Mode::Honeypot => Some(honeypot(&query.name, query.qtype, &self.config.honeypot)),
@@ -3668,23 +3721,21 @@ mod runtime {
             let action = selected_action.or_else(|| {
                 if !self.rules_configured.load(Ordering::Acquire) {
                     if self.matches(&query.name) {
-                        Some(match self.config.policy.mode {
+                        Some(match *self.legacy_mode.read().expect("legacy mode lock") {
                             Mode::Ignore => Action::Ignore,
                             Mode::Nxdomain => Action::Nxdomain,
                             Mode::Honeypot => Action::Honeypot,
                         })
                     } else if self.upstream.is_some() {
-                        Some(self.config.policy.default_action)
+                        Some(*self.default_action.read().expect("default action lock"))
                     } else {
                         None
                     }
                 } else {
-                    Some(
-                        self.decision(&query, client)
-                            .map_or(self.config.policy.default_action, |decision| {
-                                decision.action
-                            }),
-                    )
+                    Some(self.decision(&query, client).map_or(
+                        *self.default_action.read().expect("default action lock"),
+                        |decision| decision.action,
+                    ))
                 }
             });
             // The borrowed listener records the action before handing the
@@ -3920,6 +3971,28 @@ mod runtime {
                 && name
                     .split('.')
                     .all(|label| !label.is_empty() && label.len() <= 63 && label.is_ascii()))
+    }
+
+    fn validate_legacy_domains(domains: &[String]) -> Result<Vec<String>, policy::PolicyError> {
+        if domains.len() > policy::MAX_RULES {
+            return Err(policy::PolicyError::InvalidProfile {
+                name: "<legacy-domains>".into(),
+                reason: format!("domain count exceeds {}", policy::MAX_RULES),
+            });
+        }
+        domains
+            .iter()
+            .map(|raw| {
+                let domain = normalize(raw);
+                if domain.is_empty() || !valid_dns_name(&domain) {
+                    return Err(policy::PolicyError::InvalidProfile {
+                        name: "<legacy-domains>".into(),
+                        reason: format!("invalid domain {raw}"),
+                    });
+                }
+                Ok(domain)
+            })
+            .collect()
     }
 
     #[cfg(test)]
