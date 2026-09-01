@@ -44,6 +44,9 @@ impl PolicyStore {
     /// Validate off the request path, then publish one whole snapshot.
     pub fn reload(&self, rules: &[RuleConfig]) -> Result<ReloadState, PolicyError> {
         let next = ReferencePolicy::new(rules)?;
+        if self.current.read(|current| current == &next) {
+            return Ok(ReloadState::Unchanged);
+        }
         self.control.replace(next);
         Ok(ReloadState::Published)
     }
@@ -142,6 +145,13 @@ mod tests {
                 })
                 .is_none()
         }));
+    }
+
+    #[test]
+    fn identical_reload_is_reported_without_republication() {
+        let rules = [rule(1, "same.example", Action::Reject)];
+        let store = PolicyStore::new(&rules).expect("initial");
+        assert_eq!(store.reload(&rules), Ok(ReloadState::Unchanged));
     }
 
     #[test]

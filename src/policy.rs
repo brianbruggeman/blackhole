@@ -144,7 +144,7 @@ impl core::fmt::Display for PolicyError {
 
 impl core::error::Error for PolicyError {}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Rule {
     id: u32,
     domain: String,
@@ -214,7 +214,7 @@ impl IpNetwork {
 }
 
 /// A simple linear matcher used as the semantic oracle for compact indexes.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ReferencePolicy {
     rules: Vec<Rule>,
 }
@@ -222,7 +222,7 @@ pub struct ReferencePolicy {
 /// Candidate compact lookup index. It narrows matching to exact and
 /// reverse-label suffix buckets, then reuses the reference predicate and
 /// precedence rules for semantic parity.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct IndexedPolicy {
     rules: Vec<Rule>,
     buckets: BTreeMap<String, Vec<usize>>,
