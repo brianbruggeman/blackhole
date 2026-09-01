@@ -129,3 +129,22 @@ arms=scalar-retained memchr-not-added simd-not-added wasm-edge-compile-only wasm
 
 This measures the pure parse-to-match path; it does not establish a
 production-performance or zero-copy claim.
+
+## Row 6 — wire-name scan arm comparison
+
+`MEASURED` on 2026-09-01, Linux `x86_64`, rustc `1.98.0`, release build,
+source commit `cfabb0a`, GitHub Proxima revision `afca73c`, and load average
+`1.23..1.37`. Three consecutive process runs used `N=25` samples over the
+same long valid DNS name. All arms performed zero allocations:
+
+```text
+name_scan_scalar p50_ns=42..43 p95_ns=59..60 p99_ns=78 cov=0.168791..0.180800
+name_scan_chunked p50_ns=80..90 p95_ns=113..121 p99_ns=153..170 cov=0.146700..0.218168
+name_scan_memchr p50_ns=20 p95_ns=48..53 p99_ns=1097..1238 cov=3.248039..3.400667
+rss_kib=6556..6604
+```
+
+The memchr median is lower but its tail and variance are materially worse;
+the chunked arm is slower than scalar on this workload. These are benchmark
+arms only, not replacements for Proxima's validated parser. Scalar remains
+the production arm; no SIMD or WASM runtime result is claimed.
