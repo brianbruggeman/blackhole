@@ -2,10 +2,12 @@ use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, UdpSocket};
 use std::sync::Arc;
 
+use blackhole::admin::AdminHandler;
 use blackhole::listener::{TcpProtocol, UdpProtocol};
 use blackhole::query::MAX_QUERY_BYTES;
 use blackhole::{Action, Config, Policy, RewriteConfig, RuleConfig, UpstreamConfig};
 use bytes::Bytes;
+use futures::executor::block_on;
 use futures::io::{AsyncReadExt, AsyncWriteExt};
 use proxima::pipe::into_handle;
 use proxima::{Listener, ListenerBuilderEntry};
@@ -123,6 +125,23 @@ async fn listener_preserves_distinct_terminal_actions_on_udp() {
                 }
             }
         }
+    }
+    let stats_response = block_on(
+        AdminHandler::new(Arc::clone(&policy)).call(
+            Request::builder()
+                .method("GET")
+                .path("/stats")
+                .build()
+                .expect("UDP action stats request"),
+        ),
+    )
+    .expect("UDP action stats response");
+    let stats: serde_json::Value =
+        serde_json::from_slice(&stats_response.payload).expect("UDP action stats JSON");
+    for action in [
+        "pass", "observe", "forward", "reject", "nxdomain", "sink", "honeypot", "drop", "ignore",
+    ] {
+        assert_eq!(stats["actions"][action], 1, "UDP action count for {action}");
     }
     drop(server);
 }
@@ -280,6 +299,27 @@ async fn listener_preserves_distinct_terminal_actions_on_tcp() {
                 }
             }
         }
+    }
+    let stats_response = block_on(
+        AdminHandler::new(Arc::clone(&policy)).call(
+            Request::builder()
+                .method("GET")
+                .path("/stats")
+                .build()
+                .expect("TCP action stats request"),
+        ),
+    )
+    .expect("TCP action stats response");
+    let stats: serde_json::Value =
+        serde_json::from_slice(&stats_response.payload).expect("TCP action stats JSON");
+    for action in [
+        "pass", "observe", "forward", "reject", "nxdomain", "sink", "honeypot", "drop", "ignore",
+    ] {
+        let expected = if action == "reject" { 3 } else { 1 };
+        assert_eq!(
+            stats["actions"][action], expected,
+            "TCP action count for {action}"
+        );
     }
     server.stop();
 }
