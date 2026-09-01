@@ -40,7 +40,10 @@ below are future capabilities, grouped by the dependency layer they extend.
 ## Interception and deployment
 
 - Complete original-destination integration for the opt-in capture
-  configuration.
+  configuration by consuming a supported Proxima listener context/raw-socket
+  capability; until that upstream seam exists, keep original-destination and
+  reply-routing metadata inside the platform adapter and do not synthesize it
+  in policy, telemetry, or recordings.
 - Extend the current transactional systemd and launchd installers with
   host-installed upgrade/rollback verification for the native package; the
   archive installer and disposable-root transaction are already covered.
