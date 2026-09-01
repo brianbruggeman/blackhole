@@ -1395,7 +1395,7 @@ mod tests {
             domains: vec!["ads.example".into()],
             action: crate::Action::Nxdomain,
             groups: vec!["home".into()],
-            client_identity: None,
+            client_identity: Some("family-router".into()),
             priority: 10,
             client_cidrs: vec![],
             qtype: None,
@@ -1405,6 +1405,11 @@ mod tests {
             name: "home".into(),
             client_addresses: Vec::new(),
             client_cidrs: vec!["192.0.2.0/24".into()],
+        }];
+        config.policy.client_identities = vec![crate::ClientIdentityConfig {
+            name: "family-router".into(),
+            clients: vec!["192.0.2.10".parse().expect("identity address")],
+            client_cidrs: Vec::new(),
         }];
         let handler = AdminHandler::new(Arc::new(Policy::new(config).expect("valid rules")));
         let response = block_on(handler.call(request("GET", "/rules"))).expect("rules response");
@@ -1421,6 +1426,7 @@ mod tests {
             serde_json::from_slice(&profiles.payload).expect("profiles JSON");
         assert_eq!(profiles["total"], 1);
         assert_eq!(profiles["profiles"][0]["name"], "family");
+        assert_eq!(profiles["profiles"][0]["client_identity"], "family-router");
         let groups =
             block_on(handler.call(request("GET", "/client-groups"))).expect("client groups");
         let groups: serde_json::Value =
@@ -1571,11 +1577,16 @@ mod tests {
             domains: vec!["ads.example".into()],
             action: crate::Action::Nxdomain,
             groups: Vec::new(),
-            client_identity: None,
+            client_identity: Some("family-router".into()),
             priority: 0,
             client_cidrs: Vec::new(),
             qtype: None,
             qclass: None,
+        }];
+        config.policy.client_identities = vec![crate::ClientIdentityConfig {
+            name: "family-router".into(),
+            clients: vec!["192.0.2.10".parse().expect("identity address")],
+            client_cidrs: Vec::new(),
         }];
         let policy = Arc::new(Policy::new(config).expect("valid profile policy"));
         let handler = AdminHandler::new(Arc::clone(&policy));
@@ -1583,7 +1594,7 @@ mod tests {
             .method("POST")
             .path("/reload/profiles/upsert")
             .payload(
-                r#"{"profiles":[{"id":800,"name":"family-edited","domains":["new.example"],"action":"reject"},{"id":801,"name":"guest","domains":["guest.example"],"action":"drop"}]}"#,
+                r#"{"profiles":[{"id":800,"name":"family-edited","domains":["new.example"],"action":"reject","client_identity":"family-router"},{"id":801,"name":"guest","domains":["guest.example"],"action":"drop"}]}"#,
             )
             .build()
             .expect("profile upsert request");
@@ -1595,6 +1606,11 @@ mod tests {
             serde_json::from_slice(&profiles.payload).expect("profile JSON");
         assert_eq!(profiles["total"], 2);
         assert_eq!(profiles["profiles"][0]["name"], "family-edited");
+        assert_eq!(profiles["profiles"][0]["client_identity"], "family-router");
+        let bundle =
+            block_on(handler.call(request("GET", "/policy-bundle"))).expect("policy bundle");
+        let bundle: serde_json::Value = serde_json::from_slice(&bundle.payload).expect("bundle");
+        assert_eq!(bundle["profiles"][0]["client_identity"], "family-router");
 
         let duplicate = Request::builder()
             .method("POST")
