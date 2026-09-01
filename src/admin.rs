@@ -1604,7 +1604,7 @@ mod tests {
             .method("POST")
             .path("/reload/profiles/upsert")
             .payload(
-                r#"{"profiles":[{"id":800,"name":"family-edited","domains":["new.example"],"action":"reject","client_identity":"family-router"},{"id":801,"name":"guest","domains":["guest.example"],"action":"drop"}]}"#,
+                r#"{"profiles":[{"id":800,"name":"family-edited","domains":["new.example"],"action":"reject","client_identity":"family-router"},{"id":801,"name":"guest","domains":["guest.example"],"action":"drop","enabled":false}]}"#,
             )
             .build()
             .expect("profile upsert request");
@@ -1617,6 +1617,8 @@ mod tests {
         assert_eq!(profiles["total"], 2);
         assert_eq!(profiles["profiles"][0]["name"], "family-edited");
         assert_eq!(profiles["profiles"][0]["client_identity"], "family-router");
+        assert_eq!(profiles["profiles"][1]["enabled"], false);
+        assert_eq!(profiles["profiles"][1]["expanded_rule_count"], 0);
         let bundle =
             block_on(handler.call(request("GET", "/policy-bundle"))).expect("policy bundle");
         let bundle: serde_json::Value = serde_json::from_slice(&bundle.payload).expect("bundle");
