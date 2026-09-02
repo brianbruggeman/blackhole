@@ -974,17 +974,18 @@ mod runtime {
             let suffix = name.split_once('.').map(|(_, suffix)| suffix);
             for identity in [client_identity, None] {
                 let identity = identity.map(str::to_owned);
-                if let Some(answer) =
-                    self.entries
-                        .get(&(identity.clone(), name.clone(), query.qtype))
-                {
-                    return Some(answer.clone());
+                for qtype in [query.qtype, 5] {
+                    if let Some(answer) = self.entries.get(&(identity.clone(), name.clone(), qtype))
+                    {
+                        return Some(answer.clone());
+                    }
                 }
                 if let Some(suffix) = suffix
-                    && let Some(answer) = self
-                        .wildcard_entries
-                        .get(&(identity, query.qtype))
-                        .and_then(|entries| entries.get(suffix))
+                    && let Some(answer) = [query.qtype, 5].into_iter().find_map(|qtype| {
+                        self.wildcard_entries
+                            .get(&(identity.clone(), qtype))
+                            .and_then(|entries| entries.get(suffix))
+                    })
                 {
                     let answer = answer.clone();
                     let query_name = query.name.clone();
@@ -13429,6 +13430,16 @@ mod runtime {
                 ]
                 .concat()
             );
+            let a_query_answer = policy
+                .evaluate(&proxima_dns::DnsQuery {
+                    id: 2,
+                    recursion_desired: true,
+                    name: "alias.home.arpa.".into(),
+                    qtype: 1,
+                    qclass: 1,
+                })
+                .expect("CNAME answer for an A query");
+            assert_eq!(a_query_answer.records[0].rtype, 5);
 
             let mut mixed = Config::default();
             mixed.policy.rewrites = vec![RewriteConfig {
