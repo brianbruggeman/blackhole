@@ -223,6 +223,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   observation.
 - Country-policy request reads use Proxima's lock-free `Live` snapshot;
   validated reloads replace one complete immutable generation.
+- Country maps may use a bounded, atomically refreshed local last-good
+  snapshot. Failed local or hosted refreshes recover the last validated bytes
+  without publishing a partial map or retaining query data.
 - Runtime policy configuration mirrors for domain rules, profiles, client
   groups, rewrites, country policy, and blocklist sources use Proxima's
   lock-free `Live` snapshots; the remaining reload coordinator lock is
