@@ -3116,6 +3116,8 @@ mod runtime {
         decision_counts: [AtomicU64; 9],
         admission: Live<AdmissionConfig>,
         admission_control: LiveControl<AdmissionConfig>,
+        global_rate_limit_whitelist: Live<Vec<policy::IpNetwork>>,
+        global_rate_limit_whitelist_control: LiveControl<Vec<policy::IpNetwork>>,
         upstream: Option<DnsClientUpstream>,
         upstream_slots: Option<Arc<AtomicPermitPool>>,
         named_upstreams: BTreeMap<String, NamedUpstream>,
@@ -3479,6 +3481,15 @@ mod runtime {
             let (country_policy_config, country_policy_config_control) =
                 live(country_policy_config);
             let (admission, admission_control) = live(admission);
+            let whitelist = admission.read(|admission| {
+                admission
+                    .global_rate_limit_whitelist_cidrs
+                    .iter()
+                    .filter_map(|value| policy::IpNetwork::parse(value))
+                    .collect::<Vec<_>>()
+            });
+            let (global_rate_limit_whitelist, global_rate_limit_whitelist_control) =
+                live(whitelist);
             let (rewrites, rewrite_control) = live(rewrites);
             let (rewrite_configs, rewrite_configs_control) = live(rewrite_configs);
             let (profiles, profiles_control) = live(profiles);
@@ -3545,6 +3556,8 @@ mod runtime {
                 decision_counts: core::array::from_fn(|_| AtomicU64::new(0)),
                 admission,
                 admission_control,
+                global_rate_limit_whitelist,
+                global_rate_limit_whitelist_control,
                 upstream: None,
                 upstream_slots: None,
                 named_upstreams: BTreeMap::new(),
@@ -3797,6 +3810,13 @@ mod runtime {
                 return Ok(ReloadState::Unchanged);
             }
             self.admission_control.replace(admission.clone());
+            self.global_rate_limit_whitelist_control.replace(
+                admission
+                    .global_rate_limit_whitelist_cidrs
+                    .iter()
+                    .filter_map(|value| policy::IpNetwork::parse(value))
+                    .collect(),
+            );
             self.policy_generation.fetch_add(1, Ordering::Relaxed);
             self.observe_reload_latency("admission", started);
             Ok(ReloadState::Published)
@@ -5014,6 +5034,13 @@ mod runtime {
                 .replace(country_config.clone());
             if let Some(admission) = admission {
                 self.admission_control.replace(admission.clone());
+                self.global_rate_limit_whitelist_control.replace(
+                    admission
+                        .global_rate_limit_whitelist_cidrs
+                        .iter()
+                        .filter_map(|value| policy::IpNetwork::parse(value))
+                        .collect(),
+                );
             }
             if let Some(domains) = normalized_legacy_domains {
                 self.legacy_domains_control.replace(domains);
@@ -5730,20 +5757,16 @@ mod runtime {
         }
 
         fn allow_global_rate(&self, client: Option<IpAddr>) -> bool {
-            let admission = self.admission_config();
             if client.is_some_and(|client| {
-                admission
-                    .global_rate_limit_whitelist_cidrs
-                    .iter()
-                    .any(|cidr| {
-                        policy::IpNetwork::parse(cidr)
-                            .is_some_and(|network| network.contains(client))
-                    })
+                self.global_rate_limit_whitelist
+                    .read(|networks| networks.iter().any(|network| network.contains(client)))
             }) {
                 return true;
             }
-            self.global_rate
-                .allow(self.breaker_epoch, admission.max_queries_per_second, 1)
+            self.admission.read(|admission| {
+                self.global_rate
+                    .allow(self.breaker_epoch, admission.max_queries_per_second, 1)
+            })
         }
 
         fn allow_global_abuse(&self) -> bool {
