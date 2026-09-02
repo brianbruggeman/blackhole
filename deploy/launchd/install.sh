@@ -72,6 +72,18 @@ restore_file() {
     fi
 }
 
+bootstrap_service() {
+    # launchd can release the previous job asynchronously after bootout. Keep
+    # the upgrade bounded while allowing that handoff to complete.
+    for attempt in 1 2 3 4 5; do
+        if launchctl bootstrap system "/Library/LaunchDaemons/$label.plist"; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
 cleanup() {
     status=$?
     if [ "$rollback_needed" -eq 1 ] && [ "$status" -ne 0 ]; then
@@ -81,7 +93,7 @@ cleanup() {
         restore_file /usr/local/etc/blackhole/blackhole.toml "$backup_dir/config"
         restore_file "/Library/LaunchDaemons/$label.plist" "$backup_dir/plist"
         if [ "$service_was_loaded" -eq 1 ]; then
-            launchctl bootstrap system "/Library/LaunchDaemons/$label.plist" >/dev/null 2>&1 || true
+            bootstrap_service >/dev/null 2>&1 || true
         fi
     fi
     rm -r "$backup_dir"
@@ -106,6 +118,6 @@ install -o _blackhole -g _blackhole -m 0640 "$config" \
 install -o root -g wheel -m 0644 "$plist" "/Library/LaunchDaemons/$label.plist"
 
 launchctl bootout "system/$label" >/dev/null 2>&1 || true
-launchctl bootstrap system "/Library/LaunchDaemons/$label.plist"
+bootstrap_service
 rollback_needed=0
 echo "blackhole installed and started"
