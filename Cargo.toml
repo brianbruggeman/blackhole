@@ -14,6 +14,14 @@ required-features = ["std"]
 [lib]
 crate-type = ["rlib", "cdylib"]
 
+# The sans-IO edge build supplies its own panic handler and cannot unwind.
+# Keep package-local binaries and checks compatible with that no-std target.
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+
 [features]
 default = ["std"]
 std = [
