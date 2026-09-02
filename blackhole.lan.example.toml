@@ -1,0 +1,31 @@
+# Local-network starting point. Replace the two TEST-NET placeholders with the
+# resolver address and upstream selected for the LAN before enabling the unit.
+reload_interval_secs = 3600
+
+[server]
+# Bind to the host's LAN address, not 0.0.0.0, unless the firewall policy is
+# intentionally configured to expose DNS on every interface.
+listen = "192.168.50.1:53"
+
+[policy]
+default_action = "pass"
+# Add bounded Pi-hole/AdGuard-compatible files here after creating them with
+# the service account, for example:
+# blocklists = ["/etc/blackhole/lists/ads.txt"]
+
+[upstream]
+resolver_ip = "9.9.9.9"
+port = 53
+transport = "udp"
+query_timeout_ms = 2000
+max_attempts = 2
+max_outstanding = 64
+breaker_failures = 3
+breaker_cooldown_secs = 30
+
+[security]
+reject_private_upstream_addresses = true
+
+[capture]
+# Transparent interception is a separate, explicitly authorized adapter.
+enabled = false

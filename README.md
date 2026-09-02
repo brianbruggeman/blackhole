@@ -31,6 +31,12 @@ optional capture rules:
 cargo run --release -- --check blackhole.example.toml
 ```
 
+For a LAN resolver starting point, copy
+`blackhole.lan.example.toml`, replace `192.168.50.1` with the host's LAN
+address, and set the upstream and blocklist paths for that network. Keep
+`capture.enabled = false` until the platform-specific firewall adapter has
+been reviewed and authorized; the file binds only the selected LAN address.
+
 The sans-IO edge also builds without the runtime tier. Because no-std targets
 cannot unwind panics, include the abort strategy explicitly:
 
