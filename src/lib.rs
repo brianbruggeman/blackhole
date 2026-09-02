@@ -10718,7 +10718,9 @@ mod runtime {
             let thread = std::thread::spawn(move || {
                 let (mut stream, _) = server.accept().expect("accept freshness request");
                 let mut request = [0_u8; 2048];
-                stream.read(&mut request).expect("read freshness request");
+                stream
+                    .read_exact(&mut request)
+                    .expect("read freshness request");
                 let body = b"US 192.0.2.0/24\n";
                 write!(
                     stream,
