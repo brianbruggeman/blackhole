@@ -4,8 +4,11 @@ A DNS sinkhole/honeypot for Linux and macOS. The policy engine is pure
 Rust and the wire/runtime edge uses Proxima from
 [`brianbruggeman/proxima`](https://github.com/brianbruggeman/proxima); the
 default runtime path is Prime-backed, with the full Tokio capability set
-available through the opt-in compatibility feature. DNS over UDP and TCP share
-one bind.
+available through the opt-in compatibility feature. DNS over UDP datagrams and
+TCP share one bind and the same bounded policy/FSM path. Client-scoped rules,
+admission limits, action semantics, and telemetry apply consistently to both
+transports; TCP additionally uses bounded length-prefixed framing and UDP
+rejects oversized datagrams before parsing.
 An optional bounded DHCPv4 adapter serves a configured LAN pool; it is
 disabled by default and requires an explicitly authorized bind on UDP port 67.
 
