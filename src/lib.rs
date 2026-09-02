@@ -5683,7 +5683,6 @@ mod runtime {
                     .or_else(|| Some(DnsAnswer::ok(Vec::new())))
                     .map(|answer| self.cap_answer(query, answer));
             }
-            let decision = self.decision(query, None);
             if !self.rules_configured.load(Ordering::Acquire) {
                 if self.matches(&query.name) {
                     return self
@@ -5696,6 +5695,7 @@ mod runtime {
                     .or_else(|| Some(DnsAnswer::ok(Vec::new())))
                     .map(|answer| self.cap_answer(query, answer));
             }
+            let decision = self.decision(query, None);
             let answer = match decision
                 .map(|decision| decision.action)
                 .or(Some(*self.default_action.snapshot()))
