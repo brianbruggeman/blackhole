@@ -90,7 +90,7 @@ fn shipped_binary_serves_udp_datagrams_and_tcp_frames() {
     let mut config = NamedTempFile::new().expect("create config");
     writeln!(
         config,
-        "[server]\nlisten = \"{listener_addr}\"\n\n[policy]\ndefault_action = \"forward\"\n\n[[policy.rules]]\nid = 9001\ndomain = \"blocked.example.\"\naction = \"reject\"\n\n[upstream]\nresolver_ip = \"127.0.0.1\"\nport = {}\ntransport = \"udp\"\nquery_timeout_ms = 500\nmax_attempts = 1",
+        "[server]\nlisten = \"{listener_addr}\"\n\n[policy]\ndefault_action = \"forward\"\n\n[[policy.rules]]\nid = 9001\ndomain = \"blocked.example.\"\naction = \"reject\"\n\n[[policy.rules]]\nid = 9002\ndomain = \"nxdomain.example.\"\naction = \"nxdomain\"\n\n[[policy.rules]]\nid = 9003\ndomain = \"drop.example.\"\naction = \"drop\"\n\n[upstream]\nresolver_ip = \"127.0.0.1\"\nport = {}\ntransport = \"udp\"\nquery_timeout_ms = 500\nmax_attempts = 1",
         upstream_addr.port()
     )
     .expect("write config");
@@ -123,6 +123,31 @@ fn shipped_binary_serves_udp_datagrams_and_tcp_frames() {
     assert_eq!(blocked_message.header.id, 0x1000);
     assert_eq!(blocked_message.header.flags.rcode(), 5);
     assert!(blocked_message.answers().next().is_none());
+
+    let nxdomain_query = query(0x1003, "nxdomain.example.");
+    udp.send_to(&nxdomain_query, listener_addr)
+        .expect("send NXDOMAIN UDP query");
+    let (nxdomain_length, _) = udp
+        .recv_from(&mut blocked_response)
+        .expect("receive NXDOMAIN UDP response");
+    let nxdomain_message =
+        parse_message(&blocked_response[..nxdomain_length]).expect("parse NXDOMAIN response");
+    assert_eq!(nxdomain_message.header.id, 0x1003);
+    assert_eq!(nxdomain_message.header.flags.rcode(), 3);
+    assert!(nxdomain_message.answers().next().is_none());
+
+    udp.set_read_timeout(Some(Duration::from_millis(200)))
+        .expect("set drop timeout");
+    let drop_query = query(0x1004, "drop.example.");
+    udp.send_to(&drop_query, listener_addr)
+        .expect("send drop UDP query");
+    let drop_result = udp.recv_from(&mut blocked_response);
+    assert!(matches!(
+        drop_result,
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+    ));
+    udp.set_read_timeout(Some(Duration::from_secs(3)))
+        .expect("restore UDP timeout");
 
     let udp_query = query(0x1001, "udp.example.");
     udp.send_to(&udp_query, listener_addr)
