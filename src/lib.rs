@@ -814,11 +814,11 @@ mod runtime {
         /// Operator-supplied lines of `COUNTRY CIDR`; no database is bundled.
         #[serde(default)]
         pub map_path: Option<String>,
-        /// Optional lowercase or uppercase 16-digit FNV-1a fingerprint pin
+        /// Optional lowercase or uppercase 64-digit SHA-256 digest pin
         /// for the complete map contents. A mismatch rejects the refresh and
         /// retains the last good snapshot.
         #[serde(default)]
-        pub expected_fingerprint: Option<String>,
+        pub expected_sha256: Option<String>,
         /// Optional maximum age of the map file. Stale maps fail closed.
         #[serde(default)]
         pub max_age_secs: Option<u64>,
@@ -1949,10 +1949,15 @@ mod runtime {
         })
     }
 
-    fn parse_fingerprint(value: &str) -> Option<u64> {
-        (value.len() == 16 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
-            .then(|| u64::from_str_radix(value, 16).ok())
-            .flatten()
+    fn source_sha256(contents: &[u8]) -> String {
+        use sha2::{Digest, Sha256};
+
+        let digest = Sha256::digest(contents);
+        digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    fn valid_sha256(value: &str) -> bool {
+        value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
     }
 
     fn load_country_policy(
@@ -2124,20 +2129,18 @@ mod runtime {
             }
             contents
         };
-        if let Some(expected) = config.expected_fingerprint.as_deref() {
-            let expected = parse_fingerprint(expected).ok_or_else(|| {
-                policy::PolicyError::InvalidCountryMap {
-                    path: path.into(),
-                    reason: "expected_fingerprint must be exactly 16 hexadecimal digits".into(),
-                }
-            })?;
-            let actual = source_fingerprint(contents.as_bytes());
-            if actual != expected {
+        if let Some(expected) = config.expected_sha256.as_deref() {
+            if !valid_sha256(expected) {
                 return Err(policy::PolicyError::InvalidCountryMap {
                     path: path.into(),
-                    reason: format!(
-                        "map fingerprint mismatch: expected {expected:016x}, got {actual:016x}"
-                    ),
+                    reason: "expected_sha256 must be exactly 64 hexadecimal digits".into(),
+                });
+            }
+            let actual = source_sha256(contents.as_bytes());
+            if !actual.eq_ignore_ascii_case(expected) {
+                return Err(policy::PolicyError::InvalidCountryMap {
+                    path: path.into(),
+                    reason: format!("map SHA-256 mismatch: expected {expected}, got {actual}"),
                 });
             }
         }
@@ -7506,26 +7509,25 @@ mod runtime {
             ));
             let contents = "US 192.0.2.0/24 US-CA AS64500\n";
             std::fs::write(&path, contents).expect("write country map");
-            let fingerprint = source_fingerprint(contents.as_bytes());
             let mut config = CountryPolicyConfig {
                 map_path: Some(path.to_string_lossy().into_owned()),
-                expected_fingerprint: Some(format!("{fingerprint:016X}")),
+                expected_sha256: Some(source_sha256(contents.as_bytes()).to_uppercase()),
                 deny: vec!["US".into()],
                 ..Default::default()
             };
             assert!(load_country_policy(&config).is_ok());
 
-            config.expected_fingerprint = Some("0000000000000000".into());
+            config.expected_sha256 = Some("00".repeat(32));
             assert!(matches!(
                 load_country_policy(&config),
                 Err(policy::PolicyError::InvalidCountryMap { reason, .. })
-                    if reason.contains("fingerprint mismatch")
+                    if reason.contains("SHA-256 mismatch")
             ));
-            config.expected_fingerprint = Some("not-a-fingerprint".into());
+            config.expected_sha256 = Some("not-a-sha256".into());
             assert!(matches!(
                 load_country_policy(&config),
                 Err(policy::PolicyError::InvalidCountryMap { reason, .. })
-                    if reason.contains("exactly 16 hexadecimal digits")
+                    if reason.contains("exactly 64 hexadecimal digits")
             ));
             let _ = std::fs::remove_file(path);
         }
@@ -8483,7 +8485,7 @@ mod runtime {
             let config = Config {
                 country_policy: CountryPolicyConfig {
                     map_path: Some(path.to_string_lossy().into_owned()),
-                    expected_fingerprint: None,
+                    expected_sha256: None,
                     max_age_secs: None,
                     reload_interval_secs: 0,
                     deny: vec!["us".into()],
@@ -8548,7 +8550,7 @@ mod runtime {
                 Some(unchanged_fingerprint.as_str())
             );
             let mut pinned_config = policy.country_policy_config.snapshot().as_ref().clone();
-            pinned_config.expected_fingerprint = Some("0000000000000000".into());
+            pinned_config.expected_sha256 = Some("00".repeat(32));
             assert!(policy.replace_country_policy(&pinned_config).is_err());
             let pinned_failure_status: serde_json::Value =
                 serde_json::from_str(&policy.admin_country_status()).expect("country status");
@@ -8650,7 +8652,7 @@ mod runtime {
             let config = Config {
                 country_policy: CountryPolicyConfig {
                     map_path: Some(path.to_string_lossy().into_owned()),
-                    expected_fingerprint: None,
+                    expected_sha256: None,
                     max_age_secs: None,
                     reload_interval_secs: 0,
                     deny: vec!["US".into()],

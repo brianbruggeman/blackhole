@@ -157,8 +157,8 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - An optional bounded background country-map reload uses Proxima's interval
   and lifecycle primitives, publishes only changed valid maps, and preserves
   the last good snapshot after a failed refresh.
-- Country-map refreshes can be pinned to an operator-supplied 16-digit
-  content fingerprint; mismatches fail closed and retain the last good map,
+- Country-map refreshes can be pinned to an operator-supplied SHA-256 content
+  digest; mismatches fail closed and retain the last good map,
   including for hosted sources.
 - Authenticated bounded `POST /reload/country/replace` atomically replaces the
   country/CIDR map configuration and selectors, retaining the previous live
