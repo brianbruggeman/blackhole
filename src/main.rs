@@ -786,9 +786,7 @@ mod tests {
         let restored = futures::executor::block_on(restore_persisted_abuse(&policy, &path, 4_096))
             .expect("restore global incident recording");
         assert_eq!(restored, 1);
-        let status: serde_json::Value =
-            serde_json::from_str(&policy.admin_admission_status()).expect("admission status");
-        assert_eq!(status["global_breaker_open"], true);
+        assert!(policy.global_abuse_is_blocked());
         std::fs::remove_dir_all(directory).expect("remove temporary directory");
     }
 

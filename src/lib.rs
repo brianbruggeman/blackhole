@@ -6316,6 +6316,14 @@ mod runtime {
             .to_string()
         }
 
+        /// Return only whether the configured global abuse breaker is open.
+        /// This is safe for adapters and startup tests; it exposes no keys,
+        /// counters, addresses, or query data.
+        #[must_use]
+        pub fn global_abuse_is_blocked(&self) -> bool {
+            self.global_abuse.is_blocked(self.breaker_epoch)
+        }
+
         /// Return country-policy controls and bounded map metadata without
         /// exposing the source path or any client address.
         pub(crate) fn admin_country_status(&self) -> String {
