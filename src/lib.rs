@@ -7528,6 +7528,7 @@ mod runtime {
                 "profiles": profiles.len(),
                 "client_groups": client_groups.len(),
                 "identity_rules": identity_rules,
+                "conditional_forwards": self.config.policy.conditional_forwards.len(),
                 "country_entries": country_policy.as_ref().as_ref().map_or(0, |policy| policy.entries.len()),
                 "country_deny_rules": country_policy.as_ref().as_ref().map_or(0, |policy| policy.deny.len()),
                 "country_observe_rules": country_policy.as_ref().as_ref().map_or(0, |policy| policy.observe.len()),
@@ -9528,6 +9529,9 @@ mod runtime {
                 policy.conditional_upstream_name(&local, Some("192.0.2.11".parse().unwrap())),
                 None
             );
+            let status: serde_json::Value =
+                serde_json::from_str(&policy.admin_policy_status()).expect("policy status");
+            assert_eq!(status["conditional_forwards"], 2);
         }
 
         #[test]

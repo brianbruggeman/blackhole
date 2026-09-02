@@ -279,7 +279,7 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   status, parser load status, contributed rule count, size, modification age,
   and deterministic content fingerprint.
 - Bounded authenticated `GET /policy/status` exposes effective rule, rewrite,
-  blocklist-source, profile, group, and country-entry counts without source
+  blocklist-source, profile, group, conditional-forwarding, and country-entry counts without source
   paths, query names, credentials, client identities, or packet payloads; its
   monotonic policy generation advances once per successful publication.
 - Authenticated bounded `POST /policy/preview` dry-runs the live matcher for
