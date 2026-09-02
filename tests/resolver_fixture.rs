@@ -1,6 +1,7 @@
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, UdpSocket};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU16, Ordering};
 
 use blackhole::admin::AdminHandler;
 use blackhole::listener::{TcpProtocol, UdpProtocol};
@@ -19,9 +20,11 @@ use proxima_primitives::stream::DatagramFactory;
 use proxima_primitives::stream::StreamUpstreamExt;
 use proxima_protocols::dns::{Flags, encode, parse_message};
 
+static NEXT_TEST_PORT: AtomicU16 = AtomicU16::new(30_000);
+
 fn test_listener_addr() -> SocketAddr {
-    let probe = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("reserve listener port");
-    probe.local_addr().expect("reserved listener address")
+    let port = NEXT_TEST_PORT.fetch_add(1, Ordering::Relaxed);
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)
 }
 
 #[proxima::test]
