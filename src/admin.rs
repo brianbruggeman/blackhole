@@ -1699,6 +1699,9 @@ mod tests {
             serde_json::from_slice(&country_status.payload).expect("country status JSON");
         assert_eq!(country_status["map_configured"], false);
         assert_eq!(country_status["source_kind"], "none");
+        assert_eq!(country_status["source_status"], "none");
+        assert_eq!(country_status["source_age_secs"], serde_json::Value::Null);
+        assert_eq!(country_status["freshness_valid"], serde_json::Value::Null);
         assert_eq!(country_status["freshness_contract"], "none");
         assert_eq!(country_status["entries"], 0);
         assert_eq!(
@@ -2301,6 +2304,8 @@ mod tests {
             .expect("country status response");
         let status: serde_json::Value = serde_json::from_slice(&status.payload).expect("status");
         assert_eq!(status["map_configured"], true);
+        assert_eq!(status["source_status"], "ok");
+        assert_eq!(status["freshness_valid"], true);
         assert_eq!(status["entries"], 1);
         assert_eq!(status["deny"], serde_json::json!(["US"]));
         assert_eq!(status["deny_regions"], serde_json::json!(["us-ca"]));
@@ -2335,6 +2340,7 @@ mod tests {
             .expect("country status response");
         let status: serde_json::Value = serde_json::from_slice(&status.payload).expect("status");
         assert_eq!(status["deny"], serde_json::json!(["US"]));
+        assert_eq!(status["source_status"], "ok");
         let bundle = block_on(handler.call(request("GET", "/policy-bundle")))
             .expect("policy bundle response");
         let bundle: serde_json::Value = serde_json::from_slice(&bundle.payload).expect("bundle");

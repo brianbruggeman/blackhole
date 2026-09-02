@@ -6251,9 +6251,38 @@ mod runtime {
                     "local_file"
                 }
             });
+            let (source_status, source_age_secs, freshness_valid) = match config.map_path.as_deref()
+            {
+                None => ("none", None, None),
+                Some(source) if http_source_parts(source).is_some() => ("remote", None, None),
+                Some(source) => match std::fs::metadata(source) {
+                    Ok(metadata) if metadata.is_file() => {
+                        let age = std::time::SystemTime::now()
+                            .duration_since(
+                                metadata
+                                    .modified()
+                                    .unwrap_or_else(|_| std::time::SystemTime::now()),
+                            )
+                            .ok()
+                            .map(|duration| duration.as_secs());
+                        let fresh = config
+                            .max_age_secs
+                            .map_or(Some(true), |max_age| age.map(|age| age <= max_age));
+                        ("ok", age, fresh)
+                    }
+                    Ok(_) => ("unreadable", None, Some(false)),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        ("missing", None, Some(false))
+                    }
+                    Err(_) => ("unreadable", None, Some(false)),
+                },
+            };
             serde_json::json!({
                 "map_configured": policy.is_some(),
                 "source_kind": source_kind,
+                "source_status": source_status,
+                "source_age_secs": source_age_secs,
+                "freshness_valid": freshness_valid,
                 "freshness_contract": if source_kind == "local_file" { "local_mtime" } else { "none" },
                 "entries": policy.as_ref().map_or(0, |value| value.entries.len()),
                 "source_fingerprint": policy
