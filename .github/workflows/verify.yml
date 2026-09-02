@@ -38,7 +38,7 @@ jobs:
       - run: cargo test --locked --doc
       - run: cargo build --locked --no-default-features --target thumbv7m-none-eabi
       - run: cargo check --locked --features tokio-compat --all-targets
-      - run: cargo install cargo-audit --locked
+      - uses: taiki-e/install-action@cargo-audit
       - run: cargo audit
       - run: cargo audit --file fuzz/Cargo.lock
       - name: validate deployment scripts
