@@ -15,9 +15,6 @@ below are future capabilities, grouped by the dependency layer they extend.
 
 ## Policy and operator controls
 
-- Extend the authenticated policy administration with richer query rules and
-  client/group workflows beyond the bounded source, rule, profile, identity,
-  and network-scope operations in the current baseline.
 - Add a managed GeoIP/region/ASN data lifecycle and richer country policy
   beyond the explicit operator-supplied map labels, SHA-256-pinned
   bounded refresh, and last-good snapshot in the current baseline; uncertainty
