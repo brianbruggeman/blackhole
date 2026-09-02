@@ -242,6 +242,7 @@ document.querySelector('#reload-bundle').onclick = () => operate('/reload/config
 document.querySelector('#validate-bundle').onclick = () => operate('/validate/policy-bundle', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#policy-bundle').value});
 document.querySelector('#toggle-filtering').onclick = () => fetch('/policy-bundle').then(response => response.json()).then(value => operate('/reload/filtering', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({enabled: !value.filtering_enabled})}).then(refresh));
 refresh();
+window.setInterval(refresh, 5000);
 </script>
 "#;
 
@@ -1541,6 +1542,11 @@ mod tests {
             ui.payload
                 .windows(b"reload-blocklists-top".len())
                 .any(|window| window == b"reload-blocklists-top")
+        );
+        assert!(
+            ui.payload
+                .windows(b"window.setInterval(refresh, 5000)".len())
+                .any(|window| window == b"window.setInterval(refresh, 5000)")
         );
         assert!(
             ui.payload
