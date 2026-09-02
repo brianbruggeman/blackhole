@@ -152,12 +152,30 @@ jobs:
             echo "::error title=systemd smoke::$escaped"
           done < <(tail -n 80 systemd-smoke.log)
       - name: run Debian package install smoke
+        id: debian-smoke
         run: |
           package_version=$(sed -n 's/^version = "\([^\"]*\)"/\1/p' Cargo.toml | head -n 1)
           old_package=$(find dist -name 'blackhole_0.0.9_*.deb' -print -quit)
           new_package=$(find dist -name "blackhole_${package_version}_*.deb" -print -quit)
           test -n "$old_package" && test -n "$new_package"
-          sudo -n deploy/package/smoke-deb.sh "$old_package" "$new_package"
+          set -o pipefail
+          sudo -n env BLACKHOLE_SMOKE_TRACE=1 \
+            deploy/package/smoke-deb.sh "$old_package" "$new_package" \
+            2>&1 | tee debian-smoke.log
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: blackhole-debian-smoke-${{ github.sha }}
+          path: debian-smoke.log
+      - name: report Debian package smoke failure
+        if: ${{ always() && steps.debian-smoke.outcome == 'failure' }}
+        run: |
+          while IFS= read -r line; do
+            escaped=${line//'%'/'%25'}
+            escaped=${escaped//$'\r'/'%0D'}
+            escaped=${escaped//$'\n'/'%0A'}
+            echo "::error title=Debian package smoke::$escaped"
+          done < <(tail -n 100 debian-smoke.log)
       - name: run archive installer smoke
         run: sudo -n deploy/package/smoke-archive.sh "$(find dist -name 'blackhole-*.tar.gz' -print -quit)"
       - name: run privileged capture smoke

@@ -1,6 +1,10 @@
 #!/bin/sh
 set -eu
 
+if [ "${BLACKHOLE_SMOKE_TRACE:-}" = 1 ]; then
+    set -x
+fi
+
 if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
     echo "usage: $0 DEB [UPGRADE_DEB]" >&2
     exit 2
@@ -33,11 +37,15 @@ root=$(mktemp -d "${TMPDIR:-/tmp}/blackhole-deb-smoke.XXXXXX")
 cleanup() { rm -rf "$root"; }
 trap cleanup EXIT HUP INT TERM
 
+phase() { printf 'debian-smoke: %s\n' "$1"; }
+
 mkdir -p "$root/etc" "$root/var/lib/dpkg" "$root/var/log"
 printf 'Package: blackhole\nStatus: install ok installed\n' > "$root/var/lib/dpkg/status"
 cp /etc/passwd /etc/group /etc/shadow "$root/etc/"
 
+phase 'unpack initial package'
 dpkg --root="$root" --unpack "$package"
+phase 'configure initial package'
 dpkg --root="$root" --configure blackhole
 
 old_version=$(dpkg-deb --field "$package" Version)
@@ -55,8 +63,11 @@ printf 'operator-policy = "retain-me"\n' > "$root/etc/blackhole/blackhole.toml"
 
 # A second real transaction catches non-idempotent maintainer scripts and,
 # when supplied, exercises a real newer-package upgrade.
+phase 'unpack upgrade package'
 dpkg --root="$root" --force-confold --unpack "$upgrade_package"
+phase 'configure upgrade package'
 dpkg --root="$root" --configure blackhole
+phase 'verify installed package'
 grep -Fx 'operator-policy = "retain-me"' "$root/etc/blackhole/blackhole.toml" >/dev/null
 
 if [ "$package" != "$upgrade_package" ]; then
