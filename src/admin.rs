@@ -652,6 +652,7 @@ impl SendPipe for AdminHandler {
                 }
             }
             ("GET", "/policy/status") => Ok(Response::ok(self.policy.admin_policy_status())),
+            ("GET", "/honeypot") => Ok(Response::ok(self.policy.admin_honeypot_terminal())),
             ("POST", "/policy/preview") => {
                 if request.payload.len() > MAX_POLICY_BODY_BYTES {
                     return Ok(Response::new(413));
@@ -1667,6 +1668,7 @@ impl SendPipe for AdminHandler {
                 | "/reload/country/replace"
                 | "/country/preview"
                 | "/policy/status"
+                | "/honeypot"
                 | "/policy/preview"
                 | "/blocklists"
                 | "/allowlist"

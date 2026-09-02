@@ -63,8 +63,13 @@ DNS edge and is a prerequisite for any future honeypot terminal.
 
 ## Future terminal requirements
 
-No honeypot terminal may be enabled until all of these are implemented and
-verified:
+The opt-in honeypot terminal is metadata-only. It uses the existing Proxima
+recording-event shape in a separate bounded in-memory sink; it never stores
+DNS names, client addresses, credentials, or wire payloads. It is exposed
+through the authenticated loopback admin surface at `GET /honeypot`.
+
+Before any future payload-collection terminal is enabled, all of these must
+be implemented and verified:
 
 1. A documented retention period and a hard upper bound for every stored
    record, byte buffer, credential, and derived artifact.
@@ -80,6 +85,6 @@ verified:
 6. Tests proving that disabled collection retains no payload and that every
    configured limit is enforced under overflow and restart conditions.
 
-Until those controls exist, `Honeypot` means only the bounded synthetic DNS
-answer documented in [contract.md](contract.md); it does not open a payload
+Until those controls exist, `Honeypot` means the bounded synthetic DNS answer
+plus this bounded metadata-only terminal; it does not open a payload
 collection terminal.

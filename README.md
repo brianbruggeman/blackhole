@@ -344,7 +344,7 @@ classification preview for an operator-supplied client address),
 and optional client address),
 `GET /abuse/denylist`,
 `GET /policy-bundle`,
-`GET /rules`, `GET /logs`,
+`GET /rules`, `GET /logs`, and `GET /honeypot`,
 and `POST /logs/clear`, `POST /logs/clear-durable`, `POST /logs/verify-durable`, `POST /cache/clear`, `POST /reload/blocklists`, bounded
 `POST /reload/blocklists/replace`, `/reload/blocklists/add`, and
 `/reload/blocklists/remove`, `/reload/blocklists/enable`, and

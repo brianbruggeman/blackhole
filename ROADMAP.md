@@ -37,8 +37,10 @@ below are future capabilities, grouped by the dependency layer they extend.
   statistics, cache, fallback action, named upstream, scoped profiles and
   allowlists, global rate-limit-whitelist, per-identity query rate, response
   budgets, and concurrency controls.
-- Add a separately isolated honeypot terminal with explicit retention and
-  access controls.
+- Extend the metadata-only honeypot terminal to a payload-collecting terminal
+  only after explicit consent, field-level redaction, authenticated role-scoped
+  access, crash-safe deletion verification, and bounded payload/credential
+  retention are implemented.
 
 ## Reference sources
 
