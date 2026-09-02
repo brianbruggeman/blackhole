@@ -57,6 +57,11 @@ count and verifies deletion of the exact oldest generation. Its encoded size is 
 `privacy.query_recording_max_bytes`; operators must configure rotation and deletion
 before enabling it.
 
+Upstream transport failures are observed before they are returned through the
+existing Proxima telemetry stream. Their bounded causes distinguish timeout,
+wire decoding, response-ID mismatch, I/O, and configuration failures; an
+unknown future Proxima error remains `upstream_error`.
+
 When `admission.ddos.persist_incidents` is enabled, the same Proxima JSONL
 destination also records authenticated operator denylist mutations. The
 bounded `add` and `remove` events replay in file order during startup; an
