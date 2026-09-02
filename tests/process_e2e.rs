@@ -407,6 +407,140 @@ fn shipped_binary_applies_client_admission_to_real_udp_peers() {
 }
 
 #[test]
+fn shipped_binary_restores_persisted_global_abuse_after_restart() {
+    let upstream = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind upstream");
+    upstream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .expect("set upstream timeout");
+    let upstream_addr = upstream.local_addr().expect("upstream address");
+    let exchanges = Arc::new(AtomicUsize::new(0));
+    let exchanges_for_thread = Arc::clone(&exchanges);
+    let upstream_thread = thread::spawn(move || {
+        let mut packet = [0u8; 4096];
+        for exchange in 0..2 {
+            let (length, peer) = match upstream.recv_from(&mut packet) {
+                Ok(value) => value,
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    break;
+                }
+                Err(error) => panic!("receive upstream query: {error}"),
+            };
+            exchanges_for_thread.fetch_add(1, Ordering::Release);
+            let message = parse_message(&packet[..length]).expect("parse upstream query");
+            let question = message
+                .questions()
+                .next()
+                .expect("upstream question")
+                .expect("valid upstream question");
+            let name = question.name.to_dotted();
+            let address = encode::ipv4_rdata(Ipv4Addr::new(192, 0, 2, 53));
+            let large_records = (0..16)
+                .map(|_| encode::AnswerRecord {
+                    name: &name,
+                    rtype: 1,
+                    rclass: question.qclass,
+                    ttl: 30,
+                    rdata: &address,
+                })
+                .collect::<Vec<_>>();
+            let records = if exchange == 0 {
+                large_records
+            } else {
+                large_records.into_iter().take(1).collect()
+            };
+            let mut response = Vec::new();
+            encode::encode_response(
+                message.header.id,
+                Flags::for_response(true, false, true, 0),
+                encode::EncodeQuestion {
+                    name: &name,
+                    qtype: question.qtype,
+                    qclass: question.qclass,
+                },
+                &records,
+                &mut response,
+            )
+            .expect("encode upstream response");
+            upstream
+                .send_to(&response, peer)
+                .expect("send upstream response");
+        }
+    });
+
+    let recording = NamedTempFile::new().expect("create recording");
+    let recording_path = recording.path().to_string_lossy();
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("reserve listener port");
+    let listener_addr = listener.local_addr().expect("listener address");
+    drop(listener);
+    let mut config = NamedTempFile::new().expect("create config");
+    writeln!(
+        config,
+        "[server]\nlisten = \"{listener_addr}\"\n\n[upstream]\nresolver_ip = \"127.0.0.1\"\nport = {}\ntransport = \"udp\"\nquery_timeout_ms = 500\nmax_attempts = 1\n\n[admission]\nmax_response_bytes_per_second = 64\nmax_response_amplification = 100\n\n[admission.ddos]\npersist_incidents = true\nmax_global_abuse_violations = 1\nglobal_abuse_window_secs = 60\nglobal_abuse_cooldown_secs = 60\n\n[privacy]\nquery_recording_path = \"{recording_path}\"\nquery_recording_max_bytes = 1048576",
+        upstream_addr.port()
+    )
+    .expect("write config");
+
+    let client = UdpSocket::bind((Ipv4Addr::new(127, 0, 0, 2), 0)).expect("bind client UDP socket");
+    client
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .expect("set client timeout");
+
+    let mut first = ChildGuard(
+        Command::new(env!("CARGO_BIN_EXE_blackhole"))
+            .arg(config.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("start first blackhole process"),
+    );
+    drop(wait_for_tcp(listener_addr));
+    client
+        .send_to(&query(0x4020, "persisted-abuse.example."), listener_addr)
+        .expect("send first query");
+    let mut response = [0u8; 4096];
+    assert!(matches!(
+        client.recv_from(&mut response),
+        Err(error) if matches!(error.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut)
+    ));
+    first.0.kill().expect("stop first blackhole process");
+    first.0.wait().expect("wait for first blackhole process");
+    let recording_contents = std::fs::read_to_string(recording.path()).expect("read recording");
+    assert!(
+        recording_contents.contains("temporary_global_blacklist"),
+        "first process must persist the global incident: {recording_contents}"
+    );
+
+    let mut second = ChildGuard(
+        Command::new(env!("CARGO_BIN_EXE_blackhole"))
+            .arg(config.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("start second blackhole process"),
+    );
+    drop(wait_for_tcp(listener_addr));
+    client
+        .send_to(&query(0x4021, "persisted-abuse.example."), listener_addr)
+        .expect("send second query");
+    let second_result = client.recv_from(&mut response);
+    second.0.kill().expect("stop second blackhole process");
+    second.0.wait().expect("wait for second blackhole process");
+    let (length, _) = second_result.expect("restored global incident response");
+    let message = parse_message(&response[..length]).expect("parse restored-breaker response");
+    assert_eq!(message.header.id, 0x4021);
+    assert_eq!(message.header.flags.rcode(), 2);
+    upstream_thread.join().expect("join upstream");
+    assert_eq!(exchanges.load(Ordering::Acquire), 1);
+}
+
+#[test]
 fn shipped_binary_retries_truncated_upstream_over_tcp() {
     let upstream_tcp = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind upstream TCP");
     let upstream_addr = upstream_tcp.local_addr().expect("upstream address");

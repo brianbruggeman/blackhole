@@ -1413,6 +1413,15 @@ async fn main() -> Result<(), ProximaError> {
     let named_upstreams = config.upstreams.clone();
     let mut policy = Policy::new(config)
         .map_err(|error| ProximaError::Config(format!("invalid policy rule: {error}")))?;
+    if let Some(upstream) = upstream {
+        policy = attach_prime_upstream(policy, None, &upstream)?;
+    }
+    for (name, upstream) in named_upstreams {
+        policy = attach_prime_upstream(policy, Some(&name), &upstream)?;
+    }
+    // Attachments rebuild the owned Policy value. Restore persisted runtime
+    // breakers only after all upstream attachments so the restored state is
+    // not discarded by a later builder step.
     if persist_ddos_incidents && let Some(path) = query_recording_path.as_deref() {
         let restored =
             restore_persisted_abuse(&policy, Path::new(path), query_recording_max_bytes).await?;
@@ -1424,12 +1433,6 @@ async fn main() -> Result<(), ProximaError> {
         if denylist_changes != 0 {
             println!("blackhole restored {denylist_changes} operator denylist change(s)");
         }
-    }
-    if let Some(upstream) = upstream {
-        policy = attach_prime_upstream(policy, None, &upstream)?;
-    }
-    for (name, upstream) in named_upstreams {
-        policy = attach_prime_upstream(policy, Some(&name), &upstream)?;
     }
     if let Some(path) = query_recording_path {
         let spigot = deferred_runtime();
