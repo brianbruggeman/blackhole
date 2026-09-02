@@ -3641,8 +3641,12 @@ mod runtime {
                 .filter(|path| !disabled.contains(*path))
                 .cloned()
                 .collect::<Vec<_>>();
-            let result =
-                self.replace_active_blocklist_rules_locked(&active, started, "blocklists_add");
+            let result = self.replace_active_blocklist_rules_locked(
+                &active,
+                started,
+                "blocklists_add",
+                true,
+            );
             if result.is_ok() {
                 self.blocklist_paths_control.replace(paths);
             }
@@ -3679,8 +3683,12 @@ mod runtime {
                 .filter(|path| !disabled.contains(*path))
                 .cloned()
                 .collect::<Vec<_>>();
-            let result =
-                self.replace_active_blocklist_rules_locked(&active, started, "blocklists_remove");
+            let result = self.replace_active_blocklist_rules_locked(
+                &active,
+                started,
+                "blocklists_remove",
+                true,
+            );
             if result.is_ok() {
                 self.blocklist_paths_control.replace(paths.clone());
                 let configured = self.blocklist_paths.snapshot();
@@ -3756,6 +3764,7 @@ mod runtime {
                 } else {
                     "blocklists_disable"
                 },
+                true,
             );
             if result.is_ok() {
                 self.disabled_blocklist_paths_control.replace(disabled);
@@ -3769,7 +3778,14 @@ mod runtime {
             started: Instant,
             reload_kind: &'static str,
         ) -> Result<ReloadState, policy::PolicyError> {
-            let result = self.replace_active_blocklist_rules_locked(paths, started, reload_kind)?;
+            let state_changed = self.blocklist_paths.read(|current| current != paths)
+                || !self.disabled_blocklist_paths.read(BTreeSet::is_empty);
+            let result = self.replace_active_blocklist_rules_locked(
+                paths,
+                started,
+                reload_kind,
+                state_changed,
+            )?;
             self.disabled_blocklist_paths_control
                 .replace(BTreeSet::new());
             self.blocklist_paths_control.replace(paths.to_vec());
@@ -3781,8 +3797,17 @@ mod runtime {
             paths: &[String],
             started: Instant,
             reload_kind: &'static str,
+            state_changed: bool,
         ) -> Result<ReloadState, policy::PolicyError> {
             let replacement = load_blocklists(paths)?;
+            if !state_changed
+                && self
+                    .blocklist_rules
+                    .read(|current| current == replacement.as_slice())
+            {
+                self.observe_reload_latency("blocklists_unchanged", started);
+                return Ok(ReloadState::Unchanged);
+            }
             let base_rules = self.base_rules.snapshot();
             let mut rules = base_rules.as_ref().clone();
             rules.extend(replacement.iter().cloned());
