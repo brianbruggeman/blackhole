@@ -44,7 +44,8 @@ DNS edge and is a prerequisite for any future honeypot terminal.
 - When `admission.ddos.persist_incidents` is explicitly enabled, the same
   destination may retain the temporary blacklist key (client IP), cause,
   timestamp, and bounded expiry. Startup restores only unexpired markers to
-  the exact-client and configured-network breakers; names and wire payloads
+  the exact-client and configured-network breakers; global markers contain no
+  client key and restore only the global breaker. Names and wire payloads
   remain excluded. Durable incident deletion is operator-managed through the
   recording files, not the in-memory `/abuse/clear` operation.
 - The explicit local `--delete-recording` command preflights the active
