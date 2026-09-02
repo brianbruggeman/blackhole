@@ -10559,6 +10559,18 @@ mod runtime {
         }
 
         #[test]
+        fn global_revoke_keeps_breaker_open_when_durable_sink_is_missing() {
+            let mut config = Config::default();
+            config.admission.ddos.persist_incidents = true;
+            config.privacy.query_recording_path = Some("global-revoke.jsonl".into());
+            let policy = Policy::new(config).expect("valid persistent abuse config");
+            assert!(policy.restore_global_abuse_incident(61_000, 1_000));
+            assert!(policy.global_abuse_is_blocked());
+            assert!(futures::executor::block_on(policy.persist_global_abuse_revocation()).is_err());
+            assert!(policy.global_abuse_is_blocked());
+        }
+
+        #[test]
         fn repeated_rate_overflow_opens_bounded_client_abuse_breaker() {
             let mut config = Config::default();
             config.admission.max_queries_per_client_per_second = 1;
