@@ -95,7 +95,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <h2>Admission</h2><textarea id="admission-config" rows="16" cols="80"></textarea><pre id="admission-status"></pre>
 <h2>Abuse</h2><pre id="abuse-status"></pre>
 <h2>Denylist</h2><textarea id="denylist-config" rows="5" cols="80"></textarea><p><button id="add-denylist">Add</button> <button id="remove-denylist">Revoke</button></p>
-<h2>Abuse</h2><textarea id="abuse-revoke"></textarea><button id="revoke-abuse">Revoke</button><button id="approve-abuse">Approve</button>
+<h2>Abuse controls</h2><textarea id="abuse-revoke"></textarea><button id="revoke-abuse">Revoke</button><button id="approve-abuse">Approve</button>
 <h2>Incidents</h2><p><button id="export-abuse">Export durable</button></p><pre id="abuse-incidents"></pre>
 <h2>Policy bundle</h2><textarea id="policy-bundle" rows="12" cols="80">loading…</textarea><button id="validate-bundle">Validate bundle</button>
 <h2>Blocklists</h2><textarea id="blocklist-sources"></textarea><button id="replace-blocklists">Replace</button><button id="add-blocklists">Add</button><button id="remove-blocklists">Remove</button><button id="reload-blocklists">Reload</button><div id="blocklist-controls"></div><pre id="blocklists"></pre>
