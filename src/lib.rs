@@ -3643,18 +3643,7 @@ mod runtime {
                     ),
                 });
             }
-            if let Some(identity) = route.client_identity.as_deref()
-                && !identities
-                    .iter()
-                    .any(|configured| configured.enabled && configured.name == identity)
-            {
-                return Err(policy::PolicyError::InvalidUpstream {
-                    reason: format!(
-                        "conditional forward references unknown or disabled client identity {:?}",
-                        identity
-                    ),
-                });
-            }
+            validate_conditional_forward_identity(route.client_identity.as_deref(), identities)?;
             let client_networks = route
                 .client_cidrs
                 .iter()
@@ -3697,6 +3686,35 @@ mod runtime {
             });
         }
         Ok(routes)
+    }
+
+    fn validate_conditional_forward_identity(
+        identity: Option<&str>,
+        identities: &[ClientIdentityConfig],
+    ) -> Result<(), policy::PolicyError> {
+        if let Some(identity) = identity
+            && !identities
+                .iter()
+                .any(|configured| configured.enabled && configured.name == identity)
+        {
+            return Err(policy::PolicyError::InvalidUpstream {
+                reason: format!(
+                    "conditional forward references unknown or disabled client identity {:?}",
+                    identity
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    fn validate_conditional_forward_identities(
+        routes: &[ConditionalForwardConfig],
+        identities: &[ClientIdentityConfig],
+    ) -> Result<(), policy::PolicyError> {
+        for route in routes {
+            validate_conditional_forward_identity(route.client_identity.as_deref(), identities)?;
+        }
+        Ok(())
     }
 
     pub struct Policy {
@@ -5612,6 +5630,10 @@ mod runtime {
             let next = validate_client_identities(identities)?;
             self.validate_identity_upstreams(&next)?;
             validate_regex_identity_references(&self.regex_rule_configs(), &next)?;
+            validate_conditional_forward_identities(
+                &self.config.policy.conditional_forwards,
+                &next,
+            )?;
             if self.client_identities.read(|current| current == &next) {
                 self.observe_reload_latency("client_identities_unchanged", started);
                 return Ok(ReloadState::Unchanged);
@@ -5664,6 +5686,10 @@ mod runtime {
             let next = validate_client_identities(&next)?;
             self.validate_identity_upstreams(&next)?;
             validate_regex_identity_references(&self.regex_rule_configs(), &next)?;
+            validate_conditional_forward_identities(
+                &self.config.policy.conditional_forwards,
+                &next,
+            )?;
             let replacement = load_blocklists_with_groups(
                 self.blocklist_paths.snapshot().as_ref(),
                 self.disabled_blocklist_paths.snapshot().as_ref(),
@@ -5709,6 +5735,10 @@ mod runtime {
                 });
             }
             validate_regex_identity_references(&self.regex_rule_configs(), &next)?;
+            validate_conditional_forward_identities(
+                &self.config.policy.conditional_forwards,
+                &next,
+            )?;
             let replacement = load_blocklists_with_groups(
                 self.blocklist_paths.snapshot().as_ref(),
                 self.disabled_blocklist_paths.snapshot().as_ref(),
@@ -10983,6 +11013,48 @@ mod runtime {
                 ),
                 None
             );
+            assert!(matches!(
+                policy.reload_client_identities(&[ClientIdentityConfig {
+                    name: "family-router".into(),
+                    enabled: false,
+                    query_log_enabled: true,
+                    statistics_enabled: true,
+                    cache_enabled: true,
+                    filtering_enabled: true,
+                    default_action: None,
+                    upstream: None,
+                    clients: vec!["192.0.2.10".parse().unwrap()],
+                    max_queries_per_second: None,
+                    max_response_bytes_per_second: None,
+                    max_response_bytes_per_network_per_second: None,
+                    max_inflight_requests: None,
+                    client_cidrs: Vec::new(),
+                }]),
+                Err(policy::PolicyError::InvalidUpstream { .. })
+            ));
+            assert!(matches!(
+                policy.upsert_client_identities(&[ClientIdentityConfig {
+                    name: "family-router".into(),
+                    enabled: false,
+                    query_log_enabled: true,
+                    statistics_enabled: true,
+                    cache_enabled: true,
+                    filtering_enabled: true,
+                    default_action: None,
+                    upstream: None,
+                    clients: vec!["192.0.2.10".parse().unwrap()],
+                    max_queries_per_second: None,
+                    max_response_bytes_per_second: None,
+                    max_response_bytes_per_network_per_second: None,
+                    max_inflight_requests: None,
+                    client_cidrs: Vec::new(),
+                }]),
+                Err(policy::PolicyError::InvalidUpstream { .. })
+            ));
+            assert!(matches!(
+                policy.remove_client_identities(&["family-router".into()]),
+                Err(policy::PolicyError::InvalidUpstream { .. })
+            ));
         }
 
         #[test]
