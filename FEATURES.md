@@ -132,6 +132,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   protocol TTL, a bounded stale-serving window for upstream outages, plus
   Proxima-native hit/miss/stale/eviction counters and effective positive/
   negative TTL histograms.
+- Upstream CNAME targets are re-evaluated through the same domain, regex,
+  qtype, qclass, and client-scope policy before a response is cached or
+  returned; terminal target actions replace the chain and are never cached.
 - A bounded upstream circuit breaker using Proxima's `CircuitBreaker` state
   machine, with configurable failure threshold and cooldown; open circuits
   fail closed unless a stale cached answer is usable. Authenticated status

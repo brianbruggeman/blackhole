@@ -30,6 +30,8 @@ enum ReplyMode {
     WrongSender,
     Timeout,
     Overflow,
+    CnameChain,
+    CnameChainAllowed,
 }
 
 struct FakeState {
@@ -72,6 +74,8 @@ impl FakeSocket {
             | ReplyMode::WrongId
             | ReplyMode::WrongSender
             | ReplyMode::Overflow
+            | ReplyMode::CnameChain
+            | ReplyMode::CnameChainAllowed
             | ReplyMode::WrongQuestion
             | ReplyMode::NotResponse => {
                 let message = parse_message(query).expect("fake query");
@@ -87,6 +91,8 @@ impl FakeSocket {
                     name.clone()
                 };
                 let rdata = encode::ipv4_rdata(Ipv4Addr::new(93, 184, 216, 34));
+                let mut cname_rdata = Vec::new();
+                encode::encode_name("blocked.example.", &mut cname_rdata).expect("fake CNAME");
                 let record = encode::AnswerRecord {
                     name: &response_name,
                     rtype: 1,
@@ -102,6 +108,17 @@ impl FakeSocket {
                 };
                 let records = if matches!(mode, ReplyMode::Negative | ReplyMode::Servfail) {
                     Vec::new()
+                } else if matches!(mode, ReplyMode::CnameChain | ReplyMode::CnameChainAllowed) {
+                    vec![
+                        encode::AnswerRecord {
+                            name: &name,
+                            rtype: 5,
+                            rclass: question.qclass,
+                            ttl: 30,
+                            rdata: &cname_rdata,
+                        },
+                        record,
+                    ]
                 } else if matches!(mode, ReplyMode::Overflow) {
                     (0..65)
                         .map(|_| encode::AnswerRecord {
@@ -212,7 +229,12 @@ fn policy(mode: ReplyMode) -> (Policy, FakeSocket) {
 
 fn policy_with_action(mode: ReplyMode, action: Action) -> (Policy, FakeSocket) {
     let mut config = Config::default();
-    config.admission.max_response_records = 1;
+    config.admission.max_response_records =
+        if matches!(mode, ReplyMode::CnameChain | ReplyMode::CnameChainAllowed) {
+            2
+        } else {
+            1
+        };
     config.policy.rules = vec![RuleConfig {
         enabled: true,
         id: 1,
@@ -228,6 +250,23 @@ fn policy_with_action(mode: ReplyMode, action: Action) -> (Policy, FakeSocket) {
         client_cidrs: Vec::new(),
         client_identity: None,
     }];
+    if matches!(mode, ReplyMode::CnameChain) {
+        config.policy.rules.push(RuleConfig {
+            enabled: true,
+            id: 2,
+            domain: "blocked.example".into(),
+            action: Action::Nxdomain,
+            priority: 0,
+            qtype: Some(5),
+            qtypes: Vec::new(),
+            qclass: None,
+            qclasses: Vec::new(),
+            client: None,
+            client_cidr: None,
+            client_cidrs: vec!["192.0.2.0/24".into()],
+            client_identity: None,
+        });
+    }
     config.upstream = Some(UpstreamConfig {
         resolver_ip: resolver_addr().ip().to_string(),
         port: resolver_addr().port(),
@@ -343,6 +382,44 @@ async fn fake_upstream_success_flows_through_policy() {
     let answer = policy.call(request()).await.unwrap();
     assert_eq!(answer.payload.rcode, 0);
     assert_eq!(answer.payload.records.len(), 1);
+}
+
+#[proxima::test]
+async fn fake_upstream_blocked_cname_target_applies_policy_before_cache() {
+    let (policy, socket) = policy(ReplyMode::CnameChain);
+    let client = "192.0.2.10".parse().expect("client address");
+    let first = policy
+        .call(request_from_client(client))
+        .await
+        .expect("CNAME policy response");
+    assert_eq!(first.payload.rcode, 3);
+    assert!(first.payload.records.is_empty());
+    let second = policy
+        .call(request_from_client(client))
+        .await
+        .expect("second CNAME response");
+    assert_eq!(second.payload.rcode, 3);
+    assert_eq!(
+        socket.state.lock().expect("fake state").sent.len(),
+        2,
+        "a policy-replaced CNAME chain must not enter the upstream cache"
+    );
+}
+
+#[proxima::test]
+async fn fake_upstream_allowed_cname_target_is_returned_and_cached() {
+    let (policy, socket) = policy(ReplyMode::CnameChainAllowed);
+    let first = policy.call(request()).await.expect("CNAME response");
+    assert_eq!(first.payload.rcode, 0);
+    assert_eq!(first.payload.records.len(), 2);
+    assert_eq!(first.payload.records[0].rtype, 5);
+    let second = policy.call(request()).await.expect("cached CNAME response");
+    assert_eq!(second.payload.records.len(), 2);
+    assert_eq!(
+        socket.state.lock().expect("fake state").sent.len(),
+        1,
+        "an allowed CNAME chain should be cached normally"
+    );
 }
 
 #[proxima::test]

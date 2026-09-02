@@ -79,6 +79,10 @@ by entry count, honors positive record TTLs, applies the configured negative
 TTL to empty negative answers, and may serve stale data only within the
 configured stale window during an upstream failure. The upstream circuit
 breaker limits repeated failures; an open circuit has no network side effect.
+Every validated upstream CNAME target is also evaluated as a CNAME query for
+the original client before cache insertion. A terminal target action replaces
+the upstream chain using the action semantics above; pass, observe, and
+forward preserve the validated chain. Policy-replaced chains are not cached.
 
 Decision recording is opt-in. The authenticated `/logs` surface reads the bounded
 in-memory metadata log; `privacy.query_recording_path` additionally appends the same

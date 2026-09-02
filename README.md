@@ -85,6 +85,9 @@ answers only during its configured stale window.
 Upstream failures preserve bounded cause labels for timeout, wire, response-ID,
 I/O, and configuration errors in the existing Proxima telemetry stream before
 the failure is returned to the listener.
+Validated upstream CNAME targets are inspected against the same policy before
+the response is cached or returned, so a blocked target cannot bypass domain,
+regex, qtype, qclass, or client-scope rules.
 Client identities may set an optional bounded `max_queries_per_second` ceiling;
 identities without an override use the configured admission default.
 They may also set `max_response_bytes_per_second` to cap encoded DNS egress for

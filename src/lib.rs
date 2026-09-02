@@ -7550,6 +7550,81 @@ mod runtime {
             self.validate_upstream_answer(query, &response.answer)
         }
 
+        fn cname_target_action(
+            &self,
+            query: &proxima_dns::DnsQuery,
+            answer: &DnsAnswer,
+            client: Option<IpAddr>,
+        ) -> Option<Action> {
+            if !*self.filtering_enabled.snapshot() || !self.client_filtering_enabled(client, None) {
+                return None;
+            }
+            for record in &answer.records {
+                if record.rtype != 5 {
+                    continue;
+                }
+                let Ok((target, used)) = proxima_protocols::dns::parse_name(&record.rdata, 0)
+                else {
+                    continue;
+                };
+                if used != record.rdata.len() {
+                    continue;
+                }
+                let target_query = proxima_dns::DnsQuery {
+                    id: query.id,
+                    recursion_desired: query.recursion_desired,
+                    name: target.to_dotted(),
+                    qtype: 5,
+                    qclass: query.qclass,
+                };
+                let action = if self.rules_configured.load(Ordering::Acquire) {
+                    self.decision(&target_query, client)
+                        .or_else(|| {
+                            self.regex_decision(
+                                &normalize(&target_query.name),
+                                target_query.qtype,
+                                target_query.qclass,
+                                client,
+                            )
+                        })
+                        .map(|decision| decision.action)
+                } else if self.matches(&target_query.name) {
+                    Some(match *self.legacy_mode.snapshot() {
+                        Mode::Ignore => Action::Ignore,
+                        Mode::Nxdomain => Action::Nxdomain,
+                        Mode::Honeypot => Action::Honeypot,
+                    })
+                } else {
+                    None
+                };
+                if action.is_some_and(|action| {
+                    !matches!(action, Action::Pass | Action::Observe | Action::Forward)
+                }) {
+                    return action;
+                }
+            }
+            None
+        }
+
+        fn cname_policy_answer(
+            &self,
+            query: &proxima_dns::DnsQuery,
+            action: Action,
+        ) -> Option<DnsAnswer> {
+            match action {
+                Action::Reject => Some(refused_answer()),
+                Action::Nxdomain => Some(DnsAnswer::name_error()),
+                Action::Sink => Some(DnsAnswer::ok(Vec::new())),
+                Action::Honeypot => Some(synthetic_honeypot_answer(
+                    &query.name,
+                    query.qtype,
+                    &self.config.honeypot,
+                )),
+                Action::Drop | Action::Ignore => Some(DnsAnswer::ok(Vec::new())),
+                Action::Pass | Action::Observe | Action::Forward => None,
+            }
+        }
+
         fn upstream_failure_cause(error: &DnsClientError) -> &'static str {
             match error {
                 DnsClientError::Timeout(_) => "upstream_timeout",
@@ -9582,8 +9657,15 @@ mod runtime {
                             self.observe_for_client(forwarding_action, client);
                             return Ok(DnsPipeReply::typed(200, server_failure_answer()));
                         }
-                        breaker.on_success();
                         let answer = response.answer;
+                        if let Some(action) = self.cname_target_action(&query, &answer, client) {
+                            self.observe_failure("upstream_cname_policy");
+                            self.observe_for_client(action, client);
+                            if let Some(answer) = self.cname_policy_answer(&query, action) {
+                                return Ok(DnsPipeReply::typed(200, answer));
+                            }
+                        }
+                        breaker.on_success();
                         if cache_enabled && matches!(answer.rcode, 0 | 3) {
                             self.observe_cache_ttl(&answer);
                             self.cache_insert(key.clone(), answer.clone(), Instant::now());
