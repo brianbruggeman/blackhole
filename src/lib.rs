@@ -1370,6 +1370,11 @@ mod runtime {
         pub client_groups: Vec<ClientGroupConfig>,
         #[serde(default)]
         pub client_identities: Vec<ClientIdentityConfig>,
+        /// Optional service profiles selected for adapter-owned client
+        /// identities. Each assignment keeps the profile's existing scopes
+        /// and adds the identity as an additional match constraint.
+        #[serde(default)]
+        pub service_profiles_by_identity: BTreeMap<String, Vec<String>>,
         /// Optional bounded Pi-hole-compatible conditional forwarding routes.
         #[serde(default)]
         pub conditional_forwards: Vec<ConditionalForwardConfig>,
@@ -1394,6 +1399,7 @@ mod runtime {
                 profiles: Vec::new(),
                 client_groups: Vec::new(),
                 client_identities: Vec::new(),
+                service_profiles_by_identity: BTreeMap::new(),
                 conditional_forwards: Vec::new(),
                 default_action: default_action(),
             }
@@ -3029,6 +3035,85 @@ mod runtime {
         Ok(rules)
     }
 
+    const MAX_IDENTITY_PROFILE_ASSIGNMENTS: usize = 256;
+    const MAX_IDENTITY_PROFILE_NAMES: usize = 256;
+    const IDENTITY_PROFILE_RULE_BASE: u32 = 0xa000_0000;
+
+    fn compile_profiles_with_identity_assignments(
+        profiles: &[ServiceProfileConfig],
+        groups: &[ClientGroupConfig],
+        assignments: &BTreeMap<String, Vec<String>>,
+    ) -> Result<Vec<RuleConfig>, policy::PolicyError> {
+        let mut rules = compile_profiles(profiles, groups)?;
+        if assignments.len() > MAX_IDENTITY_PROFILE_ASSIGNMENTS {
+            return Err(policy::PolicyError::InvalidProfile {
+                name: "<identity assignments>".into(),
+                reason: format!(
+                    "identity assignment count exceeds {MAX_IDENTITY_PROFILE_ASSIGNMENTS}"
+                ),
+            });
+        }
+        let profiles_by_name = profiles
+            .iter()
+            .map(|profile| (profile.name.to_ascii_lowercase(), profile))
+            .collect::<BTreeMap<_, _>>();
+        let mut next_id = IDENTITY_PROFILE_RULE_BASE;
+        for (identity, names) in assignments {
+            if identity.trim().is_empty()
+                || !identity.is_ascii()
+                || identity.len() > policy::MAX_CLIENT_IDENTITY_BYTES
+            {
+                return Err(policy::PolicyError::InvalidProfile {
+                    name: identity.clone(),
+                    reason: "identity must be bounded non-empty ASCII".into(),
+                });
+            }
+            if names.is_empty() || names.len() > MAX_IDENTITY_PROFILE_NAMES {
+                return Err(policy::PolicyError::InvalidProfile {
+                    name: identity.clone(),
+                    reason: format!(
+                        "identity profile list must contain 1..={MAX_IDENTITY_PROFILE_NAMES} names"
+                    ),
+                });
+            }
+            let mut unique = BTreeSet::new();
+            for name in names {
+                if !unique.insert(name.to_ascii_lowercase()) {
+                    return Err(policy::PolicyError::InvalidProfile {
+                        name: identity.clone(),
+                        reason: "identity profile names must be unique".into(),
+                    });
+                }
+                let profile = profiles_by_name
+                    .get(&name.to_ascii_lowercase())
+                    .ok_or_else(|| policy::PolicyError::InvalidProfile {
+                        name: identity.clone(),
+                        reason: format!("unknown service profile {name}"),
+                    })?;
+                let mut scoped = (*profile).clone();
+                scoped.client_identity = Some(identity.clone());
+                let generated = compile_profiles(&[scoped], groups)?;
+                for mut rule in generated {
+                    rule.id = next_id;
+                    next_id = next_id.checked_add(1).ok_or_else(|| {
+                        policy::PolicyError::InvalidProfile {
+                            name: identity.clone(),
+                            reason: "identity profile rule IDs overflow".into(),
+                        }
+                    })?;
+                    rules.push(rule);
+                    if rules.len() > policy::MAX_RULES {
+                        return Err(policy::PolicyError::InvalidProfile {
+                            name: identity.clone(),
+                            reason: format!("combined rule count exceeds {}", policy::MAX_RULES),
+                        });
+                    }
+                }
+            }
+        }
+        Ok(rules)
+    }
+
     fn compile_rewrites(configs: &[RewriteConfig]) -> Result<RewriteTable, policy::PolicyError> {
         if configs.len() > MAX_REWRITES {
             return Err(policy::PolicyError::InvalidRewrite {
@@ -3474,6 +3559,7 @@ mod runtime {
         profiles_control: LiveControl<Vec<ServiceProfileConfig>>,
         client_groups: Live<Vec<ClientGroupConfig>>,
         client_groups_control: LiveControl<Vec<ClientGroupConfig>>,
+        service_profiles_by_identity: BTreeMap<String, Vec<String>>,
         client_identities: Live<Vec<ClientIdentityConfig>>,
         client_identity_control: LiveControl<Vec<ClientIdentityConfig>>,
         allowlist: Live<Vec<String>>,
@@ -3807,8 +3893,11 @@ mod runtime {
                     ),
                 });
             }
-            let mut profile_rules =
-                compile_profiles(&config.policy.profiles, &config.policy.client_groups)?;
+            let mut profile_rules = compile_profiles_with_identity_assignments(
+                &config.policy.profiles,
+                &config.policy.client_groups,
+                &config.policy.service_profiles_by_identity,
+            )?;
             profile_rules.extend(compile_allowlist_tables(
                 &config.policy.allowlist,
                 &config.policy.allowlist_by_identity,
@@ -3868,6 +3957,7 @@ mod runtime {
                 .then(|| Arc::new(QueryLog::new(&config.privacy)));
             let profiles = config.policy.profiles.clone();
             let client_groups = config.policy.client_groups.clone();
+            let service_profiles_by_identity = config.policy.service_profiles_by_identity.clone();
             let client_identities = validate_client_identities(&config.policy.client_identities)?;
             let blocklist_paths = config.policy.blocklists.clone();
             let disabled_blocklist_paths =
@@ -3931,6 +4021,7 @@ mod runtime {
                 profiles_control,
                 client_groups,
                 client_groups_control,
+                service_profiles_by_identity,
                 client_identities,
                 client_identity_control,
                 allowlist,
@@ -4103,7 +4194,11 @@ mod runtime {
             let _ = default_action;
             let _ = filtering_enabled;
             legacy_domains.map(validate_legacy_domains).transpose()?;
-            let mut generated = compile_profiles(profiles, client_groups)?;
+            let mut generated = compile_profiles_with_identity_assignments(
+                profiles,
+                client_groups,
+                &self.service_profiles_by_identity,
+            )?;
             generated.extend(compile_allowlist_tables(
                 self.allowlist.snapshot().as_ref(),
                 allowlist_by_identity,
@@ -4548,7 +4643,11 @@ mod runtime {
             let allowlist_rules = compile_allowlist(domains)?;
             let profiles = self.profiles.snapshot();
             let groups = self.client_groups.snapshot();
-            let mut generated = compile_profiles(&profiles, &groups)?;
+            let mut generated = compile_profiles_with_identity_assignments(
+                &profiles,
+                &groups,
+                &self.service_profiles_by_identity,
+            )?;
             generated.extend(allowlist_rules);
             generated.extend(compile_scoped_allowlists(
                 self.allowlist_by_identity.snapshot().as_ref(),
@@ -4600,7 +4699,11 @@ mod runtime {
             }
             let profiles = self.profiles.snapshot();
             let groups = self.client_groups.snapshot();
-            let mut generated = compile_profiles(&profiles, &groups)?;
+            let mut generated = compile_profiles_with_identity_assignments(
+                &profiles,
+                &groups,
+                &self.service_profiles_by_identity,
+            )?;
             generated.extend(compile_allowlist_tables(
                 self.allowlist.snapshot().as_ref(),
                 &next,
@@ -4614,10 +4717,71 @@ mod runtime {
             Ok(published)
         }
 
+        /// Atomically replace all identity-scoped allowlists without
+        /// replacing unrelated policy or identity settings.
+        pub fn replace_identity_allowlists(
+            &self,
+            allowlists: &BTreeMap<String, Vec<String>>,
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
+            let started = Instant::now();
+            if allowlists.len() > MAX_SCOPED_ALLOWLIST_IDENTITIES
+                || allowlists.keys().any(|identity| {
+                    identity.is_empty() || !identity.is_ascii() || identity.len() > 64
+                })
+            {
+                return Err(policy::PolicyError::InvalidBlocklist {
+                    path: "<allowlist>".into(),
+                    reason: "identity allowlists contain an invalid or excessive identity set"
+                        .into(),
+                });
+            }
+            if let Some(identity) = allowlists.keys().find(|identity| {
+                !self
+                    .client_identities
+                    .read(|configured| configured.iter().any(|entry| &entry.name == *identity))
+            }) {
+                return Err(policy::PolicyError::InvalidBlocklist {
+                    path: "<allowlist>".into(),
+                    reason: format!("unknown client identity {identity:?}"),
+                });
+            }
+            if self
+                .allowlist_by_identity
+                .read(|current| current == allowlists)
+            {
+                self.observe_reload_latency("identity_allowlists_unchanged", started);
+                return Ok(ReloadState::Unchanged);
+            }
+            let profiles = self.profiles.snapshot();
+            let groups = self.client_groups.snapshot();
+            let mut generated = compile_profiles_with_identity_assignments(
+                &profiles,
+                &groups,
+                &self.service_profiles_by_identity,
+            )?;
+            generated.extend(compile_allowlist_tables(
+                self.allowlist.snapshot().as_ref(),
+                allowlists,
+            )?);
+            let explicit = self.explicit_rules.snapshot().as_ref().clone();
+            let mut combined = explicit.clone();
+            combined.extend(generated);
+            let published =
+                self.publish_rules_locked(&combined, &explicit, "identity_allowlists", started)?;
+            self.allowlist_by_identity_control
+                .replace(allowlists.clone());
+            Ok(published)
+        }
+
         fn current_profile_rules(&self) -> Result<Vec<RuleConfig>, policy::PolicyError> {
             let profiles = self.profiles.snapshot();
             let client_groups = self.client_groups.snapshot();
-            let mut rules = compile_profiles(&profiles, &client_groups)?;
+            let mut rules = compile_profiles_with_identity_assignments(
+                &profiles,
+                &client_groups,
+                &self.service_profiles_by_identity,
+            )?;
             rules.extend(compile_allowlist_tables(
                 self.allowlist.snapshot().as_ref(),
                 self.allowlist_by_identity.snapshot().as_ref(),
@@ -5162,7 +5326,11 @@ mod runtime {
                 self.observe_reload_latency("profiles_unchanged", started);
                 return Ok(ReloadState::Unchanged);
             }
-            let mut generated = compile_profiles(profiles, client_groups)?;
+            let mut generated = compile_profiles_with_identity_assignments(
+                profiles,
+                client_groups,
+                &self.service_profiles_by_identity,
+            )?;
             generated.extend(compile_allowlist_tables(
                 self.allowlist.snapshot().as_ref(),
                 self.allowlist_by_identity.snapshot().as_ref(),
@@ -5302,7 +5470,11 @@ mod runtime {
                 }
             }
             let profiles = self.profiles.snapshot().as_ref().clone();
-            let mut generated = compile_profiles(&profiles, &groups)?;
+            let mut generated = compile_profiles_with_identity_assignments(
+                &profiles,
+                &groups,
+                &self.service_profiles_by_identity,
+            )?;
             generated.extend(compile_allowlist_tables(
                 self.allowlist.snapshot().as_ref(),
                 self.allowlist_by_identity.snapshot().as_ref(),
@@ -5351,7 +5523,11 @@ mod runtime {
                 }
             }
             let groups = self.client_groups.snapshot().as_ref().clone();
-            let mut generated = compile_profiles(&profiles, &groups)?;
+            let mut generated = compile_profiles_with_identity_assignments(
+                &profiles,
+                &groups,
+                &self.service_profiles_by_identity,
+            )?;
             generated.extend(compile_allowlist_tables(
                 self.allowlist.snapshot().as_ref(),
                 self.allowlist_by_identity.snapshot().as_ref(),
@@ -5391,7 +5567,11 @@ mod runtime {
                 });
             }
             let groups = self.client_groups.snapshot().as_ref().clone();
-            let mut generated = compile_profiles(&profiles, &groups)?;
+            let mut generated = compile_profiles_with_identity_assignments(
+                &profiles,
+                &groups,
+                &self.service_profiles_by_identity,
+            )?;
             generated.extend(compile_allowlist_tables(
                 self.allowlist.snapshot().as_ref(),
                 self.allowlist_by_identity.snapshot().as_ref(),
@@ -5440,7 +5620,11 @@ mod runtime {
                 });
             }
             let profiles = self.profiles.snapshot().as_ref().clone();
-            let mut generated = compile_profiles(&profiles, &groups)?;
+            let mut generated = compile_profiles_with_identity_assignments(
+                &profiles,
+                &groups,
+                &self.service_profiles_by_identity,
+            )?;
             generated.extend(compile_allowlist_tables(
                 self.allowlist.snapshot().as_ref(),
                 self.allowlist_by_identity.snapshot().as_ref(),
@@ -5553,7 +5737,11 @@ mod runtime {
             }
             let normalized_legacy_domains =
                 legacy_domains.map(validate_legacy_domains).transpose()?;
-            let mut generated = compile_profiles(profiles, client_groups)?;
+            let mut generated = compile_profiles_with_identity_assignments(
+                profiles,
+                client_groups,
+                &self.service_profiles_by_identity,
+            )?;
             generated.extend(compile_allowlist_tables(
                 self.allowlist.snapshot().as_ref(),
                 allowlist_by_identity,

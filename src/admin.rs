@@ -246,10 +246,8 @@ const replaceRewrites = () => {
 const replaceIdentityAllowlists = () => {
   try {
     const allowlist_by_identity = JSON.parse(document.querySelector('#identity-allowlist-editor').value);
-    return fetch('/policy-bundle').then(response => response.json()).then(bundle =>
-      operate('/reload/policy-bundle', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(Object.assign({}, bundle, {allowlist_by_identity}))})
-    ).then(refresh);
-  } catch (error) { document.querySelector('#operation-status').textContent = `/reload/policy-bundle: ${error.message}`; return Promise.reject(error); }
+    return operate('/reload/allowlist/identities', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(allowlist_by_identity)}).then(refresh);
+  } catch (error) { document.querySelector('#operation-status').textContent = `/reload/allowlist/identities: ${error.message}`; return Promise.reject(error); }
 };
 const previewPolicy = () => {
   try {
@@ -1164,6 +1162,36 @@ impl SendPipe for AdminHandler {
                     ))),
                 }
             }
+            ("POST", "/reload/allowlist/identities") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let allowlists = match serde_json::from_slice::<
+                    std::collections::BTreeMap<String, Vec<String>>,
+                >(&request.payload)
+                {
+                    Ok(allowlists) => allowlists,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                match self.policy.replace_identity_allowlists(&allowlists) {
+                    Ok(crate::snapshot::ReloadState::Published) => {
+                        Ok(Response::ok("{\"status\":\"replaced\"}"))
+                    }
+                    Ok(crate::snapshot::ReloadState::Unchanged) => {
+                        Ok(Response::ok("{\"status\":\"unchanged\"}"))
+                    }
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
             ("POST", "/reload/blocklist-groups") => {
                 if request.payload.len() > MAX_POLICY_BODY_BYTES {
                     return Ok(Response::new(413));
@@ -1594,6 +1622,7 @@ impl SendPipe for AdminHandler {
                 | "/allowlist"
                 | "/reload/allowlist"
                 | "/reload/allowlist/identity"
+                | "/reload/allowlist/identities"
                 | "/policy-bundle"
                 | "/privacy/status"
                 | "/rules"
@@ -3637,6 +3666,16 @@ mod tests {
             status["by_identity"]["family-router"],
             serde_json::json!(["safe.example"])
         );
+
+        let bulk = Request::builder()
+            .method("POST")
+            .path("/reload/allowlist/identities")
+            .payload(r#"{"family-router":["other.example"]}"#)
+            .build()
+            .expect("bulk identity allowlist request");
+        let response = block_on(handler.call(bulk)).expect("bulk identity allowlist response");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.payload.as_ref(), br#"{"status":"replaced"}"#);
     }
 
     #[test]
