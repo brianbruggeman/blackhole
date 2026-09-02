@@ -6256,20 +6256,19 @@ mod runtime {
                 None => ("none", None, None),
                 Some(source) if http_source_parts(source).is_some() => ("remote", None, None),
                 Some(source) => match std::fs::metadata(source) {
-                    Ok(metadata) if metadata.is_file() => {
-                        let age = std::time::SystemTime::now()
-                            .duration_since(
-                                metadata
-                                    .modified()
-                                    .unwrap_or_else(|_| std::time::SystemTime::now()),
-                            )
-                            .ok()
-                            .map(|duration| duration.as_secs());
-                        let fresh = config
-                            .max_age_secs
-                            .map_or(Some(true), |max_age| age.map(|age| age <= max_age));
-                        ("ok", age, fresh)
-                    }
+                    Ok(metadata) if metadata.is_file() => match metadata.modified() {
+                        Ok(modified) => {
+                            let age = std::time::SystemTime::now()
+                                .duration_since(modified)
+                                .ok()
+                                .map(|duration| duration.as_secs());
+                            let fresh = config
+                                .max_age_secs
+                                .map_or(Some(true), |max_age| age.map(|age| age <= max_age));
+                            ("ok", age, fresh)
+                        }
+                        Err(_) => ("unreadable", None, Some(false)),
+                    },
                     Ok(_) => ("unreadable", None, Some(false)),
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                         ("missing", None, Some(false))
