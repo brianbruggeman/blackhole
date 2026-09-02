@@ -7467,11 +7467,18 @@ mod runtime {
                 let record_name = normalize(&record.name);
                 if !valid_dns_name(&record_name)
                     || record.rclass != query.qclass
-                    || (query.qtype != 255 && record.rtype != query.qtype && record.rtype != 5)
+                    || (query.qtype != 255
+                        && record.rtype != query.qtype
+                        && record.rtype != 5
+                        && record.rtype != 39)
                 {
                     return Err("upstream_question_mismatch");
                 }
-                if record_name == query_name {
+                if record_name == query_name
+                    || (record.rtype == 39
+                        && query_name.len() > record_name.len()
+                        && query_name.ends_with(&format!(".{record_name}")))
+                {
                     has_question_owner = true;
                 }
                 if record.rtype == 1 && record.rdata.len() != 4 {
@@ -7480,7 +7487,7 @@ mod runtime {
                 if record.rtype == 28 && record.rdata.len() != 16 {
                     return Err("upstream_malformed");
                 }
-                if record.rtype == 5 {
+                if matches!(record.rtype, 5 | 39) {
                     let Ok((target, used)) = proxima_protocols::dns::parse_name(&record.rdata, 0)
                     else {
                         return Err("upstream_malformed");
@@ -14927,6 +14934,51 @@ mod runtime {
             };
             assert_eq!(
                 policy.validate_upstream_answer(&query, &malformed_cname),
+                Err("upstream_malformed")
+            );
+
+            let mut dname_rdata = Vec::new();
+            proxima_protocols::dns::encode::encode_name("target.example.", &mut dname_rdata)
+                .expect("valid dname target");
+            let valid_dname = DnsAnswer {
+                records: vec![DnsAnswerRecord {
+                    name: "example.".into(),
+                    rtype: 39,
+                    rclass: 1,
+                    ttl: 30,
+                    rdata: dname_rdata,
+                }],
+                ..DnsAnswer::ok(Vec::new())
+            };
+            assert_eq!(
+                policy.validate_upstream_answer(
+                    &proxima_dns::DnsQuery {
+                        name: "host.example.".into(),
+                        ..query.clone()
+                    },
+                    &valid_dname
+                ),
+                Ok(())
+            );
+
+            let malformed_dname = DnsAnswer {
+                records: vec![DnsAnswerRecord {
+                    name: "example.".into(),
+                    rtype: 39,
+                    rclass: 1,
+                    ttl: 30,
+                    rdata: vec![0xc0, 0x00],
+                }],
+                ..DnsAnswer::ok(Vec::new())
+            };
+            assert_eq!(
+                policy.validate_upstream_answer(
+                    &proxima_dns::DnsQuery {
+                        name: "host.example.".into(),
+                        ..query
+                    },
+                    &malformed_dname
+                ),
                 Err("upstream_malformed")
             );
 
