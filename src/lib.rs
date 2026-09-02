@@ -136,6 +136,7 @@ mod runtime {
     const MAX_UPSTREAM_ATTEMPTS: u32 = 8;
     const MAX_UPSTREAM_TIMEOUT_MS: u64 = 60_000;
     const MAX_NAMED_UPSTREAMS: usize = 64;
+    const MAX_UPSTREAM_FALLBACKS: usize = 8;
     const MAX_UPSTREAM_NAME_BYTES: usize = 64;
     const MAX_UPSTREAM_ALLOWED_NETWORKS: usize = 64;
     const MAX_REGEX_RULES: usize = 4096;
@@ -7096,10 +7097,10 @@ mod runtime {
         }
 
         fn validate_named_upstreams(&self) -> Result<(), policy::PolicyError> {
-            if self.config.upstream_fallbacks.len() > MAX_NAMED_UPSTREAMS {
+            if self.config.upstream_fallbacks.len() > MAX_UPSTREAM_FALLBACKS {
                 return Err(policy::PolicyError::InvalidUpstream {
                     reason: format!(
-                        "at most {MAX_NAMED_UPSTREAMS} default upstream fallbacks are allowed"
+                        "at most {MAX_UPSTREAM_FALLBACKS} default upstream fallbacks are allowed"
                     ),
                 });
             }
@@ -11937,6 +11938,17 @@ mod runtime {
             };
             assert!(matches!(
                 Policy::new(unknown_fallback),
+                Err(policy::PolicyError::InvalidUpstream { .. })
+            ));
+
+            let too_many_fallbacks = Config {
+                upstream_fallbacks: (0..=MAX_UPSTREAM_FALLBACKS)
+                    .map(|index| format!("fallback-{index}"))
+                    .collect(),
+                ..Config::default()
+            };
+            assert!(matches!(
+                Policy::new(too_many_fallbacks),
                 Err(policy::PolicyError::InvalidUpstream { .. })
             ));
 
