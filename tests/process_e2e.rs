@@ -549,6 +549,96 @@ fn shipped_binary_restores_persisted_global_abuse_after_restart() {
 }
 
 #[test]
+fn shipped_binary_restores_persisted_client_abuse_after_restart() {
+    let upstream = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind upstream");
+    upstream
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .expect("set upstream timeout");
+    let upstream_addr = upstream.local_addr().expect("upstream address");
+    let recording = NamedTempFile::new().expect("create recording");
+    let recording_path = recording.path().to_string_lossy();
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("reserve listener port");
+    let listener_addr = listener.local_addr().expect("listener address");
+    drop(listener);
+    let mut config = NamedTempFile::new().expect("create config");
+    writeln!(
+        config,
+        "[server]\nlisten = \"{listener_addr}\"\n\n[policy]\ndefault_action = \"reject\"\n\n[[policy.rules]]\nid = 9101\ndomain = \"client-rate-one.example.\"\naction = \"reject\"\n\n[[policy.rules]]\nid = 9102\ndomain = \"client-rate-two.example.\"\naction = \"reject\"\n\n[upstream]\nresolver_ip = \"127.0.0.1\"\nport = {}\ntransport = \"udp\"\nquery_timeout_ms = 500\nmax_attempts = 1\n\n[admission]\nmax_queries_per_client_per_second = 1\nmax_client_abuse_violations = 1\nclient_abuse_window_secs = 60\nclient_abuse_cooldown_secs = 60\n\n[admission.ddos]\npersist_incidents = true\n\n[privacy]\nquery_recording_path = \"{recording_path}\"\nquery_recording_max_bytes = 1048576",
+        upstream_addr.port()
+    )
+    .expect("write config");
+
+    let client = UdpSocket::bind((Ipv4Addr::new(127, 0, 0, 2), 0)).expect("bind client");
+    client
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .expect("set client timeout");
+    let mut first = ChildGuard(
+        Command::new(env!("CARGO_BIN_EXE_blackhole"))
+            .arg(config.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("start first blackhole process"),
+    );
+    drop(wait_for_tcp(listener_addr));
+
+    let mut response = [0u8; 4096];
+    client
+        .send_to(&query(0x4030, "client-rate-one.example."), listener_addr)
+        .expect("send first client query");
+    client
+        .recv_from(&mut response)
+        .expect("receive first client response");
+    client
+        .send_to(&query(0x4031, "client-rate-two.example."), listener_addr)
+        .expect("send rate-overflow query");
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let recording_contents = loop {
+        let contents = std::fs::read_to_string(recording.path()).expect("read recording");
+        if contents.contains("temporary_blacklist") {
+            break contents;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "first process must persist the client incident: {contents}"
+        );
+        thread::sleep(Duration::from_millis(20));
+    };
+    assert!(recording_contents.contains("\"scope\":\"client\""));
+    first.0.kill().expect("stop first blackhole process");
+    first.0.wait().expect("wait for first blackhole process");
+
+    let _second = ChildGuard(
+        Command::new(env!("CARGO_BIN_EXE_blackhole"))
+            .arg(config.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("start second blackhole process"),
+    );
+    drop(wait_for_tcp(listener_addr));
+    client
+        .send_to(&query(0x4031, "restored-client.example."), listener_addr)
+        .expect("send query from restored client");
+    let (length, _) = client
+        .recv_from(&mut response)
+        .expect("receive restored client refusal");
+    let message = parse_message(&response[..length]).expect("parse restored client response");
+    assert_eq!(message.header.id, 0x4031);
+    assert_eq!(message.header.flags.rcode(), 2);
+    assert!(matches!(
+        upstream.recv_from(&mut response),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            )
+    ));
+}
+
+#[test]
 fn shipped_binary_retries_truncated_upstream_over_tcp() {
     let upstream_tcp = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind upstream TCP");
     let upstream_addr = upstream_tcp.local_addr().expect("upstream address");
