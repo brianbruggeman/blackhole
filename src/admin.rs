@@ -877,8 +877,13 @@ impl SendPipe for AdminHandler {
                     ))),
                 }
             }
-            ("POST", "/reload/country") => match self.policy.reload_country_policy() {
-                Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
+            ("POST", "/reload/country") => match self.policy.reload_country_policy_if_changed() {
+                Ok(crate::snapshot::ReloadState::Published) => {
+                    Ok(Response::ok("{\"status\":\"reloaded\"}"))
+                }
+                Ok(crate::snapshot::ReloadState::Unchanged) => {
+                    Ok(Response::ok("{\"status\":\"unchanged\"}"))
+                }
                 Err(error) => Ok(Response::new(422).with_body(format!(
                     "{{\"status\":\"error\",\"message\":{}}}",
                     serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
@@ -3011,7 +3016,7 @@ mod tests {
     }
 
     #[test]
-    fn country_reload_route_reloads_the_configured_snapshot() {
+    fn country_reload_route_reports_an_unchanged_default_snapshot() {
         let policy = Arc::new(Policy::new(crate::Config::default()).expect("default policy"));
         let handler = AdminHandler::new(policy);
         let reload = block_on(handler.call(request("POST", "/reload/country")))
@@ -3019,7 +3024,7 @@ mod tests {
         assert_eq!(reload.status, 200);
         assert_eq!(
             reload.payload,
-            Bytes::from_static(b"{\"status\":\"reloaded\"}")
+            Bytes::from_static(b"{\"status\":\"unchanged\"}")
         );
     }
 
