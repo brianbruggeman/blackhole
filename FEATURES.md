@@ -122,6 +122,10 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   the matching client and network breakers through Proxima's lock-free keyed
   state, and persists the revocation before applying it when durability is
   enabled.
+- Authenticated bounded `POST /abuse/global/revoke` clears the global breaker
+  and persists a scope-only revocation through the same Proxima JSONL stream,
+  preventing a deliberately cleared global incident from returning after
+  restart.
 - Authenticated bounded incident approval promotes selected exact incident
   clients to the managed `/32` or `/128` denylist, using the same atomic and
   durable operator-control path; durable records preserve `approve` as the

@@ -97,6 +97,9 @@ Authenticated operators can revoke temporary blocks with bounded
 `POST /abuse/revoke` using an array of exact client IPs; when persistence is
 enabled, the revocation is recorded before the live breaker state is cleared
 and startup replays it in event order.
+The global breaker has a separate `POST /abuse/global/revoke` control; when
+persistence is enabled, its scope-only revocation is recorded and replayed so
+an operator-cleared global incident does not return after restart.
 When the bounded query log is enabled, `GET /abuse/incidents` provides a
 redacted incident review containing causes, expiry timestamps, and active or
 expired state without client addresses.
