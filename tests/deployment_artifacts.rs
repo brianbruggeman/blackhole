@@ -16,6 +16,15 @@ const DEB_SMOKE: &str = "deploy/package/smoke-deb.sh";
 const ARCHIVE_SMOKE: &str = "deploy/package/smoke-archive.sh";
 const VERIFY_WORKFLOW: &str = ".github/workflows/verify.yml";
 const WASM_BENCH: &str = "scripts/wasm_edge_bench.mjs";
+const LAN_CONFIG: &str = "blackhole.lan.example.toml";
+
+#[test]
+fn local_network_config_keeps_bind_and_capture_explicit() {
+    let config = fs::read_to_string(LAN_CONFIG).expect("read LAN configuration example");
+    assert!(config.contains("listen = \"192.168.50.1:53\""));
+    assert!(config.contains("enabled = false"));
+    assert!(config.contains("reject_private_upstream_addresses = true"));
+}
 
 #[test]
 fn wasm_edge_benchmark_covers_bounded_workload_cells() {
