@@ -144,7 +144,8 @@ if command -v systemd-tmpfiles >/dev/null 2>&1; then
     fi
 fi
 init=$(ps -p 1 -o comm= 2>/dev/null || true)
-if [ "$init" = systemd ] && command -v systemctl >/dev/null 2>&1; then
+if [ -z "$root" ] && [ "$init" = systemd ] \
+    && command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload
     systemctl enable --now blackhole.service
 fi
@@ -155,7 +156,7 @@ set -eu
 
 root=${DPKG_ROOT:-}
 init=$(ps -p 1 -o comm= 2>/dev/null || true)
-if [ "${1:-}" = remove ] && [ "$init" = systemd ] \
+if [ -z "$root" ] && [ "${1:-}" = remove ] && [ "$init" = systemd ] \
     && command -v systemctl >/dev/null 2>&1; then
     systemctl disable --now blackhole.service || true
     systemctl daemon-reload || true
