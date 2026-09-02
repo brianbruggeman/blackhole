@@ -1562,6 +1562,7 @@ mod tests {
             country_status["source_fingerprint"],
             serde_json::Value::Null
         );
+        assert_eq!(country_status["source_sha256"], serde_json::Value::Null);
         assert_eq!(country_status["sha256_pin_configured"], false);
         assert_eq!(country_status["deny"], serde_json::json!([]));
         assert_eq!(country_status["observe"], serde_json::json!([]));

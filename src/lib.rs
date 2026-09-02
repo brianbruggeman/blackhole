@@ -857,6 +857,7 @@ mod runtime {
     struct CountryPolicy {
         entries: Vec<CountryEntry>,
         source_fingerprint: u64,
+        source_sha256: String,
         deny: BTreeSet<String>,
         observe: BTreeSet<String>,
         deny_regions: BTreeSet<String>,
@@ -2238,6 +2239,7 @@ mod runtime {
         Ok(Some(CountryPolicy {
             entries,
             source_fingerprint: source_fingerprint(contents.as_bytes()),
+            source_sha256: source_sha256(contents.as_bytes()),
             deny,
             observe,
             deny_regions,
@@ -6087,6 +6089,7 @@ mod runtime {
                 "source_fingerprint": policy
                     .as_ref()
                     .map(|value| format!("{:016x}", value.source_fingerprint)),
+                "source_sha256": policy.as_ref().map(|value| value.source_sha256.clone()),
                 "sha256_pin_configured": config.expected_sha256.is_some(),
                 "deny": config.deny,
                 "observe": config.observe,
