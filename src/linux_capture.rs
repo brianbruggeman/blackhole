@@ -42,6 +42,13 @@ impl CaptureContext {
         if !self.interface.is_ascii() {
             return Err(CaptureError::Bound("interface"));
         }
+        if self.original_destination.ip().is_unspecified() || self.original_destination.port() == 0
+        {
+            return Err(CaptureError::InvalidContext("original destination"));
+        }
+        if matches!(self.reply_route, ReplyRoute::MarkedRoute) && self.mark == 0 {
+            return Err(CaptureError::InvalidContext("marked reply route"));
+        }
         Ok(())
     }
 }
@@ -401,6 +408,7 @@ impl CapturePlan for NftRulePlan {
 pub enum CaptureError {
     Bound(&'static str),
     InvalidPlan,
+    InvalidContext(&'static str),
     Backend(String),
     Transaction {
         error: String,
@@ -414,6 +422,7 @@ impl fmt::Display for CaptureError {
         match self {
             Self::Bound(field) => write!(formatter, "{field} exceeds its bounded capture limit"),
             Self::InvalidPlan => formatter.write_str("capture plan has a zero port or mark"),
+            Self::InvalidContext(field) => write!(formatter, "capture context has invalid {field}"),
             Self::Backend(error) => write!(formatter, "capture backend: {error}"),
             Self::Transaction { error, rollback } => {
                 write!(
@@ -637,6 +646,21 @@ mod tests {
             reply_route: ReplyRoute::MarkedRoute,
         };
         assert_eq!(context.validate(), Err(CaptureError::Bound("interface")));
+
+        let mut context = context;
+        context.interface = "eth0".into();
+        context.original_destination = "0.0.0.0:443".parse().unwrap();
+        assert_eq!(
+            context.validate(),
+            Err(CaptureError::InvalidContext("original destination"))
+        );
+
+        context.original_destination = "192.0.2.1:443".parse().unwrap();
+        context.mark = 0;
+        assert_eq!(
+            context.validate(),
+            Err(CaptureError::InvalidContext("marked reply route"))
+        );
     }
 
     #[test]
