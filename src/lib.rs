@@ -3567,6 +3567,16 @@ mod runtime {
             {
                 return Err(policy::PolicyError::DuplicateRule { id: rule.id });
             }
+            let next_reference = ReferencePolicy::new(&published_rules)?;
+            if self.reference.read(|current| current == &next_reference)
+                && self.base_rules.read(|current| current == rules)
+                && self
+                    .explicit_rules
+                    .read(|current| current == explicit_rules)
+            {
+                self.observe_reload_latency("rules_unchanged", started);
+                return Ok(ReloadState::Unchanged);
+            }
             let published = self.reference.reload(&published_rules)?;
             self.base_rules_control.replace(rules.to_vec());
             self.explicit_rules_control.replace(explicit_rules.to_vec());
@@ -7230,6 +7240,23 @@ mod runtime {
                     .action,
                 Action::Reject
             );
+            let generation = policy.policy_generation.load(Ordering::Acquire);
+            assert_eq!(
+                policy.reload_rules(&[RuleConfig {
+                    id: 2,
+                    domain: "new.example".into(),
+                    action: Action::Reject,
+                    priority: 0,
+                    qtype: None,
+                    qclass: None,
+                    client: None,
+                    client_cidr: None,
+                    client_cidrs: Vec::new(),
+                    client_identity: None,
+                }]),
+                Ok(ReloadState::Unchanged)
+            );
+            assert_eq!(policy.policy_generation.load(Ordering::Acquire), generation);
 
             let invalid = [
                 RuleConfig {
