@@ -802,14 +802,24 @@ async fn listener_retries_a_truncated_upstream_reply_over_tcp() {
 #[proxima::test]
 async fn listener_serves_local_rewrite_on_the_real_udp_path() {
     let mut config = Config::default();
-    config.policy.rewrites = vec![RewriteConfig {
-        name: "router.home.arpa".into(),
-        ipv4: Some(Ipv4Addr::new(192, 0, 2, 53)),
-        ipv6: None,
-        cname: None,
-        ptr: None,
-        ttl: 30,
-    }];
+    config.policy.rewrites = vec![
+        RewriteConfig {
+            name: "router.home.arpa".into(),
+            ipv4: Some(Ipv4Addr::new(192, 0, 2, 53)),
+            ipv6: None,
+            cname: None,
+            ptr: None,
+            ttl: 30,
+        },
+        RewriteConfig {
+            name: "1.2.0.192.in-addr.arpa".into(),
+            ipv4: None,
+            ipv6: None,
+            cname: None,
+            ptr: Some("router.home.arpa".into()),
+            ttl: 45,
+        },
+    ];
     let policy = Arc::new(Policy::new(config).expect("valid rewrite policy"));
     let listener_addr = test_listener_addr();
     let server = Listener::builder()
@@ -856,6 +866,39 @@ async fn listener_serves_local_rewrite_on_the_real_udp_path() {
         answer.rdata,
         proxima_protocols::dns::RData::A(Ipv4Addr::new(192, 0, 2, 53))
     );
+
+    query.clear();
+    encode::encode_query(
+        0x4322,
+        true,
+        encode::EncodeQuestion {
+            name: "1.2.0.192.in-addr.arpa.",
+            qtype: 12,
+            qclass: 1,
+        },
+        &mut query,
+    )
+    .expect("encode PTR rewrite query");
+    std::future::poll_fn(|cx| client.poll_send_to(cx, &query, listener_addr))
+        .await
+        .expect("send PTR rewrite query");
+    let (len, _) = std::future::poll_fn(|cx| client.poll_recv_from(cx, &mut response))
+        .await
+        .expect("receive PTR rewrite response");
+    let message = parse_message(&response[..len]).expect("parse PTR rewrite response");
+    let answer = message
+        .answers()
+        .next()
+        .expect("PTR rewrite answer present")
+        .expect("valid PTR rewrite answer");
+    assert_eq!(message.header.id, 0x4322);
+    assert_eq!(message.header.flags.rcode(), 0);
+    match answer.rdata {
+        proxima_protocols::dns::RData::Ptr(name) => {
+            assert_eq!(name.to_dotted(), "router.home.arpa.");
+        }
+        other => panic!("expected PTR answer, got {other:?}"),
+    }
     server.stop();
 }
 
