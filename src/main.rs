@@ -799,6 +799,51 @@ mod tests {
     }
 
     #[test]
+    fn startup_replays_global_incident_revocation() {
+        let directory = temporary_path("restore-global-revoke");
+        std::fs::create_dir(&directory).expect("temporary directory");
+        let path = directory.join("incidents.jsonl");
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_millis() as u64;
+        let event = |kind: &str, payload: serde_json::Value| proxima::RecordingEvent {
+            id: proxima::InteractionId::new(),
+            ts_ms: now_ms,
+            parent: None,
+            event: proxima::ProtocolEvent::Custom {
+                kind: kind.into(),
+                payload,
+            },
+        };
+        let mut recording = proxima::recording::jsonl::encode_jsonl_line(event(
+            "blackhole.ddos_incident",
+            serde_json::json!({
+                "scope":"global",
+                "expires_at_ms":now_ms + 60_000,
+            }),
+        ))
+        .expect("encode global incident");
+        recording.push(b'\n');
+        recording.extend_from_slice(
+            &proxima::recording::jsonl::encode_jsonl_line(event(
+                "blackhole.ddos_revoke",
+                serde_json::json!({"scope":"global"}),
+            ))
+            .expect("encode global revoke"),
+        );
+        std::fs::write(&path, recording).expect("write global recovery recording");
+        let mut config = Config::default();
+        config.admission.ddos.max_global_abuse_violations = 2;
+        let policy = Policy::new(config).expect("valid global abuse policy");
+        let restored = futures::executor::block_on(restore_persisted_abuse(&policy, &path, 4_096))
+            .expect("restore global recovery recording");
+        assert_eq!(restored, 1);
+        assert!(!policy.global_abuse_is_blocked());
+        std::fs::remove_dir_all(directory).expect("remove temporary directory");
+    }
+
+    #[test]
     fn startup_replays_incident_revocation_after_an_incident() {
         let directory = temporary_path("restore-revoke");
         std::fs::create_dir(&directory).expect("temporary directory");
