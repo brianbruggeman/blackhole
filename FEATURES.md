@@ -327,9 +327,10 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Authenticated cache deletion clears all bounded positive and negative DNS
   answers and reports only the number of entries removed.
 - Optional bounded privacy-safe query-decision logs use Proxima's recording
-  event shape, retain only timestamp/action/qtype/qclass metadata, enforce
+  event shape, retain only timestamp/action metadata plus qtype/qclass in the
+  default `metadata` mode, or only action in `action_only` mode; both enforce
   entry and age limits, cap the authenticated inspection projection, and
-  support authenticated deletion; logging is disabled by default.
+  support authenticated deletion. Logging is disabled by default.
 - Optional durable Proxima JSONL decision recording can rotate the active file
   at startup with a bounded number of retained generations and verifies oldest
   generation deletion before continuing.
