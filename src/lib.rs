@@ -11931,8 +11931,10 @@ mod runtime {
 
         #[test]
         fn named_upstream_routes_are_bounded_and_referenced() {
-            let mut unknown_fallback = Config::default();
-            unknown_fallback.upstream_fallbacks = vec!["missing".into()];
+            let unknown_fallback = Config {
+                upstream_fallbacks: vec!["missing".into()],
+                ..Config::default()
+            };
             assert!(matches!(
                 Policy::new(unknown_fallback),
                 Err(policy::PolicyError::InvalidUpstream { .. })
