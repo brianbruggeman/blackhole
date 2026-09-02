@@ -572,6 +572,10 @@ mod tests {
 
     #[test]
     fn capture_destination_is_carried_as_request_metadata_for_both_transports() {
+        let mut config = Config::default();
+        config.capture.enabled = true;
+        config.capture.original_destination = "192.0.2.53:53".into();
+        let policy = Policy::new(config).expect("valid capture configuration");
         let query = proxima_dns::DnsQuery {
             id: 7,
             recursion_desired: true,
@@ -579,14 +583,24 @@ mod tests {
             qtype: 1,
             qclass: 1,
         };
-        let destination = "192.0.2.53:53".parse().expect("destination");
         for tcp in [false, true] {
-            let request = request(query.clone(), tcp, None, Some(destination));
+            let request = request(
+                query.clone(),
+                tcp,
+                None,
+                policy.configured_original_destination(),
+            );
             assert_eq!(
                 request.metadata.get_str(ORIGINAL_DESTINATION_METADATA),
                 Some("192.0.2.53:53")
             );
         }
+        assert_eq!(
+            Policy::new(Config::default())
+                .expect("default policy")
+                .configured_original_destination(),
+            None
+        );
     }
 
     #[test]
