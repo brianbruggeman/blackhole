@@ -86,7 +86,9 @@ fn original_destination(spec: &Value, fallback: Option<SocketAddr>) -> Option<So
     spec.get(ORIGINAL_DESTINATION_METADATA)
         .and_then(Value::as_str)
         .and_then(|value| value.parse().ok())
-        .filter(|destination: &SocketAddr| destination.port() != 0)
+        .filter(|destination: &SocketAddr| {
+            destination.port() != 0 && !destination.ip().is_unspecified()
+        })
         .or(fallback)
 }
 
@@ -669,6 +671,10 @@ mod tests {
             ORIGINAL_DESTINATION_METADATA: "198.51.100.53:0"
         });
         assert_eq!(original_destination(&invalid, configured), configured);
+        let unspecified = serde_json::json!({
+            ORIGINAL_DESTINATION_METADATA: "0.0.0.0:53"
+        });
+        assert_eq!(original_destination(&unspecified, configured), configured);
     }
 
     #[test]
