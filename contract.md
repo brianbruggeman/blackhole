@@ -74,6 +74,11 @@ the identity remains configured and visible to control-plane projections, but
 its queries bypass policy matching and continue through the normal pass,
 rewrite, and upstream path; the global filtering switch is independent.
 
+An enabled client identity may also set `query_log_enabled = false`. Decisions
+for that mapped client are omitted from both the bounded in-memory query log
+and the optional durable Proxima recording sink; telemetry action counts and
+failure causes remain unaffected.
+
 The authenticated `POST /country/preview` route performs the same kind of
 non-retaining dry-run for a client address against the live country map. It
 reports the matched country, region, ASN, and deny/observe results; it does

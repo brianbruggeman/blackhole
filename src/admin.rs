@@ -2646,6 +2646,7 @@ mod tests {
         config.policy.client_identities = vec![crate::ClientIdentityConfig {
             name: "family-router".into(),
             enabled: true,
+            query_log_enabled: true,
             filtering_enabled: true,
             clients: vec!["192.0.2.10".parse().expect("identity address")],
             client_cidrs: Vec::new(),
@@ -2875,6 +2876,7 @@ mod tests {
         config.policy.client_identities = vec![crate::ClientIdentityConfig {
             name: "family-router".into(),
             enabled: true,
+            query_log_enabled: true,
             filtering_enabled: true,
             clients: vec!["192.0.2.10".parse().expect("identity address")],
             client_cidrs: Vec::new(),

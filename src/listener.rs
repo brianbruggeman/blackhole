@@ -120,15 +120,15 @@ async fn decide<'a>(
         policy.observe_failure("fsm_transition");
         ProximaError::Config(error.to_string())
     })?;
-    let action = policy.action_for_view_with_client(
-        view,
-        match peer.as_ref() {
-            Some(PeerInfo::Tcp(address)) => Some(address.ip()),
-            _ => None,
-        },
-    );
+    let client = match peer.as_ref() {
+        Some(PeerInfo::Tcp(address)) => Some(address.ip()),
+        _ => None,
+    };
+    let action = policy.action_for_view_with_client(view, client);
     let query = view.to_owned();
-    policy.record_decision(action, &query).await;
+    policy
+        .record_decision_for_client(action, &query, client)
+        .await;
     state = state.transition(Event::Matched(action)).map_err(|error| {
         policy.observe_failure("fsm_transition");
         ProximaError::Config(error.to_string())

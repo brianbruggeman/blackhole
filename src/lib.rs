@@ -1327,6 +1327,10 @@ mod runtime {
         /// automatic client classification.
         #[serde(default = "default_identity_enabled")]
         pub enabled: bool,
+        /// Exclude this client's decision metadata from the in-memory and
+        /// durable query-recording sinks without disabling policy matching.
+        #[serde(default = "default_identity_query_log_enabled")]
+        pub query_log_enabled: bool,
         /// Disable policy filtering for this client while retaining its
         /// identity mapping and all configured policy rules.
         #[serde(default = "default_identity_filtering_enabled")]
@@ -1343,6 +1347,10 @@ mod runtime {
     }
 
     fn default_identity_filtering_enabled() -> bool {
+        true
+    }
+
+    fn default_identity_query_log_enabled() -> bool {
         true
     }
 
@@ -5144,6 +5152,15 @@ mod runtime {
             })
         }
 
+        fn client_query_log_enabled(&self, client: Option<std::net::IpAddr>) -> bool {
+            self.client_identities.read(|identities| {
+                client
+                    .and_then(|client| Self::client_identity_index(identities, client))
+                    .and_then(|index| identities.get(index))
+                    .is_none_or(|identity| identity.query_log_enabled)
+            })
+        }
+
         fn client_identity_index(
             identities: &[ClientIdentityConfig],
             client: std::net::IpAddr,
@@ -5950,6 +5967,18 @@ mod runtime {
         }
 
         pub(crate) async fn record_decision(&self, action: Action, query: &proxima_dns::DnsQuery) {
+            self.record_decision_for_client(action, query, None).await;
+        }
+
+        pub(crate) async fn record_decision_for_client(
+            &self,
+            action: Action,
+            query: &proxima_dns::DnsQuery,
+            client: Option<IpAddr>,
+        ) {
+            if !self.client_query_log_enabled(client) {
+                return;
+            }
             if self.recording.is_none() && self.query_log.is_none() {
                 return;
             }
@@ -7035,6 +7064,7 @@ mod runtime {
                         serde_json::json!({
                             "name": identity.name,
                             "enabled": identity.enabled,
+                            "query_log_enabled": identity.query_log_enabled,
                             "filtering_enabled": identity.filtering_enabled,
                             "clients": identity.clients.len(),
                             "client_cidrs": identity.client_cidrs.len(),
@@ -7351,7 +7381,12 @@ mod runtime {
             if selected_action.is_none()
                 && let Some(action) = action
             {
-                self.record_decision(action, &query).await;
+                if client.is_some() {
+                    self.record_decision_for_client(action, &query, client)
+                        .await;
+                } else {
+                    self.record_decision(action, &query).await;
+                }
             }
             if matches!(action, Some(Action::Pass | Action::Observe) | None)
                 && let Some(answer) = self.rewrites.read(|rewrites| rewrites.answer(&query))
@@ -8810,6 +8845,7 @@ mod runtime {
             config.policy.client_identities = vec![ClientIdentityConfig {
                 name: "family-router".into(),
                 enabled: true,
+                query_log_enabled: true,
                 filtering_enabled: true,
                 clients: vec!["192.0.2.10".parse().expect("client")],
                 client_cidrs: Vec::new(),
@@ -8848,9 +8884,11 @@ mod runtime {
         #[test]
         fn client_identity_can_disable_filtering_without_disabling_identity_mapping() {
             let mut config = Config::default();
+            config.privacy.query_log_enabled = true;
             config.policy.client_identities = vec![ClientIdentityConfig {
                 name: "guest-router".into(),
                 enabled: true,
+                query_log_enabled: false,
                 filtering_enabled: false,
                 clients: vec!["192.0.2.20".parse().expect("client")],
                 client_cidrs: Vec::new(),
@@ -8884,6 +8922,23 @@ mod runtime {
                 policy.action_for_view_with_client(view, Some("192.0.2.21".parse().unwrap())),
                 Action::Reject
             );
+            let query = view.to_owned();
+            futures::executor::block_on(policy.record_decision_for_client(
+                Action::Reject,
+                &query,
+                Some("192.0.2.20".parse().unwrap()),
+            ));
+            let empty_log: serde_json::Value =
+                serde_json::from_str(&policy.admin_query_log()).expect("empty query log JSON");
+            assert_eq!(empty_log["entries"], serde_json::json!([]));
+            futures::executor::block_on(policy.record_decision_for_client(
+                Action::Reject,
+                &query,
+                Some("192.0.2.21".parse().unwrap()),
+            ));
+            let recorded_log: serde_json::Value =
+                serde_json::from_str(&policy.admin_query_log()).expect("recorded query log JSON");
+            assert_eq!(recorded_log["entries"].as_array().map(Vec::len), Some(1));
             let identities: serde_json::Value =
                 serde_json::from_str(&policy.admin_client_identities()).expect("identity status");
             assert_eq!(identities["client_identities"][0]["enabled"], true);
@@ -8899,6 +8954,7 @@ mod runtime {
             config.policy.client_identities = vec![ClientIdentityConfig {
                 name: "family-router".into(),
                 enabled: false,
+                query_log_enabled: true,
                 filtering_enabled: true,
                 clients: vec!["192.0.2.10".parse().expect("client")],
                 client_cidrs: Vec::new(),
@@ -8939,6 +8995,7 @@ mod runtime {
             config.policy.client_identities = vec![ClientIdentityConfig {
                 name: "family-router".into(),
                 enabled: true,
+                query_log_enabled: true,
                 filtering_enabled: true,
                 clients: vec!["192.0.2.10".parse().expect("client")],
                 client_cidrs: Vec::new(),
@@ -8986,6 +9043,7 @@ mod runtime {
             config.policy.client_identities = vec![ClientIdentityConfig {
                 name: "family-router".into(),
                 enabled: true,
+                query_log_enabled: true,
                 filtering_enabled: true,
                 clients: Vec::new(),
                 client_cidrs: vec!["192.0.2.0/24".into()],
@@ -9033,6 +9091,7 @@ mod runtime {
             config.policy.client_identities = vec![ClientIdentityConfig {
                 name: "family-router".into(),
                 enabled: true,
+                query_log_enabled: true,
                 filtering_enabled: true,
                 clients: vec!["192.0.2.10".parse().expect("client")],
                 client_cidrs: vec!["192.0.2.0/24".into(), "2001:db8::/32".into()],
@@ -9075,6 +9134,7 @@ mod runtime {
                 ClientIdentityConfig {
                     name: "family-router".into(),
                     enabled: true,
+                    query_log_enabled: true,
                     filtering_enabled: true,
                     clients: vec!["192.0.2.10".parse().expect("client")],
                     client_cidrs: vec!["192.0.2.0/24".into()],
@@ -9082,6 +9142,7 @@ mod runtime {
                 ClientIdentityConfig {
                     name: "guest-router".into(),
                     enabled: true,
+                    query_log_enabled: true,
                     filtering_enabled: true,
                     clients: Vec::new(),
                     client_cidrs: vec!["192.0.2.128/25".into()],
@@ -9127,6 +9188,7 @@ mod runtime {
                 policy.reload_client_identities(&[ClientIdentityConfig {
                     name: "family-router".into(),
                     enabled: true,
+                    query_log_enabled: true,
                     filtering_enabled: true,
                     clients: vec![family],
                     client_cidrs: Vec::new(),
@@ -9145,6 +9207,7 @@ mod runtime {
                 policy.reload_client_identities(&[ClientIdentityConfig {
                     name: "family-router".into(),
                     enabled: true,
+                    query_log_enabled: true,
                     filtering_enabled: true,
                     clients: Vec::new(),
                     client_cidrs: Vec::new(),

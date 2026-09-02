@@ -39,6 +39,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   over CIDR matches. Identity mappings can be disabled without deleting their
   configured address and network scope. Each identity can also disable policy
   filtering while retaining the mapping and configured rules.
+- Each identity can independently disable query-decision recording while
+  retaining policy matching; this suppresses both the in-memory and durable
+  Proxima recording sinks without changing telemetry action counts.
 - Bounded Pi-hole/AdGuard-compatible blocklist ingestion from hosts/domain files
   with comments, normalization, deduplication, apex-and-subdomain blocking,
   `@@` exceptions, `$important` priority, order-independent `$badfilter`

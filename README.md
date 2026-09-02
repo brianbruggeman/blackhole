@@ -185,6 +185,8 @@ telemetry and recording.
 Set `filtering_enabled = false` on an identity to retain its mapping while
 allowing that client's queries through without applying policy rules; the
 global filtering switch remains independent.
+Set `query_log_enabled = false` to exclude that client's decision metadata from
+both query-recording destinations while retaining policy enforcement.
 Direct `client_cidrs` and named groups are mutually exclusive.
 Rules may use `client_cidrs` for a bounded set of IPv4/IPv6 networks; the
 most-specific matching network wins while `client_cidr` remains supported.
