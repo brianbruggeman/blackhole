@@ -476,18 +476,41 @@ async fn listener_forwards_allowed_query_to_loopback_upstream() {
         client_cidrs: Vec::new(),
         client_identity: None,
     }];
-    config.upstream = Some(UpstreamConfig {
-        resolver_ip: upstream_addr.ip().to_string(),
-        port: upstream_addr.port(),
-        ..UpstreamConfig::default()
-    });
+    config.upstreams.insert(
+        "loopback".into(),
+        UpstreamConfig {
+            resolver_ip: upstream_addr.ip().to_string(),
+            port: upstream_addr.port(),
+            ..UpstreamConfig::default()
+        },
+    );
+    config.policy.client_identities = vec![ClientIdentityConfig {
+        name: "loopback-client".into(),
+        enabled: true,
+        query_log_enabled: true,
+        filtering_enabled: true,
+        default_action: None,
+        upstream: Some("loopback".into()),
+        clients: vec![Ipv4Addr::LOCALHOST.into()],
+        client_cidrs: Vec::new(),
+    }];
 
-    let upstream = config.upstream.clone().expect("upstream config");
-    let policy = Arc::new(Policy::new(config).expect("valid policy").with_upstream(
-        Arc::new(PrimeDatagramFactory),
-        Policy::resolver_config(&upstream),
-        upstream.max_outstanding,
-    ));
+    let upstream = config
+        .upstreams
+        .get("loopback")
+        .expect("upstream config")
+        .clone();
+    let policy = Arc::new(
+        Policy::new(config)
+            .expect("valid policy")
+            .with_named_upstream(
+                "loopback",
+                Arc::new(PrimeDatagramFactory),
+                Policy::resolver_config(&upstream),
+                upstream.max_outstanding,
+            )
+            .expect("attach named upstream"),
+    );
     let listener_addr = test_listener_addr();
     let server = Listener::builder()
         .bind(listener_addr)
