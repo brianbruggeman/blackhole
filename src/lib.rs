@@ -6085,6 +6085,7 @@ mod runtime {
                 "source_fingerprint": policy
                     .as_ref()
                     .map(|value| format!("{:016x}", value.source_fingerprint)),
+                "sha256_pin_configured": config.expected_sha256.is_some(),
                 "deny": config.deny,
                 "observe": config.observe,
                 "deny_regions": config.deny_regions,

@@ -372,3 +372,5 @@ launchd assets, the launchd host install/upgrade smoke harness,
 `PROVENANCE.txt`, and `SHA256SUMS`. Native package-manager artifacts are not
 implied by this archive; the Debian builder and its disposable install/upgrade
 smoke are separate checked-in paths.
+Country-map status reports whether an operator SHA-256 content pin is active;
+the existing last-good snapshot is retained when a refresh does not match it.
