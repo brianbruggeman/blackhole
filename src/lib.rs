@@ -1848,32 +1848,38 @@ mod runtime {
         let (base, path) = http_source_parts(source).ok_or_else(|| {
             "remote source must be an absolute http:// or https:// URL".to_owned()
         })?;
-        let client =
-            Client::http(base).map_err(|error| format!("create Proxima HTTP client: {error}"))?;
-        futures::executor::block_on(async {
-            let response = client
-                .get(path)
-                .send()
-                .await
-                .map_err(|error| format!("fetch through Proxima: {error}"))?;
-            if !response.ok() {
-                return Err(format!("remote source returned HTTP {}", response.status()));
-            }
-            let mut stream = response.into_body().into_chunk_stream();
-            let mut contents = Vec::new();
-            while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
-                let chunk = chunk.map_err(|error| format!("read through Proxima: {error}"))?;
-                let next_len = contents
-                    .len()
-                    .checked_add(chunk.len())
-                    .ok_or_else(|| "remote source size overflow".to_owned())?;
-                if next_len > max_bytes as usize {
-                    return Err(format!("remote source exceeds {max_bytes} bytes"));
+        let base = base.to_owned();
+        let path = path.to_owned();
+        std::thread::spawn(move || {
+            let client = Client::http(base)
+                .map_err(|error| format!("create Proxima HTTP client: {error}"))?;
+            futures::executor::block_on(async move {
+                let response = client
+                    .get(path)
+                    .send()
+                    .await
+                    .map_err(|error| format!("fetch through Proxima: {error}"))?;
+                if !response.ok() {
+                    return Err(format!("remote source returned HTTP {}", response.status()));
                 }
-                contents.extend_from_slice(&chunk);
-            }
-            Ok(contents)
+                let mut stream = response.into_body().into_chunk_stream();
+                let mut contents = Vec::new();
+                while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
+                    let chunk = chunk.map_err(|error| format!("read through Proxima: {error}"))?;
+                    let next_len = contents
+                        .len()
+                        .checked_add(chunk.len())
+                        .ok_or_else(|| "remote source size overflow".to_owned())?;
+                    if next_len > max_bytes as usize {
+                        return Err(format!("remote source exceeds {max_bytes} bytes"));
+                    }
+                    contents.extend_from_slice(&chunk);
+                }
+                Ok(contents)
+            })
         })
+        .join()
+        .map_err(|_| "remote source worker panicked".to_owned())?
     }
 
     fn read_remote_blocklist(source: &str) -> Result<Vec<u8>, policy::PolicyError> {

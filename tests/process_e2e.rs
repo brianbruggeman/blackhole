@@ -1351,6 +1351,79 @@ fn shipped_binary_recovers_country_policy_from_last_good_after_restart() {
 }
 
 #[test]
+fn shipped_binary_loads_a_remote_country_map_through_proxima_http() {
+    let map_server = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind country map server");
+    let map_addr = map_server.local_addr().expect("country map server address");
+    let map_thread = thread::spawn(move || {
+        let (mut stream, _) = map_server.accept().expect("accept country map request");
+        let mut request = [0u8; 2048];
+        let length = stream.read(&mut request).expect("read country map request");
+        let request = String::from_utf8_lossy(&request[..length]).into_owned();
+        let body = b"US 127.0.0.0/8 US-LOCAL AS64500\n";
+        let mut response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        )
+        .into_bytes();
+        response.extend_from_slice(body);
+        let _ = stream.write_all(&response);
+        request
+    });
+
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("reserve listener port");
+    let listener_addr = listener.local_addr().expect("listener address");
+    drop(listener);
+    let mut config = NamedTempFile::new().expect("create config");
+    writeln!(
+        config,
+        "[server]\nlisten = \"{listener_addr}\"\n\n[policy]\ndefault_action = \"pass\"\n\n[country_policy]\nmap_path = \"http://{map_addr}/country.txt\"\ndeny = [\"US\"]"
+    )
+    .expect("write config");
+    let mut child = ChildGuard(
+        Command::new(env!("CARGO_BIN_EXE_blackhole"))
+            .arg(config.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("start shipped blackhole binary"),
+    );
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        if TcpStream::connect_timeout(&listener_addr, Duration::from_millis(100)).is_ok() {
+            break;
+        }
+        if Instant::now() >= deadline {
+            let status = child.0.try_wait().expect("inspect blackhole process");
+            let _ = child.0.kill();
+            let _ = child.0.wait();
+            panic!("blackhole did not start: status={status:?}");
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+
+    let client = UdpSocket::bind((Ipv4Addr::new(127, 0, 0, 2), 0)).expect("bind UDP client");
+    client
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .expect("set UDP timeout");
+    client
+        .send_to(&query(0x5500, "remote-country.example."), listener_addr)
+        .expect("send remote country query");
+    let mut response = [0u8; 4096];
+    let (length, _) = client
+        .recv_from(&mut response)
+        .expect("receive remote country response");
+    let message = parse_message(&response[..length]).expect("parse remote country response");
+    assert_eq!(message.header.id, 0x5500);
+    assert_eq!(message.header.flags.rcode(), 5);
+    let request = map_thread.join().expect("reap country map server");
+    assert!(
+        request.contains("/country.txt"),
+        "unexpected map request: {request}"
+    );
+}
+
+#[test]
 fn shipped_binary_applies_region_and_asn_policy_to_real_udp_peers() {
     let map = NamedTempFile::new().expect("create country map");
     std::fs::write(
