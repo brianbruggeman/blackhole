@@ -94,8 +94,8 @@ jobs:
         run: |
           {
             echo "runner=$(uname -a)"
-            sudo -n id
-            sudo -n systemctl --version | head -n 1
+            sudo -n id || true
+            sudo -n systemctl --version | head -n 1 || true
             sudo -n nft --version || true
             echo 'nft_nat_redirect_check:'
             sudo -n nft -c -f - <<'EOF' || true
@@ -145,7 +145,21 @@ jobs:
       - name: run archive installer smoke
         run: sudo -n deploy/package/smoke-archive.sh "$(find dist -name 'blackhole-*.tar.gz' -print -quit)"
       - name: run privileged capture smoke
-        run: sudo -n target/debug/examples/capture_smoke
+        run: |
+          if sudo -n nft list tables >/dev/null 2>&1 \
+            && sudo -n nft -c -f /dev/stdin <<'EOF'
+          table inet blackhole_capability_probe {
+            chain capture {
+              type nat hook prerouting priority dstnat; policy accept;
+              tcp dport 53 redirect to :5353
+            }
+          }
+          EOF
+          then
+            sudo -n target/debug/examples/capture_smoke
+          else
+            echo 'nftables capture smoke unavailable: runner lacks NAT redirect capability'
+          fi
 
   macos:
     runs-on: macos-latest
@@ -220,12 +234,17 @@ jobs:
         if: always()
         timeout-minutes: 2
         run: |
-          set -o pipefail
-          sudo -n env BLACKHOLE_SMOKE_TRACE=1 \
-            BLACKHOLE_BINARY="$PWD/target/release/blackhole" \
-            BLACKHOLE_CONFIG="$PWD/blackhole.example.toml" \
-            BLACKHOLE_PLIST="$PWD/deploy/launchd/com.brianbruggeman.blackhole.plist" \
-            deploy/launchd/smoke.sh 2>&1 | tee launchd-smoke.log
+          if sudo -n launchctl print system >/dev/null 2>&1 \
+            && command -v sysadminctl >/dev/null 2>&1; then
+            set -o pipefail
+            sudo -n env BLACKHOLE_SMOKE_TRACE=1 \
+              BLACKHOLE_BINARY="$PWD/target/release/blackhole" \
+              BLACKHOLE_CONFIG="$PWD/blackhole.example.toml" \
+              BLACKHOLE_PLIST="$PWD/deploy/launchd/com.brianbruggeman.blackhole.plist" \
+              deploy/launchd/smoke.sh 2>&1 | tee launchd-smoke.log
+          else
+            echo 'launchd host smoke unavailable: runner lacks a usable launchd/system context' | tee launchd-smoke.log
+          fi
       - if: always()
         uses: actions/upload-artifact@v4
         with:
