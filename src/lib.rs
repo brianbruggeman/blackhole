@@ -2138,14 +2138,14 @@ mod runtime {
             }
             contents
         };
-        if let Some(expected) = config.expected_sha256.as_deref() {
-            let actual = source_sha256(contents.as_bytes());
-            if !actual.eq_ignore_ascii_case(expected) {
-                return Err(policy::PolicyError::InvalidCountryMap {
-                    path: path.into(),
-                    reason: format!("map SHA-256 mismatch: expected {expected}, got {actual}"),
-                });
-            }
+        let contents_sha256 = source_sha256(contents.as_bytes());
+        if let Some(expected) = config.expected_sha256.as_deref()
+            && !contents_sha256.eq_ignore_ascii_case(expected)
+        {
+            return Err(policy::PolicyError::InvalidCountryMap {
+                path: path.into(),
+                reason: format!("map SHA-256 mismatch: expected {expected}, got {contents_sha256}"),
+            });
         }
         let mut entries = Vec::new();
         for (line_number, raw_line) in contents.lines().enumerate() {
@@ -2239,7 +2239,7 @@ mod runtime {
         Ok(Some(CountryPolicy {
             entries,
             source_fingerprint: source_fingerprint(contents.as_bytes()),
-            source_sha256: source_sha256(contents.as_bytes()),
+            source_sha256: contents_sha256,
             deny,
             observe,
             deny_regions,
