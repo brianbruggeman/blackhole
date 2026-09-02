@@ -546,6 +546,86 @@ fn shipped_binary_reloads_a_blocklist_while_serving_queries() {
 }
 
 #[test]
+fn shipped_binary_reloads_a_country_map_while_serving_udp_and_tcp() {
+    let country_map = NamedTempFile::new().expect("create country map");
+    std::fs::write(country_map.path(), "US 127.0.0.0/8\n").expect("write initial country map");
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("reserve listener port");
+    let listener_addr = listener.local_addr().expect("listener address");
+    drop(listener);
+    let mut config = NamedTempFile::new().expect("create config");
+    writeln!(
+        config,
+        "[server]\nlisten = \"{listener_addr}\"\n\n[policy]\ndefault_action = \"pass\"\n\n[country_policy]\nmap_path = \"{}\"\ndeny = [\"US\"]\nreload_interval_secs = 1",
+        country_map.path().display()
+    )
+    .expect("write config");
+
+    let _child = ChildGuard(
+        Command::new(env!("CARGO_BIN_EXE_blackhole"))
+            .arg(config.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("start shipped blackhole binary"),
+    );
+    drop(wait_for_tcp(listener_addr));
+
+    let client = UdpSocket::bind((Ipv4Addr::new(127, 0, 0, 2), 0)).expect("bind country client");
+    client
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .expect("set country client timeout");
+    let mut response = [0u8; 4096];
+    client
+        .send_to(&query(0x5400, "country-reload.example."), listener_addr)
+        .expect("send initially denied country query");
+    let (length, _) = client
+        .recv_from(&mut response)
+        .expect("receive initially denied country response");
+    let denied = parse_message(&response[..length]).expect("parse initially denied response");
+    assert_eq!(denied.header.flags.rcode(), 5);
+
+    std::fs::write(country_map.path(), "CA 127.0.0.0/8\n").expect("replace country map");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        client
+            .send_to(&query(0x5401, "country-reload.example."), listener_addr)
+            .expect("send reloaded country query");
+        if let Ok((length, _)) = client.recv_from(&mut response)
+            && let Ok(message) = parse_message(&response[..length])
+            && message.header.id == 0x5401
+            && message.header.flags.rcode() == 0
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "country map reload was not observed"
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    let mut tcp = TcpStream::connect(listener_addr).expect("connect country TCP client");
+    tcp.set_read_timeout(Some(Duration::from_secs(3)))
+        .expect("set country TCP timeout");
+    let tcp_query = query(0x5402, "country-reload.example.");
+    let tcp_length = u16::try_from(tcp_query.len()).expect("country TCP query fits");
+    tcp.write_all(&tcp_length.to_be_bytes())
+        .expect("write country TCP query length");
+    tcp.write_all(&tcp_query).expect("write country TCP query");
+    let mut tcp_response_length = [0u8; 2];
+    tcp.read_exact(&mut tcp_response_length)
+        .expect("read country TCP response length");
+    let tcp_response_length = usize::from(u16::from_be_bytes(tcp_response_length));
+    let mut tcp_response = vec![0u8; tcp_response_length];
+    tcp.read_exact(&mut tcp_response)
+        .expect("read country TCP response");
+    let allowed = parse_message(&tcp_response).expect("parse country TCP response");
+    assert_eq!(allowed.header.id, 0x5402);
+    assert_eq!(allowed.header.flags.rcode(), 0);
+}
+
+#[test]
 fn shipped_binary_applies_a_client_filtering_override() {
     let upstream = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind upstream");
     upstream
