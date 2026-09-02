@@ -336,6 +336,9 @@ impl SendPipe for AdminHandler {
                 }
             }
             ("GET", "/abuse/denylist") => Ok(Response::ok(self.policy.admin_abuse_denylist())),
+            ("GET", "/abuse/rate-limit-whitelist") => {
+                Ok(Response::ok(self.policy.admin_rate_limit_whitelist()))
+            }
             ("POST", "/abuse/clear") => Ok(Response::ok(format!(
                 "{{\"status\":\"cleared\",\"entries\":{}}}",
                 self.policy.clear_abuse_state()
@@ -1424,6 +1427,7 @@ impl SendPipe for AdminHandler {
                 | "/abuse/incidents"
                 | "/abuse/incidents/export"
                 | "/abuse/denylist"
+                | "/abuse/rate-limit-whitelist"
                 | "/abuse/clear"
                 | "/abuse/global/revoke"
                 | "/abuse/revoke"
@@ -2220,6 +2224,12 @@ mod tests {
             .expect("valid whitelist add");
         let response = block_on(handler.call(add)).expect("add response");
         assert_eq!(response.status, 200);
+        let exported = block_on(handler.call(request("GET", "/abuse/rate-limit-whitelist")))
+            .expect("whitelist export");
+        assert_eq!(
+            serde_json::from_slice::<Vec<String>>(&exported.payload).expect("export JSON"),
+            vec!["192.0.2.10/32", "2001:db8:42::/48"]
+        );
         let status = block_on(handler.call(request("GET", "/admission/status")))
             .expect("admission status response");
         let status: serde_json::Value = serde_json::from_slice(&status.payload).expect("status");

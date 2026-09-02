@@ -7286,6 +7286,13 @@ mod runtime {
                 .unwrap_or_else(|_| "[]".into())
         }
 
+        /// Export the bounded global rate-limit whitelist through the
+        /// authenticated admin surface. This exposes configuration only.
+        pub(crate) fn admin_rate_limit_whitelist(&self) -> String {
+            serde_json::to_string(&self.admission_config().global_rate_limit_whitelist_cidrs)
+                .unwrap_or_else(|_| "[]".into())
+        }
+
         pub(crate) fn clear_abuse_state(&self) -> usize {
             let removed = self.client_abuse.len() + self.network_abuse.len();
             self.client_abuse.clear();

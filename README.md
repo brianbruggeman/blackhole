@@ -96,8 +96,10 @@ Authenticated operators can export it at `GET /abuse/denylist`, add bounded
 entries with `POST /abuse/denylist/add`, and revoke entries with
 `POST /abuse/denylist/remove`; these operations publish through the same
 atomic admission snapshot and are safe to retry.
-The global rate-limit whitelist is similarly manageable through authenticated
-`POST /abuse/rate-limit-whitelist/add` and `/abuse/rate-limit-whitelist/remove`
+The global rate-limit whitelist is visible at authenticated
+`GET /abuse/rate-limit-whitelist` and is similarly manageable through
+authenticated `POST /abuse/rate-limit-whitelist/add` and
+`/abuse/rate-limit-whitelist/remove`
 with bounded JSON CIDR arrays; it changes only the global ceiling exemption
 and is safe to retry.
 Set `[admission.ddos].persist_incidents = true` to persist temporary-blacklist
