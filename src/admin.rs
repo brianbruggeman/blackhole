@@ -526,7 +526,12 @@ impl SendPipe for AdminHandler {
                         }
                     };
                 match self.policy.reload_client_identities(&identities) {
-                    Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
+                    Ok(crate::snapshot::ReloadState::Published) => {
+                        Ok(Response::ok("{\"status\":\"reloaded\"}"))
+                    }
+                    Ok(crate::snapshot::ReloadState::Unchanged) => {
+                        Ok(Response::ok("{\"status\":\"unchanged\"}"))
+                    }
                     Err(error) => Ok(Response::new(422).with_body(format!(
                         "{{\"status\":\"error\",\"message\":{}}}",
                         serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
@@ -1604,6 +1609,16 @@ mod tests {
             .expect("identity reload request");
         let response = block_on(handler.call(reload)).expect("identity reload response");
         assert_eq!(response.status, 200);
+
+        let unchanged = Request::builder()
+            .method("POST")
+            .path("/reload/client-identities")
+            .payload(r#"[{"name":"family-router","enabled":false,"clients":["192.0.2.10"],"client_cidrs":["192.0.2.0/24"]}]"#)
+            .build()
+            .expect("unchanged identity reload request");
+        let response = block_on(handler.call(unchanged)).expect("unchanged identity response");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.payload.as_ref(), br#"{"status":"unchanged"}"#);
 
         let status = block_on(handler.call(request("GET", "/client-identities")))
             .expect("identity status response");

@@ -3947,6 +3947,10 @@ mod runtime {
             let _reload = self.reload_lock.write().expect("reload lock");
             let started = Instant::now();
             let next = validate_client_identities(identities)?;
+            if self.client_identities.read(|current| current == &next) {
+                self.observe_reload_latency("client_identities_unchanged", started);
+                return Ok(ReloadState::Unchanged);
+            }
             self.client_identity_control.replace(next);
             self.policy_generation.fetch_add(1, Ordering::Relaxed);
             self.observe_reload_latency("client_identities", started);
