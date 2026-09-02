@@ -109,6 +109,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <h2>Admission</h2><textarea id="admission-config" rows="16" cols="80"></textarea><pre id="admission-status"></pre>
 <h2>Abuse</h2><pre id="abuse-status"></pre>
 <h2>Denylist</h2><textarea id="denylist-config" rows="5" cols="80"></textarea><p><button id="add-denylist">Add</button> <button id="remove-denylist">Revoke</button></p>
+<h2>Global rate-limit whitelist</h2><textarea id="rate-limit-whitelist-config" rows="5" cols="80"></textarea><p><button id="add-rate-limit-whitelist">Add</button> <button id="remove-rate-limit-whitelist">Revoke</button></p>
 <h2>Abuse controls</h2><textarea id="abuse-revoke"></textarea><button id="revoke-abuse">Revoke</button><button id="approve-abuse">Approve</button>
 <h2>Incidents</h2><p><button id="export-abuse">Export durable</button></p><pre id="abuse-incidents"></pre>
 <h2>Policy bundle</h2><textarea id="policy-bundle" rows="12" cols="80">loading…</textarea><button id="validate-bundle">Validate bundle</button>
@@ -199,7 +200,7 @@ const load = (path, target) => fetch(path).then(response => response.json()).the
     document.querySelector('#rewrite-editor').value = JSON.stringify(value.rewrites || [], null, 2);
   }
   if (path === '/policy-bundle') document.querySelector(target).value = JSON.stringify(value, null, 2);
-  else if (path === '/abuse/denylist') document.querySelector(target).value = JSON.stringify(value, null, 2);
+  else if (path === '/abuse/denylist' || path === '/abuse/rate-limit-whitelist') document.querySelector(target).value = JSON.stringify(value, null, 2);
   else document.querySelector(target).textContent = JSON.stringify(value, null, 2);
   if (path === '/admission/status') document.querySelector('#admission-config').value = JSON.stringify(value, null, 2);
 });
@@ -238,7 +239,7 @@ const previewCountry = () => {
       .then(value => { document.querySelector('#country-preview-result').textContent = JSON.stringify(value, null, 2); });
   } catch (error) { document.querySelector('#operation-status').textContent = `/country/preview: ${error.message}`; return Promise.reject(error); }
 };
-const refresh = () => Promise.all([load('/status','#status'), load('/stats','#stats'), load('/admission/status','#admission-status'), load('/abuse/status','#abuse-status'), load('/abuse/incidents','#abuse-incidents'), load('/abuse/denylist','#denylist-config'), load('/policy-bundle','#policy-bundle'), load('/blocklists','#blocklists'), load('/country/status','#country-status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/client-identities','#identities'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
+const refresh = () => Promise.all([load('/status','#status'), load('/stats','#stats'), load('/admission/status','#admission-status'), load('/abuse/status','#abuse-status'), load('/abuse/incidents','#abuse-incidents'), load('/abuse/denylist','#denylist-config'), load('/abuse/rate-limit-whitelist','#rate-limit-whitelist-config'), load('/policy-bundle','#policy-bundle'), load('/blocklists','#blocklists'), load('/country/status','#country-status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/client-identities','#identities'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
 document.querySelector('#preview-policy').onclick = previewPolicy;
 document.querySelector('#preview-country').onclick = previewCountry;
 document.querySelector('#clear-logs').onclick = () => operate('/logs/clear', {method:'POST'}).then(refresh);
@@ -252,6 +253,9 @@ document.querySelector('#revoke-global-abuse').onclick = () => operate('/abuse/g
 const updateDenylist = path => operate(path, {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#denylist-config').value}).then(refresh);
 document.querySelector('#add-denylist').onclick = () => updateDenylist('/abuse/denylist/add');
 document.querySelector('#remove-denylist').onclick = () => updateDenylist('/abuse/denylist/remove');
+const updateRateLimitWhitelist = path => operate(path, {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#rate-limit-whitelist-config').value}).then(refresh);
+document.querySelector('#add-rate-limit-whitelist').onclick = () => updateRateLimitWhitelist('/abuse/rate-limit-whitelist/add');
+document.querySelector('#remove-rate-limit-whitelist').onclick = () => updateRateLimitWhitelist('/abuse/rate-limit-whitelist/remove');
 const updateAbuse = path => operate(path, {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#abuse-revoke').value}).then(refresh);
 for (const [id,path] of [['revoke-abuse','/abuse/revoke'],['approve-abuse','/abuse/incidents/approve']]) document.querySelector(`#${id}`).onclick = () => updateAbuse(path);
 document.querySelector('#export-abuse').onclick = () => fetch('/abuse/incidents/export').then(response => response.json()).then(value => { document.querySelector('#abuse-incidents').textContent = JSON.stringify(value, null, 2); });
