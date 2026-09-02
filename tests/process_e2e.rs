@@ -1128,6 +1128,81 @@ fn shipped_binary_applies_country_policy_to_real_udp_and_tcp_peers() {
 }
 
 #[test]
+fn shipped_binary_recovers_country_policy_from_last_good_after_restart() {
+    let source = NamedTempFile::new().expect("create country map");
+    std::fs::write(source.path(), "US 127.0.0.0/8\n").expect("write country map");
+    let last_good = NamedTempFile::new().expect("create last-good map");
+    std::fs::write(last_good.path(), b"").expect("clear last-good map");
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("reserve listener port");
+    let listener_addr = listener.local_addr().expect("listener address");
+    drop(listener);
+    let mut config = NamedTempFile::new().expect("create config");
+    writeln!(
+        config,
+        "[server]\nlisten = \"{listener_addr}\"\n\n[policy]\ndefault_action = \"pass\"\n\n[country_policy]\nmap_path = \"{}\"\nlast_good_path = \"{}\"\ndeny = [\"US\"]",
+        source.path().display(),
+        last_good.path().display()
+    )
+    .expect("write config");
+
+    let client = UdpSocket::bind((Ipv4Addr::new(127, 0, 0, 2), 0)).expect("bind UDP client");
+    client
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .expect("set UDP timeout");
+    let mut response = [0u8; 4096];
+    let mut first = ChildGuard(
+        Command::new(env!("CARGO_BIN_EXE_blackhole"))
+            .arg(config.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("start first blackhole process"),
+    );
+    drop(wait_for_tcp(listener_addr));
+    client
+        .send_to(&query(0x5200, "country-recovery.example."), listener_addr)
+        .expect("send first country query");
+    let (length, _) = client
+        .recv_from(&mut response)
+        .expect("receive first country response");
+    let first_message = parse_message(&response[..length]).expect("parse first country response");
+    assert_eq!(first_message.header.flags.rcode(), 5);
+    assert_eq!(
+        std::fs::read_to_string(last_good.path()).expect("read persisted country map"),
+        "US 127.0.0.0/8\n"
+    );
+    first.0.kill().expect("stop first blackhole process");
+    first.0.wait().expect("wait for first blackhole process");
+    std::fs::write(source.path(), "not a country map\n").expect("corrupt primary country map");
+
+    let mut second = ChildGuard(
+        Command::new(env!("CARGO_BIN_EXE_blackhole"))
+            .arg(config.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("start recovered blackhole process"),
+    );
+    drop(wait_for_tcp(listener_addr));
+    client
+        .send_to(&query(0x5201, "country-recovery.example."), listener_addr)
+        .expect("send recovered country query");
+    let (length, _) = client
+        .recv_from(&mut response)
+        .expect("receive recovered country response");
+    let recovered = parse_message(&response[..length]).expect("parse recovered response");
+    assert_eq!(recovered.header.id, 0x5201);
+    assert_eq!(recovered.header.flags.rcode(), 5);
+    second.0.kill().expect("stop recovered blackhole process");
+    second
+        .0
+        .wait()
+        .expect("wait for recovered blackhole process");
+}
+
+#[test]
 fn shipped_binary_applies_region_and_asn_policy_to_real_udp_peers() {
     let map = NamedTempFile::new().expect("create country map");
     std::fs::write(
