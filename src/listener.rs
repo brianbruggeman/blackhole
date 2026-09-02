@@ -623,7 +623,23 @@ mod tests {
 
     #[test]
     fn universal_listener_drives_udp_and_tcp_adapters_into_the_fsm() {
-        let policy = Arc::new(Policy::new(Config::default()).expect("default policy"));
+        let mut config = Config::default();
+        config.policy.rules = vec![crate::RuleConfig {
+            enabled: true,
+            id: 1,
+            domain: "example.com".into(),
+            action: crate::Action::Reject,
+            priority: 0,
+            qtype: None,
+            qtypes: Vec::new(),
+            qclass: None,
+            qclasses: Vec::new(),
+            client: Some("192.0.2.10".parse().expect("client address")),
+            client_cidr: None,
+            client_cidrs: Vec::new(),
+            client_identity: None,
+        }];
+        let policy = Arc::new(Policy::new(config).expect("client-scoped policy"));
         let peer = Some(PeerInfo::Tcp("192.0.2.10:5353".parse().expect("peer")));
 
         let udp_output = Arc::new(Mutex::new(Vec::new()));
@@ -642,6 +658,7 @@ mod tests {
         .expect("UDP adapter drive");
         let udp_output = udp_output.lock().expect("UDP output");
         assert_eq!(u16::from_be_bytes([udp_output[0], udp_output[1]]), 0x1234);
+        assert_eq!(udp_output[3] & 0x0f, 5, "UDP policy response is REFUSED");
 
         let query = test_query();
         let mut framed = Vec::with_capacity(query.len() + 2);
@@ -663,6 +680,7 @@ mod tests {
         .expect("TCP adapter drive");
         let tcp_output = tcp_output.lock().expect("TCP output");
         assert_eq!(u16::from_be_bytes([tcp_output[2], tcp_output[3]]), 0x1234);
+        assert_eq!(tcp_output[5] & 0x0f, 5, "TCP policy response is REFUSED");
     }
 
     #[test]
