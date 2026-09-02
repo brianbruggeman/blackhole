@@ -61,7 +61,10 @@ chmod 0755 "$staging/$package_name/bin/blackhole" \
     printf 'target=%s\n' "$target"
     rustc -vV | sed 's/^/rustc_/'
     cargo -vV | sed 's/^/cargo_/'
-    printf 'proxima_lock=%s\n' "$(hash_file "$repo_dir/Cargo.lock" | awk '{print $1}')"
+    printf 'cargo_lock_sha256=%s\n' "$(hash_file "$repo_dir/Cargo.lock" | awk '{print $1}')"
+    printf 'source_tree_sha256=%s\n' "$(git -C "$repo_dir" ls-files -z | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
+    printf 'fuzz_corpus_files=%s\n' "$(find "$repo_dir/fuzz/corpus/query_view" -type f | wc -l)"
+    printf 'fuzz_corpus_sha256=%s\n' "$(find "$repo_dir/fuzz/corpus/query_view" -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
 } > "$staging/$package_name/PROVENANCE.txt"
 
 (cd "$staging" && find "$package_name" -type f -print | LC_ALL=C sort | while IFS= read -r file; do
