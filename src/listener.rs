@@ -82,6 +82,14 @@ fn request(
     }
 }
 
+fn original_destination(spec: &Value, fallback: Option<SocketAddr>) -> Option<SocketAddr> {
+    spec.get(ORIGINAL_DESTINATION_METADATA)
+        .and_then(Value::as_str)
+        .and_then(|value| value.parse().ok())
+        .filter(|destination: &SocketAddr| destination.port() != 0)
+        .or(fallback)
+}
+
 struct ListenerLatency<'policy> {
     policy: &'policy Policy,
     started: Instant,
@@ -355,7 +363,7 @@ impl AnyProtocol for UdpProtocol {
         &'a self,
         mut stream: Box<dyn StreamConnection>,
         _handler: AnyHandler,
-        _spec: &'a Value,
+        spec: &'a Value,
         peer: Option<PeerInfo>,
         _admission: &'a ConnAdmission,
     ) -> Pin<Box<dyn Future<Output = Result<(), ProximaError>> + Send + 'a>> {
@@ -378,8 +386,10 @@ impl AnyProtocol for UdpProtocol {
                 return Ok(());
             }
             let state = DecisionState::received(&packet);
-            let payload =
-                CapturedDnsPayload::new(&packet, self.policy.configured_original_destination());
+            let payload = CapturedDnsPayload::new(
+                &packet,
+                original_destination(spec, self.policy.configured_original_destination()),
+            );
             if let Some((reply, state)) =
                 decide_payload(&self.policy, state, payload, peer, false).await?
             {
@@ -416,7 +426,7 @@ impl AnyProtocol for TcpProtocol {
         &'a self,
         mut stream: Box<dyn StreamConnection>,
         _handler: AnyHandler,
-        _spec: &'a Value,
+        spec: &'a Value,
         peer: Option<PeerInfo>,
         _admission: &'a ConnAdmission,
     ) -> Pin<Box<dyn Future<Output = Result<(), ProximaError>> + Send + 'a>> {
@@ -460,8 +470,10 @@ impl AnyProtocol for TcpProtocol {
                 } else {
                     DecisionState::received(&frame)
                 };
-                let payload =
-                    CapturedDnsPayload::new(&frame, self.policy.configured_original_destination());
+                let payload = CapturedDnsPayload::new(
+                    &frame,
+                    original_destination(spec, self.policy.configured_original_destination()),
+                );
                 if let Some((reply, responding)) =
                     decide_payload(&self.policy, state, payload, peer.clone(), true).await?
                 {
@@ -637,6 +649,26 @@ mod tests {
                 .configured_original_destination(),
             None
         );
+    }
+
+    #[test]
+    fn protocol_payload_destination_overrides_configured_fallback() {
+        let configured = Some("192.0.2.53:53".parse().expect("configured destination"));
+        let spec = serde_json::json!({
+            ORIGINAL_DESTINATION_METADATA: "198.51.100.53:53"
+        });
+        assert_eq!(
+            original_destination(&spec, configured),
+            Some("198.51.100.53:53".parse().expect("payload destination"))
+        );
+        assert_eq!(
+            original_destination(&serde_json::Value::Null, configured),
+            configured
+        );
+        let invalid = serde_json::json!({
+            ORIGINAL_DESTINATION_METADATA: "198.51.100.53:0"
+        });
+        assert_eq!(original_destination(&invalid, configured), configured);
     }
 
     #[test]
