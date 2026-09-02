@@ -984,6 +984,10 @@ mod runtime {
         /// question type and class before the event reaches any Proxima sink.
         #[serde(default)]
         pub query_recording_redaction: QueryRecordingRedaction,
+        /// Verification strategy for durable-recording deletion and rotation
+        /// state. Both strategies remain bounded to the configured basename.
+        #[serde(default)]
+        pub query_recording_verification: QueryRecordingVerification,
     }
 
     #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
@@ -992,6 +996,17 @@ mod runtime {
         #[default]
         Metadata,
         ActionOnly,
+    }
+
+    #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+    #[serde(rename_all = "snake_case")]
+    pub enum QueryRecordingVerification {
+        /// Inspect only the configured active file and bounded rotations.
+        #[default]
+        ExactTargets,
+        /// Also scan the parent directory for matching basename generations,
+        /// including generations beyond the configured bound.
+        DirectoryScan,
     }
 
     impl Default for PrivacyConfig {
@@ -1005,6 +1020,7 @@ mod runtime {
                 query_recording_rotation_enabled: false,
                 query_recording_max_files: default_query_recording_max_files(),
                 query_recording_redaction: QueryRecordingRedaction::default(),
+                query_recording_verification: QueryRecordingVerification::default(),
             }
         }
     }
@@ -6421,6 +6437,10 @@ mod runtime {
                     QueryRecordingRedaction::Metadata => "metadata",
                     QueryRecordingRedaction::ActionOnly => "action_only",
                 },
+                "query_recording_verification": match self.config.privacy.query_recording_verification {
+                    QueryRecordingVerification::ExactTargets => "exact_targets",
+                    QueryRecordingVerification::DirectoryScan => "directory_scan",
+                },
                 "payload_recording": "disabled",
                 "client_identity_recording": "disabled",
             })
@@ -6512,6 +6532,11 @@ mod runtime {
                     }
                 }
             }
+            if self.config.privacy.query_recording_verification
+                == QueryRecordingVerification::DirectoryScan
+            {
+                self.verify_durable_query_recording()?;
+            }
             Ok(removed)
         }
 
@@ -6569,12 +6594,70 @@ mod runtime {
                     }
                 }
             }
+            if self.config.privacy.query_recording_verification
+                == QueryRecordingVerification::DirectoryScan
+            {
+                let basename = destination
+                    .file_name()
+                    .ok_or_else(|| "recording destination has no file name".to_owned())?
+                    .to_owned();
+                for entry in std::fs::read_dir(parent).map_err(|error| {
+                    format!("scan recording parent {}: {error}", parent.display())
+                })? {
+                    let entry = entry.map_err(|error| {
+                        format!("scan recording parent {}: {error}", parent.display())
+                    })?;
+                    let name = entry.file_name();
+                    let bytes = name.as_encoded_bytes();
+                    let is_generation = bytes == basename.as_encoded_bytes()
+                        || (bytes.starts_with(basename.as_encoded_bytes())
+                            && bytes
+                                .get(basename.as_encoded_bytes().len())
+                                .is_some_and(|byte| *byte == b'.'));
+                    if !is_generation {
+                        continue;
+                    }
+                    let metadata = std::fs::symlink_metadata(entry.path()).map_err(|error| {
+                        format!(
+                            "inspect recording generation {}: {error}",
+                            entry.path().display()
+                        )
+                    })?;
+                    if !metadata.file_type().is_file() {
+                        return Err(format!(
+                            "recording generation {} is not a regular file",
+                            entry.path().display()
+                        ));
+                    }
+                    let suffix = bytes
+                        .strip_prefix(basename.as_encoded_bytes())
+                        .and_then(|suffix| suffix.strip_prefix(b"."));
+                    if suffix.is_some_and(|suffix| {
+                        suffix.is_empty()
+                            || suffix.iter().any(|byte| !byte.is_ascii_digit())
+                            || suffix.iter().fold(0usize, |value, byte| {
+                                value
+                                    .saturating_mul(10)
+                                    .saturating_add(usize::from(*byte - b'0'))
+                            }) > MAX_ROTATIONS
+                    }) {
+                        return Err(format!(
+                            "recording generation {} exceeds the bounded rotation set",
+                            entry.path().display()
+                        ));
+                    }
+                }
+            }
             Ok(serde_json::json!({
                 "status": "ok",
                 "files": files,
                 "bytes": bytes,
                 "max_bytes": self.config.privacy.query_recording_max_bytes,
                 "max_rotations": MAX_ROTATIONS,
+                "verification": match self.config.privacy.query_recording_verification {
+                    QueryRecordingVerification::ExactTargets => "exact_targets",
+                    QueryRecordingVerification::DirectoryScan => "directory_scan",
+                },
             })
             .to_string())
         }

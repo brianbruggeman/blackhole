@@ -280,7 +280,8 @@ enabled. `POST /logs/clear-durable` deletes the configured durable recording and
 bounded rotations only after regular-file preflight and post-delete verification.
 `POST /logs/verify-durable` reports bounded file and byte totals for the exact
 recording target and rotations without reading payload contents or deleting
-anything.
+anything. Set `privacy.query_recording_verification = "directory_scan"` to
+also detect unexpected recording generations in the destination directory.
 `POST /reload/privacy/redaction` atomically selects `"metadata"` or
 `"action_only"` for future decision events without restarting the resolver.
 `POST /reload/profiles` atomically replaces the profile and client-group

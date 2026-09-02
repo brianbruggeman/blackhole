@@ -217,7 +217,8 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   regular-file preflight, then verifies every exact target is absent.
 - Authenticated `POST /logs/verify-durable` checks the configured recording and
   bounded rotations without reading payload contents, deleting files, or
-  retaining new metadata.
+  retaining new metadata. Operators can select exact-target verification or a
+  bounded parent-directory scan that also detects unexpected generations.
 - The in-process query-decision log uses Proxima's lock-free live snapshot
   publication for concurrent append/read paths while retaining bounded count
   and age limits.

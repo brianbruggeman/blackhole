@@ -201,6 +201,9 @@ query_log_retention_secs = 86400
 # query_recording_max_files = 3
 # Retain either action/qtype/qclass metadata or only the action identity.
 # query_recording_redaction = "metadata"
+# Verify only exact generations, or also scan the parent directory for
+# unexpected generations beyond the bounded .1 through .16 set.
+# query_recording_verification = "exact_targets"
 
 [country_policy]
 # Optional operator-supplied classification map. Each line is COUNTRY CIDR

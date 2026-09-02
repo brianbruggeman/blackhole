@@ -2300,6 +2300,37 @@ mod tests {
     }
 
     #[test]
+    fn directory_recording_verification_detects_unbounded_generations() {
+        let path = std::env::temp_dir().join(format!(
+            "blackhole-admin-directory-verification-{}-{}.jsonl",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        ));
+        let mut config = crate::Config::default();
+        config.privacy.query_recording_path = Some(path.to_string_lossy().into_owned());
+        config.privacy.query_recording_verification =
+            crate::QueryRecordingVerification::DirectoryScan;
+        let policy = Arc::new(Policy::new(config).expect("valid recording config"));
+        let handler = AdminHandler::new(policy);
+        let mut unbounded = path.as_os_str().to_os_string();
+        unbounded.push(".17");
+        std::fs::write(&unbounded, b"metadata\n").expect("write unbounded generation");
+
+        let response = block_on(handler.call(request("POST", "/logs/verify-durable")))
+            .expect("directory verification response");
+        assert_eq!(response.status, 422);
+        assert!(String::from_utf8_lossy(&response.payload).contains("bounded rotation set"));
+        std::fs::remove_file(unbounded).expect("remove test generation");
+        let response = block_on(handler.call(request("POST", "/logs/verify-durable")))
+            .expect("directory verification response");
+        assert_eq!(response.status, 200);
+        assert!(String::from_utf8_lossy(&response.payload).contains("directory_scan"));
+    }
+
+    #[test]
     fn blocklist_source_replacement_is_atomic() {
         let path = std::env::temp_dir().join(format!(
             "blackhole-admin-blocklist-{}-{}.txt",
