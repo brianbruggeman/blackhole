@@ -32,12 +32,27 @@ fn wasm_edge_benchmark_covers_bounded_workload_cells() {
         "p95_ns=",
         "p99_ns=",
         "_cov=",
+        "typeof globalThis.Deno",
+        "monotonicNanoseconds",
     ] {
         assert!(
             bench.contains(required),
             "missing WASM workload evidence: {required}"
         );
     }
+}
+
+#[test]
+fn wasm_workflow_runs_node_and_deno_measurements() {
+    let workflow = fs::read_to_string(VERIFY_WORKFLOW).expect("read verification workflow");
+    let wasm = workflow.find("  wasm:").expect("WASM verification job");
+    let fuzz = workflow[wasm..]
+        .find("  fuzz:")
+        .map_or(workflow.len(), |offset| wasm + offset);
+    let section = &workflow[wasm..fuzz];
+    assert!(section.contains("node scripts/wasm_edge_bench.mjs"));
+    assert!(section.contains("denoland/setup-deno@v2"));
+    assert!(section.contains("deno run --allow-read scripts/wasm_edge_bench.mjs"));
 }
 
 #[test]

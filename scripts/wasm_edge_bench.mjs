@@ -1,12 +1,23 @@
 import fs from "node:fs";
 
+const isDeno = typeof globalThis.Deno !== "undefined";
+const readModule = isDeno
+  ? (path) => globalThis.Deno.readFile(path)
+  : (path) => fs.readFileSync(path);
+const monotonicNanoseconds = isDeno
+  ? () => performance.now() * 1_000_000
+  : () => Number(process.hrtime.bigint());
+
 const modulePath = process.argv[2];
 if (!modulePath) {
   console.error("usage: node scripts/wasm_edge_bench.mjs path/to/blackhole.wasm");
+  if (isDeno) {
+    globalThis.Deno.exit(2);
+  }
   process.exit(2);
 }
 
-const bytes = fs.readFileSync(modulePath);
+const bytes = await readModule(modulePath);
 const { instance } = await WebAssembly.instantiate(bytes, {});
 const { memory, blackhole_edge_probe, blackhole_edge_reset } = instance.exports;
 if (
@@ -55,12 +66,12 @@ function measureProbe(probe) {
   const samples = [];
   let checksum = 0;
   for (let sample = 0; sample < 25; sample += 1) {
-    const started = process.hrtime.bigint();
+    const started = monotonicNanoseconds();
     for (let index = 0; index < iterations; index += 1) {
       blackhole_edge_reset();
       checksum += probe(index);
     }
-    samples.push(Number(process.hrtime.bigint() - started) / iterations);
+    samples.push((monotonicNanoseconds() - started) / iterations);
   }
   samples.sort((left, right) => left - right);
   const mean = samples.reduce((sum, value) => sum + value, 0) / samples.length;

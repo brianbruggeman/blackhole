@@ -358,6 +358,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --locked --no-default-features --target wasm32-unknown-unknown --lib
       - run: node scripts/wasm_edge_bench.mjs target/wasm32-unknown-unknown/debug/blackhole.wasm
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: deno run --allow-read scripts/wasm_edge_bench.mjs target/wasm32-unknown-unknown/debug/blackhole.wasm
       - run: cargo check --locked --examples
       - name: record WASM provenance
         run: |
@@ -367,6 +371,7 @@ jobs:
             cargo -vV
             uname -a
             node --version
+            deno --version
             echo "cargo_lock_sha256=$(sha256sum Cargo.lock | awk '{print $1}')"
             echo "source_tree_sha256=$(git ls-files -z | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
             echo "fuzz_corpus_files=$(find fuzz/corpus/query_view -type f | wc -l)"
