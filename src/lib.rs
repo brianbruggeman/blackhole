@@ -1393,6 +1393,9 @@ mod runtime {
         /// Optional bounded background reload interval. Zero disables polling.
         #[serde(default)]
         pub blocklist_reload_interval_secs: u64,
+        /// Optional bounded hosts-file reload interval. Zero disables polling.
+        #[serde(default)]
+        pub hosts_reload_interval_secs: u64,
         #[serde(default)]
         pub rewrites: Vec<RewriteConfig>,
         /// Optional bounded hosts-file source for local A/AAAA answers.
@@ -1432,6 +1435,7 @@ mod runtime {
                 blocklist_groups: BTreeMap::new(),
                 blocklists_by_identity: BTreeMap::new(),
                 blocklist_reload_interval_secs: 0,
+                hosts_reload_interval_secs: 0,
                 rewrites: Vec::new(),
                 hosts_path: None,
                 profiles: Vec::new(),
@@ -3928,7 +3932,8 @@ mod runtime {
 
     pub struct Policy {
         config: Config,
-        hosts_rewrites: Vec<RewriteConfig>,
+        hosts_rewrites: Live<Vec<RewriteConfig>>,
+        hosts_rewrites_control: LiveControl<Vec<RewriteConfig>>,
         capture_original_destination: Option<SocketAddr>,
         base_rules: Live<Vec<RuleConfig>>,
         base_rules_control: LiveControl<Vec<RuleConfig>>,
@@ -4337,6 +4342,14 @@ mod runtime {
                     ),
                 });
             }
+            if config.policy.hosts_reload_interval_secs > MAX_BLOCKLIST_RELOAD_INTERVAL_SECS {
+                return Err(policy::PolicyError::InvalidRewrite {
+                    name: "<config>".into(),
+                    reason: format!(
+                        "hosts reload interval exceeds {MAX_BLOCKLIST_RELOAD_INTERVAL_SECS} seconds"
+                    ),
+                });
+            }
             let client_identities = validate_client_identities(&config.policy.client_identities)?;
             let mut profile_rules = compile_profiles_with_identity_assignments(
                 &config.policy.profiles,
@@ -4442,6 +4455,7 @@ mod runtime {
             });
             let (global_rate_limit_whitelist, global_rate_limit_whitelist_control) =
                 live(whitelist);
+            let (hosts_rewrites, hosts_rewrites_control) = live(hosts_rewrites);
             let (rewrites, rewrite_control) = live(rewrites);
             let (rewrite_configs, rewrite_configs_control) = live(rewrite_configs);
             let (profiles, profiles_control) = live(profiles);
@@ -4462,6 +4476,7 @@ mod runtime {
             let policy = Self {
                 config,
                 hosts_rewrites,
+                hosts_rewrites_control,
                 capture_original_destination,
                 base_rules,
                 base_rules_control,
@@ -5688,6 +5703,40 @@ mod runtime {
             Ok(published)
         }
 
+        /// Reload the configured hosts source through the same immutable
+        /// rewrite snapshot used by request readers. Runtime rewrite edits
+        /// are retained; only entries equal to the prior hosts generation are
+        /// replaced.
+        pub fn reload_hosts_if_changed(&self) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
+            let started = Instant::now();
+            let next_hosts = load_hosts_rewrites(self.config.policy.hosts_path.as_deref())?;
+            let old_hosts = self.hosts_rewrites.snapshot();
+            let current = self.rewrite_configs.snapshot();
+            let explicit = current
+                .iter()
+                .filter(|rewrite| !old_hosts.iter().any(|old| old == *rewrite))
+                .cloned()
+                .collect::<Vec<_>>();
+            let effective = merge_hosts_rewrites(&explicit, &next_hosts);
+            if next_hosts == *old_hosts && effective == *current {
+                self.observe_reload_latency("hosts_unchanged", started);
+                return Ok(ReloadState::Unchanged);
+            }
+            let compiled = compile_rewrites(&effective)?;
+            self.hosts_rewrites_control.replace(next_hosts);
+            self.rewrite_control.replace(compiled);
+            self.rewrite_configs_control.replace(effective);
+            self.cache_control.update(|cache| {
+                let mut next = cache.clone();
+                next.clear();
+                next
+            });
+            self.policy_generation.fetch_add(1, Ordering::Relaxed);
+            self.observe_reload_latency("hosts", started);
+            Ok(ReloadState::Published)
+        }
+
         /// Reload the configured country/CIDR map and publish only a changed
         /// complete replacement after bounded validation.
         pub fn reload_country_policy(&self) -> Result<ReloadState, policy::PolicyError> {
@@ -5796,6 +5845,8 @@ mod runtime {
                 || next.policy.blocklist_groups != current.policy.blocklist_groups
                 || next.policy.blocklist_reload_interval_secs
                     != current.policy.blocklist_reload_interval_secs
+                || next.policy.hosts_reload_interval_secs
+                    != current.policy.hosts_reload_interval_secs
                 || next.country_policy.reload_interval_secs
                     != current.country_policy.reload_interval_secs
                 || next.reload_interval_secs != current.reload_interval_secs
@@ -5806,8 +5857,9 @@ mod runtime {
             }
             let redaction_changed = next.privacy.query_recording_redaction
                 != *self.query_recording_redaction.snapshot();
+            let hosts_rewrites = self.hosts_rewrites.snapshot();
             let effective_rewrites =
-                merge_hosts_rewrites(&next.policy.rewrites, &self.hosts_rewrites);
+                merge_hosts_rewrites(&next.policy.rewrites, hosts_rewrites.as_ref());
             let result = self.reload_policy_bundle_with_legacy_and_admission(
                 &next.policy.rules,
                 &next.policy.regex_rules,
@@ -6610,7 +6662,8 @@ mod runtime {
         ) -> Result<ReloadState, policy::PolicyError> {
             let _reload = self.reload_lock.write().expect("reload lock");
             let started = Instant::now();
-            let effective = merge_hosts_rewrites(configs, &self.hosts_rewrites);
+            let hosts_rewrites = self.hosts_rewrites.snapshot();
+            let effective = merge_hosts_rewrites(configs, hosts_rewrites.as_ref());
             if self.rewrite_configs.read(|current| current == &effective) {
                 self.observe_reload_latency("rewrites_unchanged", started);
                 return Ok(ReloadState::Unchanged);
@@ -13505,6 +13558,12 @@ mod runtime {
                 .evaluate(&query("printer.home.arpa", 1))
                 .expect("printer A rewrite");
             assert_eq!(printer.records[0].rdata, vec![192, 0, 2, 11]);
+            std::fs::write(&path, "192.0.2.12 printer.home.arpa\n").expect("replace hosts file");
+            assert_eq!(policy.reload_hosts_if_changed(), Ok(ReloadState::Published));
+            let printer = policy
+                .evaluate(&query("printer.home.arpa", 1))
+                .expect("reloaded printer A rewrite");
+            assert_eq!(printer.records[0].rdata, vec![192, 0, 2, 12]);
             let _ = std::fs::remove_file(path);
         }
 

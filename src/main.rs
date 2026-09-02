@@ -1050,6 +1050,25 @@ impl SendPipe for BlocklistReloadHandler {
     }
 }
 
+#[cfg(feature = "std")]
+struct HostsReloadHandler {
+    policy: Arc<Policy>,
+}
+
+#[cfg(feature = "std")]
+impl SendPipe for HostsReloadHandler {
+    type In = PipeRequest<Bytes>;
+    type Out = PipeResponse<Bytes>;
+    type Err = ProximaError;
+
+    async fn call(&self, _request: Self::In) -> Result<Self::Out, Self::Err> {
+        self.policy.reload_hosts_if_changed().map_err(|error| {
+            ProximaError::Config(format!("background hosts reload failed: {error}"))
+        })?;
+        Ok(PipeResponse::ok(Bytes::new()))
+    }
+}
+
 fn admin_endpoint(
     config: &blackhole::AdminConfig,
 ) -> Result<Option<(SocketAddr, String)>, ProximaError> {
@@ -1388,6 +1407,8 @@ async fn main() -> Result<(), ProximaError> {
     let blocklist_reload_interval = config.policy.blocklist_reload_interval_secs;
     let blocklist_reload_enabled =
         blocklist_reload_interval != 0 && !config.policy.blocklists.is_empty();
+    let hosts_reload_interval = config.policy.hosts_reload_interval_secs;
+    let hosts_reload_enabled = hosts_reload_interval != 0 && config.policy.hosts_path.is_some();
     let country_reload_interval = config.country_policy.reload_interval_secs;
     let country_reload_enabled =
         country_reload_interval != 0 && config.country_policy.map_path.is_some();
@@ -1494,6 +1515,22 @@ async fn main() -> Result<(), ProximaError> {
         println!(
             "blackhole blocklist reload enabled ({}s)",
             blocklist_reload_interval
+        );
+    }
+    if hosts_reload_enabled {
+        let reload_handler = into_pipe_handle(HostsReloadHandler {
+            policy: Arc::clone(&policy),
+        });
+        let reload_source = into_source_handle(IntervalPipe::new(
+            std::time::Duration::from_secs(hosts_reload_interval),
+            reload_handler,
+            IntervalPipe::empty_request_factory(),
+            "blackhole-hosts-reload",
+        ));
+        source_lifecycle.spawn_from_source("hosts-reload", &reload_source);
+        println!(
+            "blackhole hosts-file reload enabled ({}s)",
+            hosts_reload_interval
         );
     }
     if country_reload_enabled {

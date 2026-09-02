@@ -203,8 +203,9 @@ journal-owned DNS redirect rules.
 An optional `policy.hosts_path` reads a bounded standard hosts file at startup
 and turns its IPv4/IPv6 entries into local A/AAAA rewrites. Comments and
 multiple names per address are supported; explicit rewrites win for names
-present in both sources. The hosts source is startup-only and is not reread by
-the runtime rewrite endpoints.
+present in both sources. Set `policy.hosts_reload_interval_secs` to enable a
+bounded Proxima interval reload; failed reads retain the last good snapshot.
+The source path itself remains startup-only.
 Configured blocklists may be refreshed by Proxima's cancellable background
 interval with `policy.blocklist_reload_interval_secs`; zero disables polling,
 the interval is bounded to one day, unchanged content does not create a new
