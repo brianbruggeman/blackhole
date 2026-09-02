@@ -73,6 +73,9 @@ question, QR bit, and opcode. Timeout is bounded to 60 seconds and retries to
 eight attempts per exchange, while an upstream circuit breaker limits repeated
 failures through Proxima's `CircuitBreaker` state machine and permits stale
 answers only during its configured stale window.
+Upstream failures preserve bounded cause labels for timeout, wire, response-ID,
+I/O, and configuration errors in the existing Proxima telemetry stream before
+the failure is returned to the listener.
 Repeated per-client rate-limit violations open a bounded temporary abuse
 breaker; unidentified callers are not assigned a shared abuse identity.
 Identified malformed-query floods also feed that same bounded client/network
