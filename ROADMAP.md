@@ -34,7 +34,8 @@ below are future capabilities, grouped by the dependency layer they extend.
 - Add the remaining Pi-hole/AdGuard Home policy features that fit Blackhole's
   explicit-action model, including additional client-specific service settings
   beyond the current identity, filtering, query-log, statistics, cache, fallback,
-  named-upstream, profile, global rate-limit-whitelist, per-identity query-rate,
+  named-upstream, identity-scoped profile, identity-scoped allowlist,
+  global rate-limit-whitelist, per-identity query-rate,
   per-identity response-budget, and per-identity concurrency controls.
 - Add a separately isolated honeypot terminal with explicit retention and
   access controls.
