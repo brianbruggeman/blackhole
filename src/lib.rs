@@ -940,7 +940,6 @@ mod runtime {
             client_identity: Option<&str>,
         ) -> Option<DnsAnswer> {
             let name = normalize(&query.name);
-            let suffix = name.split_once('.').map(|(_, suffix)| suffix)?;
             for identity in [client_identity, None] {
                 let identity = identity.map(str::to_owned);
                 if let Some(answer) =
@@ -949,6 +948,10 @@ mod runtime {
                 {
                     return Some(answer.clone());
                 }
+            }
+            let suffix = name.split_once('.').map(|(_, suffix)| suffix)?;
+            for identity in [client_identity, None] {
+                let identity = identity.map(str::to_owned);
                 if let Some(answer) = self
                     .wildcard_entries
                     .get(&(identity, query.qtype))
@@ -11329,6 +11332,16 @@ mod runtime {
                     txt: None,
                     ttl: 30,
                 },
+                RewriteConfig {
+                    name: "localhost".into(),
+                    client_identity: None,
+                    ipv4: Some(Ipv4Addr::new(192, 0, 2, 9)),
+                    ipv6: None,
+                    cname: None,
+                    ptr: None,
+                    txt: None,
+                    ttl: 30,
+                },
             ];
             config.policy.rules = vec![RuleConfig {
                 enabled: true,
@@ -11359,6 +11372,10 @@ mod runtime {
             assert_eq!(answer.rcode, 0);
             assert_eq!(answer.records.len(), 1);
             assert_eq!(answer.records[0].rdata, vec![192, 0, 2, 1]);
+            let single_label = policy
+                .evaluate(&query("localhost.", 1))
+                .expect("single-label rewrite answer");
+            assert_eq!(single_label.records[0].rdata, vec![192, 0, 2, 9]);
             let aaaa = policy
                 .evaluate(&query("router.home.arpa.", 28))
                 .expect("AAAA rewrite answer");
