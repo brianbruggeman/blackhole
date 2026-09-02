@@ -166,6 +166,8 @@ max_response_amplification = 4
 max_inflight_requests = 1024
 # Global queries-per-second ceiling; it also applies to unidentified callers.
 max_queries_per_second = 10000
+# Optional bounded CIDRs exempt only from the global query-rate ceiling.
+# global_rate_limit_whitelist_cidrs = ["192.0.2.10/32"]
 # Bound concurrent requests attributed to one client address.
 max_inflight_per_client = 64
 # Temporarily shed a client after repeated rate-limit or response-budget violations.

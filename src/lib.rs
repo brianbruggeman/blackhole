@@ -748,6 +748,10 @@ mod runtime {
         /// Individual addresses use `/32` or `/128`.
         #[serde(default)]
         pub deny_client_cidrs: Vec<String>,
+        /// Clients in these bounded IPv4/IPv6 CIDRs bypass only the global
+        /// query-rate bucket; all other admission and abuse limits remain.
+        #[serde(default)]
+        pub global_rate_limit_whitelist_cidrs: Vec<String>,
         #[serde(default = "default_max_name_bytes")]
         pub max_name_bytes: usize,
         #[serde(default = "default_reject_any")]
@@ -796,6 +800,7 @@ mod runtime {
         fn default() -> Self {
             Self {
                 deny_client_cidrs: Vec::new(),
+                global_rate_limit_whitelist_cidrs: Vec::new(),
                 max_name_bytes: default_max_name_bytes(),
                 reject_any: default_reject_any(),
                 max_response_records: default_max_response_records(),
@@ -3245,6 +3250,23 @@ mod runtime {
                     ),
                 });
             }
+            if config.admission.global_rate_limit_whitelist_cidrs.len() > policy::MAX_CLIENT_CIDRS
+                || config
+                    .admission
+                    .global_rate_limit_whitelist_cidrs
+                    .iter()
+                    .any(|value| {
+                        value.len() > policy::MAX_DOMAIN_BYTES
+                            || policy::IpNetwork::parse(value).is_none()
+                    })
+            {
+                return Err(policy::PolicyError::InvalidAdmission {
+                    reason: format!(
+                        "global_rate_limit_whitelist_cidrs must contain at most {} valid IPv4/IPv6 CIDRs",
+                        policy::MAX_CLIENT_CIDRS
+                    ),
+                });
+            }
             if config.admission.max_response_records == 0 {
                 return Err(policy::PolicyError::InvalidAdmission {
                     reason: "max_response_records must be non-zero".into(),
@@ -3711,6 +3733,22 @@ mod runtime {
                 return Err(policy::PolicyError::InvalidAdmission {
                     reason: format!(
                         "deny_client_cidrs must contain at most {} valid IPv4/IPv6 CIDRs",
+                        policy::MAX_CLIENT_CIDRS
+                    ),
+                });
+            }
+            if admission.global_rate_limit_whitelist_cidrs.len() > policy::MAX_CLIENT_CIDRS
+                || admission
+                    .global_rate_limit_whitelist_cidrs
+                    .iter()
+                    .any(|value| {
+                        value.len() > policy::MAX_DOMAIN_BYTES
+                            || policy::IpNetwork::parse(value).is_none()
+                    })
+            {
+                return Err(policy::PolicyError::InvalidAdmission {
+                    reason: format!(
+                        "global_rate_limit_whitelist_cidrs must contain at most {} valid IPv4/IPv6 CIDRs",
                         policy::MAX_CLIENT_CIDRS
                     ),
                 });
@@ -5691,8 +5729,19 @@ mod runtime {
             )
         }
 
-        fn allow_global_rate(&self) -> bool {
+        fn allow_global_rate(&self, client: Option<IpAddr>) -> bool {
             let admission = self.admission_config();
+            if client.is_some_and(|client| {
+                admission
+                    .global_rate_limit_whitelist_cidrs
+                    .iter()
+                    .any(|cidr| {
+                        policy::IpNetwork::parse(cidr)
+                            .is_some_and(|network| network.contains(client))
+                    })
+            }) {
+                return true;
+            }
             self.global_rate
                 .allow(self.breaker_epoch, admission.max_queries_per_second, 1)
         }
@@ -6996,6 +7045,9 @@ mod runtime {
             let admission = self.admission_config();
             serde_json::json!({
                 "deny_client_cidr_count": admission.deny_client_cidrs.len(),
+                "global_rate_limit_whitelist_cidr_count": admission
+                    .global_rate_limit_whitelist_cidrs
+                    .len(),
                 "max_name_bytes": admission.max_name_bytes,
                 "reject_any": admission.reject_any,
                 "max_response_records": admission.max_response_records,
@@ -7869,7 +7921,7 @@ mod runtime {
                 self.observe_for_client(Action::Reject, client);
                 return Ok(DnsPipeReply::typed(200, server_failure_answer()));
             }
-            if !self.allow_global_rate() {
+            if !self.allow_global_rate(client) {
                 self.observe_failure("global_rate_overflow");
                 if self.record_global_abuse("global_rate_overflow") {
                     self.record_global_abuse_incident("global_rate_overflow")
@@ -11585,9 +11637,28 @@ mod runtime {
             let mut config = Config::default();
             config.admission.max_queries_per_second = 2;
             let policy = Policy::new(config).expect("valid admission config");
-            assert!(policy.allow_global_rate());
-            assert!(policy.allow_global_rate());
-            assert!(!policy.allow_global_rate());
+            assert!(policy.allow_global_rate(None));
+            assert!(policy.allow_global_rate(None));
+            assert!(!policy.allow_global_rate(None));
+        }
+
+        #[test]
+        fn global_rate_limit_whitelist_exempts_only_matching_clients() {
+            let mut config = Config::default();
+            config.admission.max_queries_per_second = 1;
+            config.admission.global_rate_limit_whitelist_cidrs =
+                vec!["192.0.2.10/32".into(), "2001:db8:42::/48".into()];
+            let policy = Policy::new(config).expect("valid whitelist");
+            let whitelisted = Some("192.0.2.10".parse().expect("client address"));
+            let network_member = Some("2001:db8:42::99".parse().expect("network member"));
+            let excluded = Some("192.0.2.11".parse().expect("excluded client"));
+            assert!(policy.allow_global_rate(excluded));
+            assert!(!policy.allow_global_rate(excluded));
+            assert!(policy.allow_global_rate(whitelisted));
+            assert!(policy.allow_global_rate(network_member));
+            let status: serde_json::Value =
+                serde_json::from_str(&policy.admin_admission_status()).expect("status");
+            assert_eq!(status["global_rate_limit_whitelist_cidr_count"], 2);
         }
 
         #[test]

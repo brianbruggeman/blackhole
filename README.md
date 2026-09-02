@@ -85,6 +85,9 @@ Operators can also set `[admission].deny_client_cidrs` to a bounded list of
 IPv4/IPv6 CIDRs (use `/32` or `/128` for one address); those clients receive
 REFUSED before policy matching, rate accounting, or forwarding. The denylist
 is live-reloadable and invalid replacements are rejected without publication.
+`[admission].global_rate_limit_whitelist_cidrs` can exempt bounded IPv4/IPv6
+CIDRs from only the global query-rate ceiling; per-client, network, response,
+and abuse limits still apply.
 Authenticated operators can export it at `GET /abuse/denylist`, add bounded
 entries with `POST /abuse/denylist/add`, and revoke entries with
 `POST /abuse/denylist/remove`; these operations publish through the same
