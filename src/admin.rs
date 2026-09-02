@@ -3586,6 +3586,49 @@ mod tests {
     }
 
     #[test]
+    fn identity_allowlist_route_replaces_and_reports_the_scoped_snapshot() {
+        let mut config = crate::Config::default();
+        config.policy.client_identities = vec![crate::ClientIdentityConfig {
+            name: "family-router".into(),
+            enabled: true,
+            query_log_enabled: true,
+            statistics_enabled: true,
+            cache_enabled: true,
+            filtering_enabled: true,
+            default_action: None,
+            upstream: None,
+            clients: vec!["192.0.2.10".parse().expect("client")],
+            max_queries_per_second: None,
+            max_response_bytes_per_second: None,
+            max_inflight_requests: None,
+            client_cidrs: Vec::new(),
+        }];
+        let policy = Arc::new(Policy::new(config).expect("identity policy"));
+        let handler = AdminHandler::new(Arc::clone(&policy));
+        let update = Request::builder()
+            .method("POST")
+            .path("/reload/allowlist/identity")
+            .payload(r#"{"identity":"family-router","domains":["safe.example"]}"#)
+            .build()
+            .expect("identity allowlist request");
+        let response = block_on(handler.call(update)).expect("identity allowlist response");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.payload.as_ref(), br#"{"status":"replaced"}"#);
+
+        let status: serde_json::Value = serde_json::from_slice(
+            &block_on(handler.call(request("GET", "/allowlist")))
+                .expect("allowlist status")
+                .payload,
+        )
+        .expect("allowlist status JSON");
+        assert_eq!(status["scoped_count"], 1);
+        assert_eq!(
+            status["by_identity"]["family-router"],
+            serde_json::json!(["safe.example"])
+        );
+    }
+
+    #[test]
     fn blocklist_group_route_replaces_and_reports_the_live_snapshot() {
         let path = std::env::temp_dir().join(format!(
             "blackhole-admin-group-{}-{}.txt",
