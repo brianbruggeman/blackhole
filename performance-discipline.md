@@ -467,3 +467,35 @@ is process-wide and includes allocator retention and unrelated runtime state;
 the 72 KiB delta is an observed bound for this workload, not a universal
 memory bound. The concurrent-reader and repeated-retirement proof tests remain
 the correctness evidence for complete generations.
+
+## Row 19 — current release policy and listener reference
+
+`MEASURED` on 2026-09-02, Linux `x86_64`, rustc `1.98.0`, release build with
+`perf-instrument`, source commit `1168c31`, and GitHub Proxima revision
+`03ea2c7d`. The policy harness used `N=25` samples and the real listener
+harness used `N=1,000` sequential requests per transport:
+
+```text
+build_ns p50=56062911 p95=58334414 p99=58511443 cov=0.020264 allocs=250025 alloc_bytes=33722250
+match_ns p50=47435 p95=50983 p99=52855 cov=0.030020 allocs=2500 alloc_bytes=57500
+edge_parse_match_ns p50=47937 p95=80708 p99=88388 cov=0.198270 allocs=100 alloc_bytes=1375
+parse_short_ns p50=48 p95=63 p99=162 cov=0.413711 allocs=0 alloc_bytes=0
+parse_long_ns p50=235 p95=274 p99=288 cov=0.053664 allocs=0 alloc_bytes=0
+parse_adversarial_ns p50=80 p95=83 p99=116 cov=0.089772 allocs=0 alloc_bytes=0
+parse_mixed_ns p50=81 p95=240 p99=286 cov=0.648504 allocs=0 alloc_bytes=0
+name_scan_scalar_ns p50=43 p95=45 p99=73 cov=0.137117 allocs=0 alloc_bytes=0
+name_scan_chunked_ns p50=86 p95=115 p99=170 cov=0.194707 allocs=0 alloc_bytes=0
+name_scan_memchr_ns p50=22 p95=48 p99=1100 cov=3.174430 allocs=0 alloc_bytes=0
+owned_ns p50=118 p95=161 p99=297 cov=0.279572 allocs=50 alloc_bytes=400
+encode_response_ns p50=107 p95=279 p99=365 cov=0.465371 allocs=50 alloc_bytes=1450
+listener_udp samples=1000 errors=0 single_request_ns=36455 p50_ns=26237 p95_ns=29895 p99_ns=65488 cov=0.304014 throughput_ops_s=DERIVED 36264.62
+listener_tcp samples=1000 errors=0 single_request_ns=106878 p50_ns=33032 p95_ns=61052 p99_ns=101869 cov=0.349701 throughput_ops_s=DERIVED 26763.88
+listener_boundary_bytes=MEASURED policy_canonicalize=0 borrowed_to_owned=36198 tcp_frame_buffer=37000 encode_output=136748 transport_write=136748
+listener_cpu_percent=MEASURED 108.793862 listener_rss_kib=MEASURED 8844
+```
+
+The scalar arm remains the production arm: chunked scanning is slower and
+memchr retains a materially higher tail and coefficient of variation. Both
+real listener transports completed without errors. These measurements are
+provenance-corrected evidence, not a zero-copy, high-performance, or
+production-grade claim.
