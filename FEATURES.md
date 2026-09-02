@@ -105,6 +105,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Synthetic IPv4/IPv6 honeypot answers with configurable TTL.
 - Configured upstream pass-through for `pass` and `observe`, after local
   rewrites; explicit `forward` remains a distinct fail-closed action.
+- Capture adapters carry the original destination through the existing
+  Proxima listener payload/spec envelope for both UDP datagrams and TCP
+  connections; a validated configured destination remains the fallback.
 - Explicit fail-closed behavior when a forward rule has no upstream attached.
 - Configured upstream forwarding through Proxima's `DnsClientUpstream`, using
   bounded UDP exchanges and DNS-over-TCP fallback when UDP sets `TC`; timeout
