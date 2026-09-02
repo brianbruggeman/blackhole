@@ -39,6 +39,7 @@ static ALLOCATOR: CountingAllocator = CountingAllocator;
 fn rules(count: usize) -> Vec<RuleConfig> {
     (0..count)
         .map(|id| RuleConfig {
+            enabled: true,
             id: id as u32,
             domain: format!("host{id}.shared.example"),
             action: Action::Nxdomain,

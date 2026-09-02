@@ -15,6 +15,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Rule-table matching with explicit actions, stable rule identity, priority,
   exact/deep-wildcard specificity, exact-client and CIDR network scopes, and
   independently ranked singular or bounded qtype/qclass selector sets.
+- Explicit domain and regex rules can be disabled without deleting their
+  configuration; disabled rules remain visible in authenticated projections
+  and are excluded from matching.
 - Unsupported IDNA/Unicode rule names are rejected explicitly; the resolver
   currently accepts ASCII DNS names only.
 - Bounded regular-expression policy rules with startup compilation limits,

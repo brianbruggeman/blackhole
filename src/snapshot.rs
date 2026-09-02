@@ -68,6 +68,7 @@ mod tests {
 
     fn rule(id: u32, domain: &str, action: Action) -> RuleConfig {
         RuleConfig {
+            enabled: true,
             id,
             domain: domain.into(),
             action,

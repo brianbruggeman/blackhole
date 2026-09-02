@@ -29,6 +29,9 @@ pub enum Action {
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct RuleConfig {
+    /// Keep the rule configured while excluding it from matching.
+    #[serde(default = "default_rule_enabled")]
+    pub enabled: bool,
     pub id: u32,
     pub domain: String,
     pub action: Action,
@@ -57,6 +60,10 @@ pub struct RuleConfig {
     /// Labels are matched transiently and are never retained by the policy.
     #[serde(default)]
     pub client_identity: Option<String>,
+}
+
+fn default_rule_enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,6 +170,7 @@ impl core::error::Error for PolicyError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Rule {
+    enabled: bool,
     id: u32,
     domain: String,
     action: Action,
@@ -396,6 +404,7 @@ impl ReferencePolicy {
             let qclasses =
                 effective_query_selectors(config.id, config.qclass, &config.qclasses, "qclass")?;
             rules.push(Rule {
+                enabled: config.enabled,
                 id: config.id,
                 domain,
                 action: config.action,
@@ -492,7 +501,8 @@ impl Rule {
         } else {
             name == self.domain
         };
-        name_matches
+        self.enabled
+            && name_matches
             && (self.qtypes.is_empty() || self.qtypes.contains(&query.qtype))
             && (self.qclasses.is_empty() || self.qclasses.contains(&query.qclass))
             && self
@@ -561,6 +571,7 @@ mod tests {
 
     fn rule(id: u32, domain: &str, action: Action) -> RuleConfig {
         RuleConfig {
+            enabled: true,
             id,
             domain: domain.into(),
             action,
@@ -597,6 +608,15 @@ mod tests {
         assert_eq!(config.qclass, None);
         assert_eq!(config.qtypes, vec![1, 28]);
         assert_eq!(config.qclasses, vec![1]);
+    }
+
+    #[test]
+    fn disabled_domain_rules_remain_configured_but_do_not_match() {
+        let mut disabled = rule(9, "disabled.example", Action::Reject);
+        disabled.enabled = false;
+        let policy = ReferencePolicy::new(&[disabled]).expect("valid disabled rule");
+        assert_eq!(policy.decide(query("disabled.example.")), None);
+        assert_eq!(policy.rule_ids().into_iter().collect::<Vec<_>>(), vec![9]);
     }
 
     #[test]

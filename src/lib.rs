@@ -1288,6 +1288,9 @@ mod runtime {
 
     #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
     pub struct RegexRuleConfig {
+        /// Keep the rule configured while excluding it from matching.
+        #[serde(default = "default_regex_rule_enabled")]
+        pub enabled: bool,
         pub id: u32,
         pub pattern: String,
         pub action: Action,
@@ -1305,6 +1308,10 @@ mod runtime {
         pub client: Option<IpAddr>,
         #[serde(default)]
         pub client_cidrs: Vec<String>,
+    }
+
+    fn default_regex_rule_enabled() -> bool {
+        true
     }
 
     #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -1874,6 +1881,7 @@ mod runtime {
             let id = next_id;
             next_id = next_id.saturating_sub(2);
             rules.push(RuleConfig {
+                enabled: true,
                 id,
                 domain: domain.clone(),
                 action,
@@ -1888,6 +1896,7 @@ mod runtime {
                 client_identity: None,
             });
             rules.push(RuleConfig {
+                enabled: true,
                 id: id.saturating_sub(1),
                 domain: format!("*.{domain}"),
                 action,
@@ -1905,6 +1914,7 @@ mod runtime {
         for allowed in denyallow_domains.values().flatten() {
             for domain in [allowed.clone(), format!("*.{allowed}")] {
                 rules.push(RuleConfig {
+                    enabled: true,
                     id: next_id,
                     domain,
                     action: Action::Pass,
@@ -2478,6 +2488,7 @@ mod runtime {
                         });
                     }
                     rules.push(RuleConfig {
+                        enabled: true,
                         id,
                         domain,
                         action: profile.action,
@@ -2809,6 +2820,7 @@ mod runtime {
     }
 
     struct RegexRule {
+        enabled: bool,
         id: u32,
         pattern: regex::Regex,
         action: Action,
@@ -2879,6 +2891,7 @@ mod runtime {
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             regex_rules.push(RegexRule {
+                enabled: rule.enabled,
                 id: rule.id,
                 pattern,
                 action: rule.action,
@@ -4837,6 +4850,7 @@ mod runtime {
                 rules
                     .iter()
                     .map(|rule| RegexRuleConfig {
+                        enabled: true,
                         id: rule.id,
                         pattern: rule.pattern.as_str().to_owned(),
                         action: rule.action,
@@ -5614,7 +5628,8 @@ mod runtime {
                 rules
                     .iter()
                     .filter(|rule| {
-                        rule.pattern.is_match(name)
+                        rule.enabled
+                            && rule.pattern.is_match(name)
                             && (rule.qtypes.is_empty() || rule.qtypes.contains(&qtype))
                             && (rule.qclasses.is_empty() || rule.qclasses.contains(&qclass))
                             && rule.client.is_none_or(|value| Some(value) == client)
@@ -6442,24 +6457,30 @@ mod runtime {
                 "default_action": action_label(*self.default_action.snapshot()),
                 "filtering_enabled": *self.filtering_enabled.snapshot(),
                 "rules": rules.iter().map(|rule| serde_json::json!({
+                    "enabled": rule.enabled,
                     "id": rule.id,
                     "domain": rule.domain,
                     "action": action_label(rule.action),
                     "priority": rule.priority,
                     "qtype": rule.qtype,
+                    "qtypes": rule.qtypes,
                     "qclass": rule.qclass,
+                    "qclasses": rule.qclasses,
                     "client": rule.client,
                     "client_cidr": rule.client_cidr,
                     "client_cidrs": rule.client_cidrs,
                     "client_identity": rule.client_identity,
                 })).collect::<Vec<_>>(),
                 "regex_rules": regex_rules.iter().map(|rule| serde_json::json!({
+                    "enabled": rule.enabled,
                     "id": rule.id,
                     "pattern": rule.pattern.as_str(),
                     "action": action_label(rule.action),
                     "priority": rule.priority,
                     "qtype": rule.qtype,
+                    "qtypes": rule.qtypes,
                     "qclass": rule.qclass,
+                    "qclasses": rule.qclasses,
                     "client": rule.client,
                     "client_cidrs": rule.client_cidrs,
                 })).collect::<Vec<_>>(),
@@ -6528,12 +6549,15 @@ mod runtime {
             for rule in base_rules.as_ref() {
                 rules.push(serde_json::json!({
                     "kind": "domain",
+                    "enabled": rule.enabled,
                     "id": rule.id,
                     "domain": rule.domain,
                     "action": action_label(rule.action),
                     "priority": rule.priority,
                     "qtype": rule.qtype,
+                    "qtypes": rule.qtypes,
                     "qclass": rule.qclass,
+                    "qclasses": rule.qclasses,
                     "client": rule.client,
                     "client_cidr": rule.client_cidr,
                     "client_cidrs": rule.client_cidrs,
@@ -6542,12 +6566,15 @@ mod runtime {
             for rule in regex_rules.iter() {
                 rules.push(serde_json::json!({
                     "kind": "regex",
+                    "enabled": rule.enabled,
                     "id": rule.id,
                     "pattern": rule.pattern.as_str(),
                     "action": action_label(rule.action),
                     "priority": rule.priority,
                     "qtype": rule.qtype,
+                    "qtypes": rule.qtypes,
                     "qclass": rule.qclass,
+                    "qclasses": rule.qclasses,
                     "client": rule.client,
                     "client_cidrs": rule.client_cidrs,
                 }));
@@ -7345,6 +7372,7 @@ mod runtime {
             };
             let mut config = Config::default();
             config.policy.rules = vec![RuleConfig {
+                enabled: true,
                 id: 1,
                 domain: "old.example".into(),
                 action: Action::Drop,
@@ -7376,6 +7404,7 @@ mod runtime {
 
             assert_eq!(
                 policy.reload_rules(&[RuleConfig {
+                    enabled: true,
                     id: 2,
                     domain: "new.example".into(),
                     action: Action::Reject,
@@ -7403,6 +7432,7 @@ mod runtime {
             let generation = policy.policy_generation.load(Ordering::Acquire);
             assert_eq!(
                 policy.reload_rules(&[RuleConfig {
+                    enabled: true,
                     id: 2,
                     domain: "new.example".into(),
                     action: Action::Reject,
@@ -7422,6 +7452,7 @@ mod runtime {
 
             let invalid = [
                 RuleConfig {
+                    enabled: true,
                     id: 3,
                     domain: "failed.example".into(),
                     action: Action::Pass,
@@ -7436,6 +7467,7 @@ mod runtime {
                     client_identity: None,
                 },
                 RuleConfig {
+                    enabled: true,
                     id: 3,
                     domain: "other.example".into(),
                     action: Action::Drop,
@@ -7788,6 +7820,7 @@ mod runtime {
 
             assert_eq!(
                 policy.reload_rules(&[RuleConfig {
+                    enabled: true,
                     id: 901,
                     domain: "local.example".into(),
                     action: Action::Reject,
@@ -7928,6 +7961,7 @@ mod runtime {
             let mut next = Config::default();
             next.privacy.query_recording_redaction = QueryRecordingRedaction::ActionOnly;
             next.policy.rules = vec![RuleConfig {
+                enabled: true,
                 id: 77,
                 domain: "reload.example".into(),
                 action: Action::Reject,
@@ -8001,6 +8035,7 @@ mod runtime {
             }
 
             let explicit = RuleConfig {
+                enabled: true,
                 id: 70_001,
                 domain: "explicit.example".into(),
                 action: Action::Reject,
@@ -8082,6 +8117,7 @@ mod runtime {
         fn forwarding_without_an_upstream_is_fail_closed() {
             let mut config = Config::default();
             config.policy.rules = vec![RuleConfig {
+                enabled: true,
                 id: 1,
                 domain: "forward.example".into(),
                 action: Action::Forward,
@@ -8278,6 +8314,7 @@ mod runtime {
             config.policy.mode = Mode::Nxdomain;
             config.policy.domains = vec!["legacy.example".into()];
             config.policy.rules = vec![RuleConfig {
+                enabled: true,
                 id: 1,
                 domain: "ruled.example".into(),
                 action: Action::Drop,
@@ -8308,6 +8345,7 @@ mod runtime {
             let mut config = Config::default();
             config.policy.default_action = Action::Pass;
             config.policy.rules = vec![RuleConfig {
+                enabled: true,
                 id: 1,
                 domain: "blocked.example".into(),
                 action: Action::Reject,
@@ -8335,6 +8373,7 @@ mod runtime {
         fn client_scoped_rules_use_adapter_owned_peer_metadata() {
             let mut config = Config::default();
             config.policy.rules = vec![RuleConfig {
+                enabled: true,
                 id: 1,
                 domain: "client.example".into(),
                 action: Action::Reject,
@@ -8368,6 +8407,7 @@ mod runtime {
         fn identity_scoped_rules_use_borrowed_adapter_metadata() {
             let mut config = Config::default();
             config.policy.rules = vec![RuleConfig {
+                enabled: true,
                 id: 2,
                 domain: "identity.example".into(),
                 action: Action::Reject,
@@ -8420,6 +8460,7 @@ mod runtime {
                 client_cidrs: Vec::new(),
             }];
             config.policy.rules = vec![RuleConfig {
+                enabled: true,
                 id: 3,
                 domain: "identity.example".into(),
                 action: Action::Reject,
@@ -8459,6 +8500,7 @@ mod runtime {
                 client_cidrs: Vec::new(),
             }];
             config.policy.rules = vec![RuleConfig {
+                enabled: true,
                 id: 31,
                 domain: "identity.example".into(),
                 action: Action::Reject,
@@ -8589,6 +8631,7 @@ mod runtime {
                 client_cidrs: vec!["192.0.2.0/24".into(), "2001:db8::/32".into()],
             }];
             config.policy.rules = vec![RuleConfig {
+                enabled: true,
                 id: 5,
                 domain: "identity.example".into(),
                 action: Action::Reject,
@@ -8645,6 +8688,7 @@ mod runtime {
         fn client_identity_reload_publishes_a_complete_lock_free_snapshot() {
             let mut config = Config::default();
             config.policy.rules = vec![RuleConfig {
+                enabled: true,
                 id: 4,
                 domain: "identity.example".into(),
                 action: Action::Reject,
@@ -8942,6 +8986,7 @@ mod runtime {
             let mut config = Config::default();
             config.policy.default_action = Action::Pass;
             config.policy.regex_rules = vec![RegexRuleConfig {
+                enabled: true,
                 id: 77,
                 pattern: r"(^|\.)ads[0-9]*\.example$".into(),
                 action: Action::Nxdomain,
@@ -8988,10 +9033,40 @@ mod runtime {
         }
 
         #[test]
+        fn disabled_regex_rules_remain_configured_but_do_not_match() {
+            let mut config = Config::default();
+            config.policy.default_action = Action::Pass;
+            config.policy.regex_rules = vec![RegexRuleConfig {
+                enabled: false,
+                id: 79,
+                pattern: "^disabled\\.example$".into(),
+                action: Action::Nxdomain,
+                priority: 1,
+                qtype: None,
+                qtypes: Vec::new(),
+                qclass: None,
+                qclasses: Vec::new(),
+                client: None,
+                client_cidrs: Vec::new(),
+            }];
+            let policy = Policy::new(config).expect("valid disabled regex rule");
+            let query = proxima_dns::DnsQuery {
+                id: 1,
+                recursion_desired: true,
+                name: "disabled.example.".into(),
+                qtype: 1,
+                qclass: 1,
+            };
+            assert_eq!(policy.evaluate(&query).expect("pass answer").rcode, 0);
+            assert!(policy.admin_policy_bundle().contains("\"enabled\":false"));
+        }
+
+        #[test]
         fn regex_rules_honor_client_network_scopes() {
             let mut config = Config::default();
             config.policy.default_action = Action::Pass;
             config.policy.regex_rules = vec![RegexRuleConfig {
+                enabled: true,
                 id: 78,
                 pattern: r"(^|\.)ads\.example$".into(),
                 action: Action::Nxdomain,
@@ -9038,6 +9113,7 @@ mod runtime {
             let mut config = Config::default();
             config.policy.default_action = Action::Pass;
             config.policy.rules = vec![RuleConfig {
+                enabled: true,
                 id: 1,
                 domain: "ads.example".into(),
                 action: Action::Pass,
@@ -9052,6 +9128,7 @@ mod runtime {
                 client_identity: None,
             }];
             config.policy.regex_rules = vec![RegexRuleConfig {
+                enabled: true,
                 id: 2,
                 pattern: r"(^|\.)ads\.example$".into(),
                 action: Action::Nxdomain,
@@ -9078,6 +9155,7 @@ mod runtime {
         fn regex_rules_reject_invalid_or_oversized_patterns() {
             let mut invalid = Config::default();
             invalid.policy.regex_rules = vec![RegexRuleConfig {
+                enabled: true,
                 id: 1,
                 pattern: "[".into(),
                 action: Action::Drop,
@@ -9096,6 +9174,7 @@ mod runtime {
 
             let mut invalid_scope = Config::default();
             invalid_scope.policy.regex_rules = vec![RegexRuleConfig {
+                enabled: true,
                 id: 3,
                 pattern: "ads".into(),
                 action: Action::Drop,
@@ -9114,6 +9193,7 @@ mod runtime {
 
             let mut oversized = Config::default();
             oversized.policy.regex_rules = vec![RegexRuleConfig {
+                enabled: true,
                 id: 2,
                 pattern: "x".repeat(MAX_REGEX_PATTERN_BYTES + 1),
                 action: Action::Drop,
@@ -9254,6 +9334,7 @@ mod runtime {
             for (domain, action) in actions {
                 let mut config = Config::default();
                 config.policy.rules = vec![RuleConfig {
+                    enabled: true,
                     id: 1,
                     domain: domain.into(),
                     action,
@@ -9309,6 +9390,7 @@ mod runtime {
                 },
             ];
             config.policy.rules = vec![RuleConfig {
+                enabled: true,
                 id: 1,
                 domain: "blocked.home.arpa".into(),
                 action: Action::Nxdomain,
@@ -10376,6 +10458,7 @@ mod runtime {
             let mut config = Config::default();
             config.admission.max_response_bytes = 40;
             config.policy.rules = vec![RuleConfig {
+                enabled: true,
                 id: 1,
                 domain: "honeypot.example".into(),
                 action: Action::Honeypot,
@@ -10407,6 +10490,7 @@ mod runtime {
             config.admission.max_response_bytes = 4096;
             config.admission.max_response_amplification = 1;
             config.policy.rules = vec![RuleConfig {
+                enabled: true,
                 id: 1,
                 domain: "honeypot.example".into(),
                 action: Action::Honeypot,
@@ -10447,6 +10531,7 @@ mod runtime {
             let mut config = Config::default();
             config.admission.max_response_records = 1;
             config.policy.rules = vec![RuleConfig {
+                enabled: true,
                 id: 1,
                 domain: "sink.example".into(),
                 action: Action::Honeypot,
@@ -10773,6 +10858,7 @@ mod runtime {
                 .with_telemetry(telemetry.clone());
             policy
                 .reload_rules(&[RuleConfig {
+                    enabled: true,
                     id: 1,
                     domain: "blocked.example".into(),
                     action: Action::Nxdomain,
@@ -10789,6 +10875,7 @@ mod runtime {
                 .expect("rules reload");
             policy
                 .reload_regex_rules(&[RegexRuleConfig {
+                    enabled: true,
                     id: 2,
                     pattern: "blocked".into(),
                     action: Action::Drop,

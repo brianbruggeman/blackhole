@@ -11,6 +11,7 @@ use std::time::Instant;
 fn rules(count: usize) -> Vec<RuleConfig> {
     (0..count)
         .map(|index| RuleConfig {
+            enabled: true,
             id: index as u32,
             domain: format!("host{index}.shared.example"),
             action: Action::Nxdomain,

@@ -41,6 +41,7 @@ async fn listener_preserves_distinct_terminal_actions_on_udp() {
         .iter()
         .enumerate()
         .map(|(index, (domain, action))| RuleConfig {
+            enabled: true,
             id: index as u32 + 1,
             domain: (*domain).into(),
             action: *action,
@@ -167,6 +168,7 @@ async fn listener_preserves_distinct_terminal_actions_on_tcp() {
         .iter()
         .enumerate()
         .map(|(index, (domain, action))| RuleConfig {
+            enabled: true,
             id: index as u32 + 1,
             domain: (*domain).into(),
             action: *action,
@@ -391,6 +393,7 @@ async fn listener_forwards_allowed_query_to_loopback_upstream() {
     config.server.listen = "127.0.0.1:0".into();
     config.policy.default_action = Action::Forward;
     config.policy.rules = vec![RuleConfig {
+        enabled: true,
         id: 1,
         domain: "blocked.example".into(),
         action: Action::Nxdomain,

@@ -507,6 +507,7 @@ mod tests {
     fn listener_preserves_drop_action_in_aggregate_stats() {
         let mut config = Config::default();
         config.policy.rules = vec![crate::RuleConfig {
+            enabled: true,
             id: 1,
             domain: "drop.example".into(),
             action: crate::Action::Drop,

@@ -120,6 +120,7 @@ mod tests {
             0x01,
         ];
         let rules = [RuleConfig {
+            enabled: true,
             id: 7,
             domain: "www.example".into(),
             action: Action::Nxdomain,

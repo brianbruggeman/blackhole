@@ -212,6 +212,7 @@ fn policy_with_action(mode: ReplyMode, action: Action) -> (Policy, FakeSocket) {
     let mut config = Config::default();
     config.admission.max_response_records = 1;
     config.policy.rules = vec![RuleConfig {
+        enabled: true,
         id: 1,
         domain: "example.com".into(),
         action,

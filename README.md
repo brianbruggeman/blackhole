@@ -242,7 +242,8 @@ managed denylist), bounded
 `GET /abuse/incidents` (redacted bounded incident review), bounded
 `GET /abuse/incidents/export` (bounded durable incident export), bounded
 `POST /reload/country` (returns `reloaded` or `unchanged`), bounded
-`POST /reload/policy` (a JSON array of complete rule objects), bounded
+`POST /reload/policy` (a JSON array of complete rule objects; each rule may
+set `enabled` to retain it without matching), bounded
 `POST /reload/country/replace` (an atomic country/CIDR selector and map
 configuration replacement), bounded
 `POST /reload/policy/add` (a non-empty JSON array appended atomically to the current domain rules), bounded
@@ -252,7 +253,8 @@ configuration replacement), bounded
 `POST /validate/policy-bundle` (a complete bundle validated across profiles,
 identities, rewrites, country policy, blocklists, legacy fields, admission,
 and rule IDs without publishing), and bounded
-`POST /reload/regex` (a JSON array of regex rule objects),
+`POST /reload/regex` (a JSON array of regex rule objects; each rule may set
+`enabled` to retain it without matching),
 `POST /validate/regex` (a JSON array validated against the current domain rule IDs without publishing),
 `POST /reload/regex/upsert` (a JSON array that replaces or adds regex rules by
 stable ID), and `POST /reload/regex/remove` (a JSON array of regex rule IDs).

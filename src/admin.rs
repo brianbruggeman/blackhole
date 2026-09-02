@@ -2335,6 +2335,7 @@ mod tests {
     fn rules_route_lists_metadata_and_caps_large_responses() {
         let mut config = crate::Config::default();
         config.policy.rules = vec![RuleConfig {
+            enabled: true,
             id: 7,
             domain: "blocked.example".into(),
             action: crate::Action::Nxdomain,
@@ -2350,6 +2351,7 @@ mod tests {
         }];
         config.policy.regex_rules = (0..80)
             .map(|id| RegexRuleConfig {
+                enabled: true,
                 id: 100 + id,
                 pattern: format!("^host{id}{}$", "a".repeat(900)),
                 action: crate::Action::Drop,
@@ -3135,6 +3137,7 @@ mod tests {
         assert_eq!(policy.action_for_view(query), crate::Action::Nxdomain);
 
         let conflicting_domain_rule = crate::RuleConfig {
+            enabled: true,
             id: 9,
             domain: "other.example".into(),
             action: crate::Action::Drop,
@@ -3169,6 +3172,7 @@ mod tests {
     fn regex_upsert_and_removal_are_atomic_by_stable_id() {
         let mut config = crate::Config::default();
         config.policy.regex_rules = vec![RegexRuleConfig {
+            enabled: true,
             id: 90,
             pattern: "^old\\.example$".into(),
             action: crate::Action::Drop,
@@ -3255,6 +3259,7 @@ mod tests {
             ttl: 30,
         }];
         config.policy.rules = vec![crate::RuleConfig {
+            enabled: true,
             id: 1,
             domain: "unrelated.example".into(),
             action: crate::Action::Pass,
