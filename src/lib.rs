@@ -9063,6 +9063,11 @@ mod runtime {
                 "upstream_configured": self.upstream.is_some(),
                 "named_upstreams_configured": self.config.upstreams.len(),
                 "named_upstreams_attached": self.named_upstreams.len(),
+                "upstream_rebinding_protection": self
+                    .config
+                    .security
+                    .reject_private_upstream_addresses,
+                "allowed_upstream_networks": self.allowed_upstream_networks.len(),
                 "upstream_breaker_state": upstream_breaker_state,
                 "country_policy_configured": self.country_policy.snapshot().is_some(),
                 "country_reload_interval_secs": self.config.country_policy.reload_interval_secs,
