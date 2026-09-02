@@ -1859,39 +1859,45 @@ mod runtime {
         })?;
         let base = base.to_owned();
         let path = path.to_owned();
+        let (result_sender, result_receiver) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let client = Client::from_value(serde_json::json!({
-                "http": base,
-                "timeout": format!("{}ms", timeout.as_millis()),
-            }))
-            .map_err(|error| format!("create Proxima HTTP client: {error}"))?;
-            futures::executor::block_on(async move {
-                let response = client
-                    .get(path)
-                    .send()
-                    .await
-                    .map_err(|error| format!("fetch through Proxima: {error}"))?;
-                if !response.ok() {
-                    return Err(format!("remote source returned HTTP {}", response.status()));
-                }
-                let mut stream = response.into_body().into_chunk_stream();
-                let mut contents = Vec::new();
-                while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
-                    let chunk = chunk.map_err(|error| format!("read through Proxima: {error}"))?;
-                    let next_len = contents
-                        .len()
-                        .checked_add(chunk.len())
-                        .ok_or_else(|| "remote source size overflow".to_owned())?;
-                    if next_len > max_bytes as usize {
-                        return Err(format!("remote source exceeds {max_bytes} bytes"));
+            let result = (|| {
+                let client = Client::from_value(serde_json::json!({
+                    "http": base,
+                    "timeout": format!("{}ms", timeout.as_millis()),
+                }))
+                .map_err(|error| format!("create Proxima HTTP client: {error}"))?;
+                futures::executor::block_on(async move {
+                    let response = client
+                        .get(path)
+                        .send()
+                        .await
+                        .map_err(|error| format!("fetch through Proxima: {error}"))?;
+                    if !response.ok() {
+                        return Err(format!("remote source returned HTTP {}", response.status()));
                     }
-                    contents.extend_from_slice(&chunk);
-                }
-                Ok(contents)
-            })
-        })
-        .join()
-        .map_err(|_| "remote source worker panicked".to_owned())?
+                    let mut stream = response.into_body().into_chunk_stream();
+                    let mut contents = Vec::new();
+                    while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
+                        let chunk =
+                            chunk.map_err(|error| format!("read through Proxima: {error}"))?;
+                        let next_len = contents
+                            .len()
+                            .checked_add(chunk.len())
+                            .ok_or_else(|| "remote source size overflow".to_owned())?;
+                        if next_len > max_bytes as usize {
+                            return Err(format!("remote source exceeds {max_bytes} bytes"));
+                        }
+                        contents.extend_from_slice(&chunk);
+                    }
+                    Ok(contents)
+                })
+            })();
+            let _ = result_sender.send(result);
+        });
+        result_receiver
+            .recv_timeout(timeout)
+            .map_err(|_| format!("remote source timed out after {}ms", timeout.as_millis()))?
     }
 
     fn read_remote_blocklist(source: &str) -> Result<Vec<u8>, policy::PolicyError> {
@@ -10590,6 +10596,11 @@ mod runtime {
                 let _ = stream
                     .read(&mut request)
                     .expect("read silent source request");
+                std::io::Write::write_all(
+                    &mut stream,
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\n",
+                )
+                .expect("write silent source headers");
                 std::thread::sleep(std::time::Duration::from_millis(200));
             });
 
@@ -10601,7 +10612,7 @@ mod runtime {
             );
             let error = result.expect_err("silent hosted source must time out");
             assert!(
-                error.to_ascii_lowercase().contains("timeout"),
+                error.to_ascii_lowercase().contains("timed out"),
                 "expected a Proxima timeout: {error}"
             );
             thread.join().expect("join silent source fixture");
