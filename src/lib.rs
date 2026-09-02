@@ -2739,6 +2739,8 @@ mod runtime {
         telemetry: Option<TelemetryHandle>,
         recording: Option<DynRecordingSink>,
         query_log: Option<Arc<QueryLog>>,
+        query_recording_redaction: Live<QueryRecordingRedaction>,
+        query_recording_redaction_control: LiveControl<QueryRecordingRedaction>,
         decision_counts: [AtomicU64; 9],
         admission: Live<AdmissionConfig>,
         admission_control: LiveControl<AdmissionConfig>,
@@ -3085,6 +3087,8 @@ mod runtime {
             let (default_action, default_action_control) = live(default_action);
             let (filtering_enabled, filtering_enabled_control) = live(filtering_enabled);
             let (regex_rules, regex_rules_control) = live(regex_rules);
+            let (query_recording_redaction, query_recording_redaction_control) =
+                live(config.privacy.query_recording_redaction);
             let policy = Self {
                 config,
                 base_rules,
@@ -3129,6 +3133,8 @@ mod runtime {
                 telemetry: None,
                 recording: None,
                 query_log,
+                query_recording_redaction,
+                query_recording_redaction_control,
                 decision_counts: core::array::from_fn(|_| AtomicU64::new(0)),
                 admission,
                 admission_control,
@@ -3881,13 +3887,15 @@ mod runtime {
         /// running process.
         pub fn reload_config(&self, next: &Config) -> Result<ReloadState, policy::PolicyError> {
             let current = &self.config;
+            let mut startup_privacy = next.privacy.clone();
+            startup_privacy.query_recording_redaction = current.privacy.query_recording_redaction;
             if next.server != current.server
                 || next.admin != current.admin
                 || next.honeypot != current.honeypot
                 || next.upstream != current.upstream
                 || next.cache != current.cache
                 || next.security != current.security
-                || next.privacy != current.privacy
+                || startup_privacy != current.privacy
                 || next.capture != current.capture
                 || next.dhcp != current.dhcp
             {
@@ -3907,7 +3915,9 @@ mod runtime {
                     reason: "startup-only capacity, incident-persistence, or reload interval settings changed".into(),
                 });
             }
-            self.reload_policy_bundle_with_legacy_and_admission(
+            let redaction_changed = next.privacy.query_recording_redaction
+                != *self.query_recording_redaction.snapshot();
+            let result = self.reload_policy_bundle_with_legacy_and_admission(
                 &next.policy.rules,
                 &next.policy.regex_rules,
                 &next.policy.profiles,
@@ -3922,7 +3932,23 @@ mod runtime {
                 Some(next.policy.filtering_enabled),
                 Some(&next.policy.disabled_blocklists),
                 Some(&next.admission),
-            )
+            );
+            match result {
+                Ok(ReloadState::Published) => {
+                    if redaction_changed {
+                        self.query_recording_redaction_control
+                            .replace(next.privacy.query_recording_redaction);
+                    }
+                    Ok(ReloadState::Published)
+                }
+                Ok(ReloadState::Unchanged) if redaction_changed => {
+                    self.query_recording_redaction_control
+                        .replace(next.privacy.query_recording_redaction);
+                    self.policy_generation.fetch_add(1, Ordering::Relaxed);
+                    Ok(ReloadState::Published)
+                }
+                other => other,
+            }
         }
 
         /// Atomically replace the configured service profiles and client
@@ -5572,8 +5598,7 @@ mod runtime {
                 "qtype": query.qtype,
                 "qclass": query.qclass,
             });
-            if self.config.privacy.query_recording_redaction == QueryRecordingRedaction::ActionOnly
-            {
+            if *self.query_recording_redaction.snapshot() == QueryRecordingRedaction::ActionOnly {
                 let object = payload
                     .as_object_mut()
                     .expect("decision recording payload is an object");
@@ -5827,7 +5852,7 @@ mod runtime {
                     .privacy
                     .query_recording_rotation_enabled,
                 "query_recording_max_files": self.config.privacy.query_recording_max_files,
-                "query_recording_redaction": match self.config.privacy.query_recording_redaction {
+                "query_recording_redaction": match *self.query_recording_redaction.snapshot() {
                     QueryRecordingRedaction::Metadata => "metadata",
                     QueryRecordingRedaction::ActionOnly => "action_only",
                 },
@@ -7618,6 +7643,7 @@ mod runtime {
         fn configuration_reload_publishes_policy_and_rejects_startup_changes() {
             let policy = Policy::new(Config::default()).expect("default policy");
             let mut next = Config::default();
+            next.privacy.query_recording_redaction = QueryRecordingRedaction::ActionOnly;
             next.policy.rules = vec![RuleConfig {
                 id: 77,
                 domain: "reload.example".into(),
@@ -7638,6 +7664,9 @@ mod runtime {
             let admission: serde_json::Value =
                 serde_json::from_str(&policy.admin_admission_status()).expect("admission");
             assert_eq!(admission["max_queries_per_second"], 7);
+            let privacy: serde_json::Value =
+                serde_json::from_str(&policy.admin_privacy_status()).expect("privacy");
+            assert_eq!(privacy["query_recording_redaction"], "action_only");
             assert_eq!(policy.reload_config(&next), Ok(ReloadState::Unchanged));
             let status: serde_json::Value =
                 serde_json::from_str(&policy.admin_policy_status()).expect("status");
