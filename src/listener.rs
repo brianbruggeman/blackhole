@@ -675,6 +675,13 @@ mod tests {
             ORIGINAL_DESTINATION_METADATA: "0.0.0.0:53"
         });
         assert_eq!(original_destination(&unspecified, configured), configured);
+        let unspecified_v6 = serde_json::json!({
+            ORIGINAL_DESTINATION_METADATA: "[::]:53"
+        });
+        assert_eq!(
+            original_destination(&unspecified_v6, configured),
+            configured
+        );
     }
 
     #[test]
