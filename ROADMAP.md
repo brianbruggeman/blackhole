@@ -33,8 +33,8 @@ below are future capabilities, grouped by the dependency layer they extend.
 
 - Add the remaining Pi-hole/AdGuard Home policy features that fit Blackhole's
   explicit-action model, including additional client-specific service settings
-  beyond the current identity, per-client filtering toggle, fallback-action,
-  named upstream routing, and profile controls.
+  beyond the current identity, filtering, query-log, statistics, cache, fallback,
+  named-upstream, and profile controls.
 - Add a separately isolated honeypot terminal with explicit retention and
   access controls.
 - Extend the measured policy/codec WASM edge experiment with additional
