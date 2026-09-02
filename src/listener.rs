@@ -666,6 +666,29 @@ mod tests {
     }
 
     #[test]
+    fn udp_oversized_datagram_is_dropped_before_parsing() {
+        let policy = Arc::new(Policy::new(Config::default()).expect("default policy"));
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let udp = UdpProtocol::new(policy);
+        let input = vec![0u8; MAX_QUERY_BYTES + 1];
+
+        futures::executor::block_on(udp.drive(
+            Box::new(TestConnection {
+                input: std::io::Cursor::new(input),
+                output: Arc::clone(&output),
+                peer: None,
+            }),
+            Arc::new(()),
+            &Value::Null,
+            None,
+            &ConnAdmission::unbounded(),
+        ))
+        .expect("oversized datagram is a dropped request");
+
+        assert!(output.lock().expect("UDP output").is_empty());
+    }
+
+    #[test]
     fn listener_records_the_parser_failure_cause() {
         let causes = Arc::new(Mutex::new(Vec::new()));
         let policy = Policy::new(Config::default())
