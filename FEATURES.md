@@ -235,7 +235,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   temporary abuse breakers; repeated capped responses can therefore trigger
   the same expiring blacklist and optional durable incident path.
 - Upstream rebinding protection for private, local, link-local, unspecified,
-  multicast, and IPv6 unique-local A/AAAA answers, with fail-closed SERVFAIL.
+  multicast, and IPv6 unique-local A/AAAA answers, with fail-closed SERVFAIL;
+  bounded explicit `security.allowed_upstream_cidrs` exceptions support
+  trusted local split-DNS without disabling protection globally.
 - Optional country deny and observe-only (“snitch”) policy from a bounded,
   operator-supplied local or hosted HTTP(S) country/CIDR map with optional region and ASN labels;
   longest-prefix entries win and the classification is not treated as exact

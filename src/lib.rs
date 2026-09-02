@@ -137,6 +137,7 @@ mod runtime {
     const MAX_UPSTREAM_TIMEOUT_MS: u64 = 60_000;
     const MAX_NAMED_UPSTREAMS: usize = 64;
     const MAX_UPSTREAM_NAME_BYTES: usize = 64;
+    const MAX_UPSTREAM_ALLOWED_NETWORKS: usize = 64;
     const MAX_REGEX_RULES: usize = 4096;
     const MAX_REGEX_PATTERN_BYTES: usize = 4096;
     const MAX_REGEX_PROGRAM_BYTES: usize = 1 << 20;
@@ -1011,6 +1012,10 @@ mod runtime {
     pub struct SecurityConfig {
         #[serde(default = "default_reject_private_upstream_addresses")]
         pub reject_private_upstream_addresses: bool,
+        /// Explicit private upstream networks trusted for local split-DNS.
+        /// Rebinding protection remains enabled for every other address.
+        #[serde(default)]
+        pub allowed_upstream_cidrs: Vec<String>,
     }
 
     #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -1170,6 +1175,7 @@ mod runtime {
         fn default() -> Self {
             Self {
                 reject_private_upstream_addresses: default_reject_private_upstream_addresses(),
+                allowed_upstream_cidrs: Vec::new(),
             }
         }
     }
@@ -3935,6 +3941,7 @@ mod runtime {
         hosts_rewrites: Live<Vec<RewriteConfig>>,
         hosts_rewrites_control: LiveControl<Vec<RewriteConfig>>,
         capture_original_destination: Option<SocketAddr>,
+        allowed_upstream_networks: Vec<policy::IpNetwork>,
         base_rules: Live<Vec<RuleConfig>>,
         base_rules_control: LiveControl<Vec<RuleConfig>>,
         explicit_rules: Live<Vec<RuleConfig>>,
@@ -4319,6 +4326,25 @@ mod runtime {
                         .into(),
                 });
             }
+            if config.security.allowed_upstream_cidrs.len() > MAX_UPSTREAM_ALLOWED_NETWORKS {
+                return Err(policy::PolicyError::InvalidUpstream {
+                    reason: format!(
+                        "allowed upstream network count exceeds {MAX_UPSTREAM_ALLOWED_NETWORKS}"
+                    ),
+                });
+            }
+            let allowed_upstream_networks = config
+                .security
+                .allowed_upstream_cidrs
+                .iter()
+                .map(|value| {
+                    policy::IpNetwork::parse(value).ok_or_else(|| {
+                        policy::PolicyError::InvalidUpstream {
+                            reason: format!("invalid allowed upstream CIDR: {value}"),
+                        }
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
             if config.policy.blocklist_reload_interval_secs > MAX_BLOCKLIST_RELOAD_INTERVAL_SECS {
                 return Err(policy::PolicyError::InvalidBlocklist {
                     path: "<config>".into(),
@@ -4477,6 +4503,7 @@ mod runtime {
                 hosts_rewrites,
                 hosts_rewrites_control,
                 capture_original_destination,
+                allowed_upstream_networks,
                 base_rules,
                 base_rules_control,
                 explicit_rules,
@@ -7803,7 +7830,28 @@ mod runtime {
                     _ => false,
                 };
                 if blocked {
-                    return Err("upstream_rebinding");
+                    let address = match record.rtype {
+                        1 if record.rdata.len() == 4 => Some(IpAddr::V4(Ipv4Addr::new(
+                            record.rdata[0],
+                            record.rdata[1],
+                            record.rdata[2],
+                            record.rdata[3],
+                        ))),
+                        28 if record.rdata.len() == 16 => {
+                            let mut octets = [0; 16];
+                            octets.copy_from_slice(&record.rdata);
+                            Some(IpAddr::V6(Ipv6Addr::from(octets)))
+                        }
+                        _ => None,
+                    };
+                    let allowed = address.is_some_and(|address| {
+                        self.allowed_upstream_networks
+                            .iter()
+                            .any(|network| network.contains(address))
+                    });
+                    if !allowed {
+                        return Err("upstream_rebinding");
+                    }
                 }
             }
             if !answer.records.is_empty() && !has_question_owner {
@@ -15369,6 +15417,27 @@ mod runtime {
                 ..private.clone()
             };
             assert_eq!(policy.validate_upstream_answer(&query, &public), Ok(()));
+
+            let mut config = Config::default();
+            config.security.allowed_upstream_cidrs = vec!["10.0.0.0/8".into()];
+            let trusted_policy = Policy::new(config).expect("trusted local upstream policy");
+            assert_eq!(
+                trusted_policy.validate_upstream_answer(&query, &private),
+                Ok(())
+            );
+            let mut untrusted = private;
+            untrusted.records[0].rdata = vec![192, 168, 1, 1];
+            assert_eq!(
+                trusted_policy.validate_upstream_answer(&query, &untrusted),
+                Err("upstream_rebinding")
+            );
+
+            let mut invalid = Config::default();
+            invalid.security.allowed_upstream_cidrs = vec!["10.0.0.0/99".into()];
+            assert!(matches!(
+                Policy::new(invalid),
+                Err(policy::PolicyError::InvalidUpstream { .. })
+            ));
         }
 
         #[test]

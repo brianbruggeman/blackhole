@@ -230,6 +230,9 @@ max_response_bytes_per_network_per_second = 4194304
 [security]
 # Prevent forwarded answers from rebinding clients to private/local networks.
 reject_private_upstream_addresses = true
+# Optional explicit local split-DNS exceptions. Rebinding protection remains
+# enabled for private addresses outside these bounded CIDR ranges.
+# allowed_upstream_cidrs = ["192.168.50.0/24"]
 
 [privacy]
 # Query-decision logging is disabled by default. If enabled, only bounded

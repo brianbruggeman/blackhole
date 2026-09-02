@@ -85,6 +85,9 @@ answers only during its configured stale window.
 Upstream failures preserve bounded cause labels for timeout, wire, response-ID,
 I/O, and configuration errors in the existing Proxima telemetry stream before
 the failure is returned to the listener.
+Private/local upstream answers are rejected by default. For split-DNS deployments,
+`[security].allowed_upstream_cidrs` provides a bounded explicit CIDR exception
+without disabling rebinding protection for other private addresses.
 DNSSEC response records (DS, RRSIG, NSEC, DNSKEY, NSEC3, NSEC3PARAM, CDS, and
 CDNSKEY) are bounded
 and passed through with validated owner/class metadata; cryptographic DNSSEC
