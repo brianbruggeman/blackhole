@@ -7724,6 +7724,15 @@ mod runtime {
                     Err(_) => ("unreadable", None, Some(false)),
                 },
             };
+            let last_good_status = match config.last_good_path.as_deref() {
+                None => "not_configured",
+                Some(path) => match std::fs::symlink_metadata(path) {
+                    Ok(metadata) if metadata.file_type().is_file() => "ready",
+                    Ok(_) => "unreadable",
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => "missing",
+                    Err(_) => "unreadable",
+                },
+            };
             serde_json::json!({
                 "map_configured": policy.is_some(),
                 "source_kind": source_kind,
@@ -7731,6 +7740,8 @@ mod runtime {
                 "source_age_secs": source_age_secs,
                 "freshness_valid": freshness_valid,
                 "freshness_contract": if source_kind == "local_file" { "local_mtime" } else { "none" },
+                "last_good_configured": config.last_good_path.is_some(),
+                "last_good_status": last_good_status,
                 "entries": policy.as_ref().map_or(0, |value| value.entries.len()),
                 "source_fingerprint": policy
                     .as_ref()

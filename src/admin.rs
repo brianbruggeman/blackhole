@@ -1980,6 +1980,8 @@ mod tests {
         assert_eq!(country_status["source_age_secs"], serde_json::Value::Null);
         assert_eq!(country_status["freshness_valid"], serde_json::Value::Null);
         assert_eq!(country_status["freshness_contract"], "none");
+        assert_eq!(country_status["last_good_configured"], false);
+        assert_eq!(country_status["last_good_status"], "not_configured");
         assert_eq!(country_status["entries"], 0);
         assert_eq!(
             country_status["source_fingerprint"],
