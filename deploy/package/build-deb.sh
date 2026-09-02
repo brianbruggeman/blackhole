@@ -64,6 +64,8 @@ mkdir -p "$staging/control" "$staging/data/usr/local/bin" \
 cp "$binary" "$staging/data/usr/local/bin/blackhole"
 cp "$repo_dir/blackhole.example.toml" \
     "$staging/data/etc/blackhole/blackhole.toml"
+cp "$repo_dir/blackhole.lan.example.toml" \
+    "$staging/data/usr/share/doc/blackhole/blackhole.lan.example.toml"
 cp "$repo_dir/deploy/systemd/blackhole.service" \
     "$staging/data/etc/systemd/system/blackhole.service"
 cp "$repo_dir/deploy/systemd/blackhole.conf" \

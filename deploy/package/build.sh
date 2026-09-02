@@ -36,11 +36,14 @@ hash_file() {
 
 mkdir -p "$staging/$package_name/bin" \
     "$staging/$package_name/etc/blackhole" \
+    "$staging/$package_name/share/blackhole/examples" \
     "$staging/$package_name/share/blackhole/deploy/systemd" \
     "$staging/$package_name/share/blackhole/deploy/launchd"
 cp "$binary" "$staging/$package_name/bin/blackhole"
 cp "$repo_dir/blackhole.example.toml" \
     "$staging/$package_name/etc/blackhole/blackhole.toml"
+cp "$repo_dir/blackhole.lan.example.toml" \
+    "$staging/$package_name/share/blackhole/examples/blackhole.lan.example.toml"
 cp "$repo_dir/deploy/systemd/blackhole.service" \
     "$repo_dir/deploy/systemd/blackhole.conf" \
     "$repo_dir/deploy/systemd/install.sh" \

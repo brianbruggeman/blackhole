@@ -390,6 +390,7 @@ fn package_builder_contains_provenance_and_bounded_inputs() {
         "fuzz_corpus_sha256",
         "SHA256SUMS",
         "blackhole.example.toml",
+        "blackhole.lan.example.toml",
         "blackhole.service",
         "com.brianbruggeman.blackhole.plist",
         "deploy/systemd/install.sh",
