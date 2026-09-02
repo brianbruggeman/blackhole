@@ -177,6 +177,19 @@ async fn admin_http_listener_enforces_bearer_auth() {
     assert!(policy_status.contains("\"profiles\":1"));
     assert!(policy_status.contains("\"blocklist_sources\":1"));
     assert!(!policy_status.contains("initial_blocklist"));
+    let preview = request(
+        addr,
+        "POST",
+        "/policy/preview",
+        Some("Bearer integration-secret"),
+        Some(r#"{"name":"ads.example.","qtype":1,"qclass":1,"client":"192.0.2.11"}"#),
+    )
+    .await
+    .expect("policy preview response");
+    let preview = String::from_utf8_lossy(&preview);
+    assert!(preview.starts_with("HTTP/1.1 200"));
+    assert!(preview.contains("\"action\":\"nxdomain\""));
+    assert!(preview.contains("\"matched_rule_id\":"));
     let bundle = request(
         addr,
         "GET",
