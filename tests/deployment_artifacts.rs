@@ -476,6 +476,7 @@ fn deb_smoke_exercises_a_disposable_root_transaction() {
     assert!(script.starts_with("#!/bin/sh\nset -eu\n"));
     assert!(script.contains("usage: $0 DEB [UPGRADE_DEB]"));
     assert!(script.contains("upgrade_package=${2:-$package}"));
+    assert!(script.contains("export DPKG_ROOT=\"$root\""));
     assert!(script.contains("dpkg --root=\"$root\" --unpack"));
     assert!(script.contains("export DEBIAN_FRONTEND=noninteractive"));
     assert!(script.contains("dpkg --root=\"$root\" --force-confold --configure blackhole"));

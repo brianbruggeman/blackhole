@@ -38,6 +38,10 @@ command -v dpkg-deb >/dev/null 2>&1 || {
 root=$(mktemp -d "${TMPDIR:-/tmp}/blackhole-deb-smoke.XXXXXX")
 cleanup() { rm -rf "$root"; }
 trap cleanup EXIT HUP INT TERM
+# dpkg --root selects the database and filesystem, but older dpkg releases do
+# not consistently export DPKG_ROOT to maintainer scripts. Set it explicitly
+# so the smoke can never enable or stop services on the host.
+export DPKG_ROOT="$root"
 
 phase() { printf 'debian-smoke: %s\n' "$1"; }
 
