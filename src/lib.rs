@@ -133,6 +133,8 @@ mod runtime {
     const MAX_UPSTREAM_OUTSTANDING: usize = 4096;
     const MAX_UPSTREAM_ATTEMPTS: u32 = 8;
     const MAX_UPSTREAM_TIMEOUT_MS: u64 = 60_000;
+    const MAX_NAMED_UPSTREAMS: usize = 64;
+    const MAX_UPSTREAM_NAME_BYTES: usize = 64;
     const MAX_REGEX_RULES: usize = 4096;
     const MAX_REGEX_PATTERN_BYTES: usize = 4096;
     const MAX_REGEX_PROGRAM_BYTES: usize = 1 << 20;
@@ -158,6 +160,10 @@ mod runtime {
         pub honeypot: HoneypotConfig,
         #[serde(default)]
         pub upstream: Option<UpstreamConfig>,
+        /// Optional named upstreams selected by client identities. The
+        /// default upstream remains the fallback for clients without a route.
+        #[serde(default)]
+        pub upstreams: BTreeMap<String, UpstreamConfig>,
         #[serde(default)]
         pub cache: CacheConfig,
         #[serde(default)]
@@ -1360,6 +1366,10 @@ mod runtime {
         /// rule matches. A matching rule always takes precedence.
         #[serde(default)]
         pub default_action: Option<Action>,
+        /// Optional named upstream selected for this identity's forwarded or
+        /// pass-through queries. The name must exist in `Config.upstreams`.
+        #[serde(default)]
+        pub upstream: Option<String>,
         #[serde(default)]
         pub clients: Vec<IpAddr>,
         /// Optional bounded networks whose clients receive this identity.
@@ -3415,6 +3425,7 @@ mod runtime {
             if let Some(upstream) = policy.config.upstream.as_ref() {
                 policy.validate_upstream(upstream)?;
             }
+            policy.validate_named_upstreams()?;
             Ok(policy)
         }
 
@@ -4412,6 +4423,7 @@ mod runtime {
             let _reload = self.reload_lock.write().expect("reload lock");
             let started = Instant::now();
             let next = validate_client_identities(identities)?;
+            self.validate_identity_upstreams(&next)?;
             if self.client_identities.read(|current| current == &next) {
                 self.observe_reload_latency("client_identities_unchanged", started);
                 return Ok(ReloadState::Unchanged);
@@ -4448,6 +4460,7 @@ mod runtime {
                 }
             }
             let next = validate_client_identities(&next)?;
+            self.validate_identity_upstreams(&next)?;
             self.client_identity_control.replace(next);
             self.policy_generation.fetch_add(1, Ordering::Relaxed);
             self.observe_reload_latency("client_identities_upsert", started);
@@ -4755,6 +4768,7 @@ mod runtime {
                 legacy_domains.map(validate_legacy_domains).transpose()?;
             let generated = compile_profiles(profiles, client_groups)?;
             let client_identities = validate_client_identities(client_identities)?;
+            self.validate_identity_upstreams(&client_identities)?;
             let rewrites = compile_rewrites(rewrite_configs)?;
             let country_policy = load_country_policy(country_config)?;
             let configured_paths = blocklist_paths.map_or_else(
@@ -5247,6 +5261,49 @@ mod runtime {
                 return Err(policy::PolicyError::InvalidUpstream {
                     reason: "upstream must not resolve to the listener endpoint".into(),
                 });
+            }
+            Ok(())
+        }
+
+        fn validate_named_upstreams(&self) -> Result<(), policy::PolicyError> {
+            if self.config.upstreams.len() > MAX_NAMED_UPSTREAMS {
+                return Err(policy::PolicyError::InvalidUpstream {
+                    reason: format!("at most {MAX_NAMED_UPSTREAMS} named upstreams are allowed"),
+                });
+            }
+            for (name, upstream) in &self.config.upstreams {
+                if name.is_empty()
+                    || name.len() > MAX_UPSTREAM_NAME_BYTES
+                    || !name.is_ascii()
+                    || name.chars().any(|character| {
+                        !(character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.'))
+                    })
+                {
+                    return Err(policy::PolicyError::InvalidUpstream {
+                        reason: format!(
+                            "named upstream {name:?} must be bounded ASCII alphanumeric, '.', '-', or '_'"
+                        ),
+                    });
+                }
+                self.validate_upstream(upstream)?;
+            }
+            self.client_identities
+                .read(|identities| self.validate_identity_upstreams(identities))
+        }
+
+        fn validate_identity_upstreams(
+            &self,
+            identities: &[ClientIdentityConfig],
+        ) -> Result<(), policy::PolicyError> {
+            for identity in identities {
+                if let Some(upstream) = identity.upstream.as_deref()
+                    && !self.config.upstreams.contains_key(upstream)
+                {
+                    return Err(policy::PolicyError::InvalidClientIdentityMap {
+                        name: identity.name.clone(),
+                        reason: format!("unknown named upstream {upstream:?}"),
+                    });
+                }
             }
             Ok(())
         }
@@ -7322,6 +7379,7 @@ mod runtime {
                             "query_log_enabled": identity.query_log_enabled,
                             "filtering_enabled": identity.filtering_enabled,
                             "default_action": identity.default_action.map(action_label),
+                            "upstream": identity.upstream,
                             "clients": identity.clients.len(),
                             "client_cidrs": identity.client_cidrs.len(),
                         })
@@ -8998,6 +9056,41 @@ mod runtime {
         }
 
         #[test]
+        fn named_upstream_routes_are_bounded_and_referenced() {
+            let mut invalid = Config::default();
+            invalid.upstreams.insert(
+                "family".into(),
+                UpstreamConfig {
+                    resolver_ip: "255.255.255.255".into(),
+                    ..UpstreamConfig::default()
+                },
+            );
+            assert!(matches!(
+                Policy::new(invalid),
+                Err(policy::PolicyError::InvalidUpstream { .. })
+            ));
+
+            let mut unknown = Config::default();
+            unknown
+                .upstreams
+                .insert("family".into(), UpstreamConfig::default());
+            unknown.policy.client_identities = vec![ClientIdentityConfig {
+                name: "family-router".into(),
+                enabled: true,
+                query_log_enabled: true,
+                filtering_enabled: true,
+                default_action: None,
+                upstream: Some("missing".into()),
+                clients: vec!["192.0.2.10".parse().expect("client address")],
+                client_cidrs: Vec::new(),
+            }];
+            assert!(matches!(
+                Policy::new(unknown),
+                Err(policy::PolicyError::InvalidClientIdentityMap { .. })
+            ));
+        }
+
+        #[test]
         fn configured_rules_are_authoritative_over_legacy_domains_and_mode() {
             let mut config = Config::default();
             config.policy.mode = Mode::Nxdomain;
@@ -9148,6 +9241,7 @@ mod runtime {
                 query_log_enabled: true,
                 filtering_enabled: true,
                 default_action: Some(Action::Reject),
+                upstream: None,
                 clients: vec!["192.0.2.10".parse().expect("client")],
                 client_cidrs: Vec::new(),
             }];
@@ -9204,6 +9298,7 @@ mod runtime {
                 query_log_enabled: false,
                 filtering_enabled: false,
                 default_action: None,
+                upstream: None,
                 clients: vec!["192.0.2.20".parse().expect("client")],
                 client_cidrs: Vec::new(),
             }];
@@ -9271,6 +9366,7 @@ mod runtime {
                 query_log_enabled: true,
                 filtering_enabled: true,
                 default_action: None,
+                upstream: None,
                 clients: vec!["192.0.2.10".parse().expect("client")],
                 client_cidrs: Vec::new(),
             }];
@@ -9313,6 +9409,7 @@ mod runtime {
                 query_log_enabled: true,
                 filtering_enabled: true,
                 default_action: None,
+                upstream: None,
                 clients: vec!["192.0.2.10".parse().expect("client")],
                 client_cidrs: Vec::new(),
             }];
@@ -9362,6 +9459,7 @@ mod runtime {
                 query_log_enabled: true,
                 filtering_enabled: true,
                 default_action: None,
+                upstream: None,
                 clients: Vec::new(),
                 client_cidrs: vec!["192.0.2.0/24".into()],
             }];
@@ -9411,6 +9509,7 @@ mod runtime {
                 query_log_enabled: true,
                 filtering_enabled: true,
                 default_action: None,
+                upstream: None,
                 clients: vec!["192.0.2.10".parse().expect("client")],
                 client_cidrs: vec!["192.0.2.0/24".into(), "2001:db8::/32".into()],
             }];
@@ -9455,6 +9554,7 @@ mod runtime {
                     query_log_enabled: true,
                     filtering_enabled: true,
                     default_action: None,
+                    upstream: None,
                     clients: vec!["192.0.2.10".parse().expect("client")],
                     client_cidrs: vec!["192.0.2.0/24".into()],
                 },
@@ -9464,6 +9564,7 @@ mod runtime {
                     query_log_enabled: true,
                     filtering_enabled: true,
                     default_action: None,
+                    upstream: None,
                     clients: Vec::new(),
                     client_cidrs: vec!["192.0.2.128/25".into()],
                 },
@@ -9511,6 +9612,7 @@ mod runtime {
                     query_log_enabled: true,
                     filtering_enabled: true,
                     default_action: None,
+                    upstream: None,
                     clients: vec![family],
                     client_cidrs: Vec::new(),
                 }]),
@@ -9531,6 +9633,7 @@ mod runtime {
                     query_log_enabled: true,
                     filtering_enabled: true,
                     default_action: None,
+                    upstream: None,
                     clients: Vec::new(),
                     client_cidrs: Vec::new(),
                 }]),
