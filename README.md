@@ -264,7 +264,8 @@ ranked independently while the single-value fields remain compatible.
 Bounded regular-expression rules are available through `policy.regex_rules`;
 invalid or oversized expressions fail configuration validation, and explicit
 domain rules take precedence when both match. Regex rules may also use the
-same bounded `client_cidrs` network scope as domain rules.
+same bounded `client_cidrs` network scope as domain rules, or an adapter-owned
+`client_identity` scope.
 
 The upstream transport is selected in `[upstream]`: `transport = "udp"` keeps
 UDP with bounded TCP fallback, `transport = "tcp"` uses DNS-over-TCP for every

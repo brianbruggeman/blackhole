@@ -2962,6 +2962,7 @@ mod tests {
                 qclasses: Vec::new(),
                 client: None,
                 client_cidrs: Vec::new(),
+                client_identity: None,
             })
             .collect();
         config.policy.profiles = vec![crate::ServiceProfileConfig {
@@ -4023,6 +4024,7 @@ mod tests {
             qclasses: Vec::new(),
             client: None,
             client_cidrs: Vec::new(),
+            client_identity: None,
         }];
         let policy = Arc::new(Policy::new(config).expect("valid regex policy"));
         let handler = AdminHandler::new(Arc::clone(&policy));

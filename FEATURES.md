@@ -22,7 +22,7 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Unsupported IDNA/Unicode rule names are rejected explicitly; the resolver
   currently accepts ASCII DNS names only.
 - Bounded regular-expression policy rules with startup compilation limits,
-  singular or bounded qtype/qclass/exact-client/CIDR-client filters,
+  singular or bounded qtype/qclass/exact-client/CIDR-client/identity filters,
   deterministic priority, and explicit domain-rule precedence.
 - Rule-table authority when rules are configured; legacy settings do not
   silently take over.

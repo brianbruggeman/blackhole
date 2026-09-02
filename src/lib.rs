@@ -1447,6 +1447,9 @@ mod runtime {
         pub client: Option<IpAddr>,
         #[serde(default)]
         pub client_cidrs: Vec<String>,
+        /// Optional adapter-owned client identity scope.
+        #[serde(default)]
+        pub client_identity: Option<String>,
     }
 
     fn default_regex_rule_enabled() -> bool {
@@ -3768,6 +3771,7 @@ mod runtime {
         client: Option<IpAddr>,
         client_networks: Vec<policy::IpNetwork>,
         client_cidrs: Vec<String>,
+        client_identity: Option<String>,
     }
 
     fn compile_regex_rules(
@@ -3839,6 +3843,7 @@ mod runtime {
                 client: rule.client,
                 client_networks,
                 client_cidrs: rule.client_cidrs.clone(),
+                client_identity: rule.client_identity.clone(),
             });
         }
         Ok(regex_rules)
@@ -6380,6 +6385,7 @@ mod runtime {
                         qclasses: rule.qclasses.clone(),
                         client: rule.client,
                         client_cidrs: rule.client_cidrs.clone(),
+                        client_identity: rule.client_identity.clone(),
                     })
                     .collect()
             })
@@ -7493,6 +7499,7 @@ mod runtime {
             qclass: u16,
             client: Option<IpAddr>,
         ) -> Option<policy::Decision> {
+            let client_identity = self.client_identity_for(client);
             self.regex_rules.read(|rules| {
                 rules
                     .iter()
@@ -7508,6 +7515,10 @@ mod runtime {
                                         .iter()
                                         .any(|network| network.contains(value))
                                 }))
+                            && rule
+                                .client_identity
+                                .as_deref()
+                                .is_none_or(|identity| client_identity.as_deref() == Some(identity))
                     })
                     .max_by_key(|rule| {
                         (
@@ -12067,6 +12078,7 @@ mod runtime {
                 qclasses: vec![1],
                 client: None,
                 client_cidrs: Vec::new(),
+                client_identity: None,
             }];
             let policy = Policy::new(config).expect("valid regex rule");
             let query = |name: &str, qtype: u16| proxima_dns::DnsQuery {
@@ -12118,6 +12130,7 @@ mod runtime {
                 qclasses: Vec::new(),
                 client: None,
                 client_cidrs: Vec::new(),
+                client_identity: None,
             }];
             let policy = Policy::new(config).expect("valid disabled regex rule");
             let query = proxima_dns::DnsQuery {
@@ -12147,6 +12160,7 @@ mod runtime {
                 qclasses: Vec::new(),
                 client: None,
                 client_cidrs: vec!["192.0.2.0/24".into()],
+                client_identity: None,
             }];
             let policy = Policy::new(config).expect("valid scoped regex rule");
             let mut wire = Vec::new();
@@ -12173,6 +12187,71 @@ mod runtime {
                 policy.action_for_view_with_client(
                     view,
                     Some("198.51.100.44".parse().expect("client address"))
+                ),
+                Action::Pass
+            );
+        }
+
+        #[test]
+        fn regex_rules_can_be_scoped_to_a_client_identity() {
+            let mut config = Config::default();
+            config.policy.default_action = Action::Pass;
+            config.policy.client_identities = vec![ClientIdentityConfig {
+                name: "family-router".into(),
+                enabled: true,
+                query_log_enabled: false,
+                statistics_enabled: true,
+                cache_enabled: true,
+                filtering_enabled: true,
+                default_action: None,
+                upstream: None,
+                max_queries_per_second: None,
+                max_response_bytes_per_second: None,
+                max_response_bytes_per_network_per_second: None,
+                max_inflight_requests: None,
+                clients: vec!["192.0.2.10".parse().expect("identity client")],
+                client_cidrs: Vec::new(),
+            }];
+            config.policy.regex_rules = vec![RegexRuleConfig {
+                enabled: true,
+                id: 88,
+                pattern: r"(^|\.)private\.example$".into(),
+                action: Action::Reject,
+                priority: 1,
+                qtype: None,
+                qtypes: Vec::new(),
+                qclass: None,
+                qclasses: Vec::new(),
+                client: None,
+                client_cidrs: Vec::new(),
+                client_identity: Some("family-router".into()),
+            }];
+            let policy = Policy::new(config).expect("valid identity regex rule");
+            let mut wire = Vec::new();
+            proxima_protocols::dns::encode::encode_query(
+                8,
+                true,
+                proxima_protocols::dns::encode::EncodeQuestion {
+                    name: "private.example.",
+                    qtype: 1,
+                    qclass: 1,
+                },
+                &mut wire,
+            )
+            .expect("encode identity regex query");
+            let view = QueryView::parse(&wire).expect("parse identity regex query");
+            assert_eq!(
+                policy.action_for_view_with_client(
+                    view,
+                    Some("192.0.2.10".parse().expect("identity client"))
+                ),
+                Action::Reject
+            );
+            let other_view = QueryView::parse(&wire).expect("parse identity regex query");
+            assert_eq!(
+                policy.action_for_view_with_client(
+                    other_view,
+                    Some("192.0.2.11".parse().expect("other client"))
                 ),
                 Action::Pass
             );
@@ -12209,6 +12288,7 @@ mod runtime {
                 qclasses: Vec::new(),
                 client: None,
                 client_cidrs: Vec::new(),
+                client_identity: None,
             }];
             let policy = Policy::new(config).expect("valid mixed policy");
             let query = proxima_dns::DnsQuery {
@@ -12236,6 +12316,7 @@ mod runtime {
                 qclasses: Vec::new(),
                 client: None,
                 client_cidrs: Vec::new(),
+                client_identity: None,
             }];
             assert!(matches!(
                 Policy::new(invalid),
@@ -12255,6 +12336,7 @@ mod runtime {
                 qclasses: Vec::new(),
                 client: None,
                 client_cidrs: vec!["not-a-cidr".into()],
+                client_identity: None,
             }];
             assert!(matches!(
                 Policy::new(invalid_scope),
@@ -12274,6 +12356,7 @@ mod runtime {
                 qclasses: Vec::new(),
                 client: None,
                 client_cidrs: Vec::new(),
+                client_identity: None,
             }];
             assert!(matches!(
                 Policy::new(oversized),
@@ -14538,6 +14621,7 @@ mod runtime {
                     qclasses: Vec::new(),
                     client: None,
                     client_cidrs: Vec::new(),
+                    client_identity: None,
                 }])
                 .expect("regex reload");
 
