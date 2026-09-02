@@ -5952,6 +5952,7 @@ mod runtime {
                 event: ProtocolEvent::Custom {
                     kind: "blackhole.ddos_incident".into(),
                     payload: serde_json::json!({
+                        "scope": "client",
                         "cause": cause,
                         "response": "temporary_blacklist",
                         "expires_at_ms": expires_at_ms,
@@ -5977,6 +5978,7 @@ mod runtime {
                 event: ProtocolEvent::Custom {
                     kind: "blackhole.ddos_incident".into(),
                     payload: serde_json::json!({
+                        "scope": "client",
                         "client": client.to_string(),
                         "cause": cause,
                         "response": "temporary_blacklist",
@@ -6009,6 +6011,10 @@ mod runtime {
                     {
                         Some(serde_json::json!({
                             "ts_ms": event.ts_ms,
+                            "scope": payload
+                                .get("scope")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or("client"),
                             "cause": payload.get("cause"),
                             "response": payload.get("response"),
                             "expires_at_ms": payload.get("expires_at_ms"),
@@ -10464,6 +10470,24 @@ mod runtime {
             let fresh = Policy::new(Config::default()).expect("valid default policy");
             assert!(!fresh.restore_global_abuse_incident(1_000, 1_000));
             assert!(fresh.allow_global_abuse());
+        }
+
+        #[test]
+        fn global_abuse_incident_review_contains_no_client_key() {
+            let mut config = Config::default();
+            config.admission.ddos.global_abuse_cooldown_secs = 60;
+            config.privacy.query_log_enabled = true;
+            config.privacy.query_log_max_entries = 4;
+            let policy = Policy::new(config).expect("valid global abuse config");
+            futures::executor::block_on(
+                policy.record_global_abuse_incident("global_rate_overflow"),
+            );
+            let review: serde_json::Value =
+                serde_json::from_str(&policy.admin_abuse_incidents()).expect("incident review");
+            assert_eq!(review["incidents"].as_array().unwrap().len(), 1);
+            assert_eq!(review["incidents"][0]["scope"], "global");
+            assert_eq!(review["client_addresses"], "redacted");
+            assert!(!policy.admin_abuse_incidents().contains("client"));
         }
 
         #[test]
