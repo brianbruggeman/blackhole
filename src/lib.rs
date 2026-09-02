@@ -1400,6 +1400,8 @@ mod runtime {
         pub ipv6: Option<Ipv6Addr>,
         #[serde(default)]
         pub cname: Option<String>,
+        #[serde(default)]
+        pub ptr: Option<String>,
         #[serde(default = "default_ttl")]
         pub ttl: u32,
     }
@@ -2725,13 +2727,19 @@ mod runtime {
                     reason: "name must be a non-empty ASCII DNS name".into(),
                 });
             }
-            if config.ipv4.is_none() && config.ipv6.is_none() && config.cname.is_none() {
+            if config.ipv4.is_none()
+                && config.ipv6.is_none()
+                && config.cname.is_none()
+                && config.ptr.is_none()
+            {
                 return Err(policy::PolicyError::InvalidRewrite {
                     name: config.name.clone(),
                     reason: "at least one of ipv4, ipv6, or cname is required".into(),
                 });
             }
-            if config.cname.is_some() && (config.ipv4.is_some() || config.ipv6.is_some()) {
+            if config.cname.is_some()
+                && (config.ipv4.is_some() || config.ipv6.is_some() || config.ptr.is_some())
+            {
                 return Err(policy::PolicyError::InvalidRewrite {
                     name: config.name.clone(),
                     reason: "cname cannot be combined with ipv4 or ipv6".into(),
@@ -2791,12 +2799,51 @@ mod runtime {
                         reason: "cname exceeds DNS wire limits".into(),
                     }
                 })?;
-                let key = (name, 5);
+                let key = (name.clone(), 5);
+                entries.insert(
+                    key,
+                    DnsAnswer::ok(vec![DnsAnswerRecord {
+                        name: record_name.clone(),
+                        rtype: 5,
+                        rclass: 1,
+                        ttl: config.ttl,
+                        rdata,
+                    }]),
+                );
+            }
+            if let Some(target) = config.ptr.as_deref() {
+                if config.ipv4.is_some() || config.ipv6.is_some() || config.cname.is_some() {
+                    return Err(policy::PolicyError::InvalidRewrite {
+                        name: config.name.clone(),
+                        reason: "ptr cannot be combined with another rewrite record".into(),
+                    });
+                }
+                let target = normalize(target);
+                if target.is_empty() || !valid_dns_name(&target) {
+                    return Err(policy::PolicyError::InvalidRewrite {
+                        name: config.name.clone(),
+                        reason: "ptr must be a non-empty ASCII DNS name".into(),
+                    });
+                }
+                let mut rdata = Vec::new();
+                proxima_protocols::dns::encode::encode_name(&target, &mut rdata).map_err(|_| {
+                    policy::PolicyError::InvalidRewrite {
+                        name: config.name.clone(),
+                        reason: "ptr exceeds DNS wire limits".into(),
+                    }
+                })?;
+                let key = (name, 12);
+                if entries.contains_key(&key) {
+                    return Err(policy::PolicyError::InvalidRewrite {
+                        name: config.name.clone(),
+                        reason: "duplicate PTR rewrite".into(),
+                    });
+                }
                 entries.insert(
                     key,
                     DnsAnswer::ok(vec![DnsAnswerRecord {
                         name: record_name,
-                        rtype: 5,
+                        rtype: 12,
                         rclass: 1,
                         ttl: config.ttl,
                         rdata,
@@ -10394,6 +10441,7 @@ mod runtime {
                     ipv4: Some(Ipv4Addr::new(192, 0, 2, 1)),
                     ipv6: Some(Ipv6Addr::LOCALHOST),
                     cname: None,
+                    ptr: None,
                     ttl: 30,
                 },
                 RewriteConfig {
@@ -10401,6 +10449,7 @@ mod runtime {
                     ipv4: Some(Ipv4Addr::new(192, 0, 2, 2)),
                     ipv6: None,
                     cname: None,
+                    ptr: None,
                     ttl: 30,
                 },
             ];
@@ -10456,6 +10505,7 @@ mod runtime {
                 ipv4: None,
                 ipv6: None,
                 cname: Some("router.home.arpa".into()),
+                ptr: None,
                 ttl: 45,
             }];
             let policy = Policy::new(config).expect("valid CNAME rewrite");
@@ -10490,6 +10540,59 @@ mod runtime {
                 ipv4: Some(Ipv4Addr::new(192, 0, 2, 1)),
                 ipv6: None,
                 cname: Some("router.home.arpa".into()),
+                ptr: None,
+                ttl: 30,
+            }];
+            assert!(matches!(
+                Policy::new(mixed),
+                Err(policy::PolicyError::InvalidRewrite { .. })
+            ));
+        }
+
+        #[test]
+        fn local_ptr_rewrite_encodes_target_and_rejects_mixed_records() {
+            let mut config = Config::default();
+            config.policy.rewrites = vec![RewriteConfig {
+                name: "1.2.0.192.in-addr.arpa".into(),
+                ipv4: None,
+                ipv6: None,
+                cname: None,
+                ptr: Some("router.home.arpa".into()),
+                ttl: 45,
+            }];
+            let policy = Policy::new(config).expect("valid PTR rewrite");
+            let answer = policy
+                .evaluate(&proxima_dns::DnsQuery {
+                    id: 1,
+                    recursion_desired: true,
+                    name: "1.2.0.192.in-addr.arpa.".into(),
+                    qtype: 12,
+                    qclass: 1,
+                })
+                .expect("PTR answer");
+            assert_eq!(answer.records[0].rtype, 12);
+            assert_eq!(answer.records[0].ttl, 45);
+            assert_eq!(
+                answer.records[0].rdata,
+                [
+                    vec![6],
+                    b"router".to_vec(),
+                    vec![4],
+                    b"home".to_vec(),
+                    vec![4],
+                    b"arpa".to_vec(),
+                    vec![0]
+                ]
+                .concat()
+            );
+
+            let mut mixed = Config::default();
+            mixed.policy.rewrites = vec![RewriteConfig {
+                name: "mixed.in-addr.arpa".into(),
+                ipv4: Some(Ipv4Addr::new(192, 0, 2, 1)),
+                ipv6: None,
+                cname: None,
+                ptr: Some("router.home.arpa".into()),
                 ttl: 30,
             }];
             assert!(matches!(
@@ -10507,6 +10610,7 @@ mod runtime {
                     ipv4: Some(Ipv4Addr::new(192, 0, 2, 10)),
                     ipv6: None,
                     cname: None,
+                    ptr: None,
                     ttl: 30,
                 },
                 RewriteConfig {
@@ -10514,6 +10618,7 @@ mod runtime {
                     ipv4: Some(Ipv4Addr::new(192, 0, 2, 20)),
                     ipv6: None,
                     cname: None,
+                    ptr: None,
                     ttl: 40,
                 },
             ];
@@ -10549,6 +10654,7 @@ mod runtime {
                 ipv4: None,
                 ipv6: None,
                 cname: None,
+                ptr: None,
                 ttl: 30,
             }];
             assert!(matches!(
@@ -10563,6 +10669,7 @@ mod runtime {
                     ipv4: Some(Ipv4Addr::new(192, 0, 2, 1)),
                     ipv6: None,
                     cname: None,
+                    ptr: None,
                     ttl: 30,
                 }];
                 assert!(
@@ -10586,6 +10693,7 @@ mod runtime {
                     ipv4: Some(Ipv4Addr::new(192, 0, 2, 1)),
                     ipv6: None,
                     cname: None,
+                    ptr: None,
                     ttl: 30,
                 }];
                 assert!(
@@ -10604,6 +10712,7 @@ mod runtime {
                     ipv4: Some(Ipv4Addr::new(192, 0, 2, 1)),
                     ipv6: None,
                     cname: None,
+                    ptr: None,
                     ttl: 30,
                 })
                 .collect();

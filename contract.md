@@ -14,7 +14,7 @@ Policy actions have one transport meaning at the DNS boundary:
 | `honeypot` | Return the configured synthetic A/AAAA address when the type supports it. |
 | `forward` | Query the configured Proxima upstream, subject to bounds and fail-closed errors. |
 
-Local rewrites are configured as bounded A/AAAA answers. They are used only
+Local rewrites are configured as bounded A/AAAA/CNAME/PTR answers. They are used only
 when the selected action is `pass` or `observe`; an explicit matching rule for
 any other action takes precedence over the rewrite.
 

@@ -3553,6 +3553,7 @@ mod tests {
             ipv4: Some("192.0.2.1".parse().expect("address")),
             ipv6: None,
             cname: None,
+            ptr: None,
             ttl: 30,
         }];
         config.policy.rules = vec![crate::RuleConfig {

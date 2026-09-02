@@ -66,6 +66,7 @@ async fn main() -> Result<(), ProximaError> {
         ipv4: Some(Ipv4Addr::new(192, 0, 2, 42)),
         ipv6: None,
         cname: None,
+        ptr: None,
         ttl: 30,
     }];
     let policy = std::sync::Arc::new(
