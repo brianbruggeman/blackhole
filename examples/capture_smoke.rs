@@ -8,6 +8,10 @@ use std::process::Command;
 
 #[cfg(target_os = "linux")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::args().any(|arg| arg == "--help" || arg == "-h") {
+        println!("Install and remove an isolated nftables capture plan (requires root).");
+        return Ok(());
+    }
     use blackhole::linux_capture::{
         CaptureController, FileOwnershipStore, NftRulePlan, native::NftCommandBackend,
     };
@@ -46,6 +50,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(target_os = "macos")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::args().any(|arg| arg == "--help" || arg == "-h") {
+        println!("Install and remove an isolated PF capture plan (requires root).");
+        return Ok(());
+    }
     use blackhole::linux_capture::{CaptureController, FileOwnershipStore};
     use blackhole::pf_capture::{PfRulePlan, native::PfctlCommandBackend};
 

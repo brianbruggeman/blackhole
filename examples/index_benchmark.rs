@@ -94,6 +94,10 @@ fn benchmark(mut sink: impl Write) -> std::io::Result<()> {
 }
 
 fn main() {
+    if std::env::args().any(|arg| arg == "--help" || arg == "-h") {
+        println!("Measure the bounded reference policy benchmark; optionally pass an output path.");
+        return;
+    }
     if let Some(path) = std::env::args().nth(1) {
         let path = Path::new(&path);
         if let Some(parent) = path.parent() {
