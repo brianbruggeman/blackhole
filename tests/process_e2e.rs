@@ -1,5 +1,5 @@
 use std::io::{Read, Write};
-use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -367,6 +367,62 @@ fn shipped_binary_serves_udp_datagrams_and_tcp_frames() {
     assert_eq!(tcp_message.answers().count(), 1);
 
     upstream_thread.join().expect("reap upstream");
+}
+
+#[test]
+fn shipped_binary_serves_ipv6_udp_datagrams_and_tcp_frames() {
+    let listener = TcpListener::bind((Ipv6Addr::LOCALHOST, 0)).expect("reserve IPv6 listener port");
+    let listener_addr = listener.local_addr().expect("IPv6 listener address");
+    drop(listener);
+    let mut config = NamedTempFile::new().expect("create config");
+    writeln!(
+        config,
+        "[server]\nlisten = \"{listener_addr}\"\n\n[policy]\ndefault_action = \"pass\"\n\n[[policy.rules]]\nid = 1100\ndomain = \"ipv6-udp.example.\"\naction = \"nxdomain\"\n\n[[policy.rules]]\nid = 1101\ndomain = \"ipv6-tcp.example.\"\naction = \"nxdomain\""
+    )
+    .expect("write config");
+
+    let _child = ChildGuard(
+        Command::new(env!("CARGO_BIN_EXE_blackhole"))
+            .arg(config.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("start shipped blackhole binary"),
+    );
+    drop(wait_for_tcp(listener_addr));
+
+    let udp = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).expect("bind IPv6 UDP client");
+    udp.set_read_timeout(Some(Duration::from_secs(3)))
+        .expect("set IPv6 UDP timeout");
+    udp.send_to(&query(0x1100, "ipv6-udp.example."), listener_addr)
+        .expect("send IPv6 UDP query");
+    let mut response = [0u8; 4096];
+    let (length, _) = udp
+        .recv_from(&mut response)
+        .expect("receive IPv6 UDP response");
+    let message = parse_message(&response[..length]).expect("parse IPv6 UDP response");
+    assert_eq!(message.header.id, 0x1100);
+    assert_eq!(message.header.flags.rcode(), 3);
+
+    let mut tcp = TcpStream::connect(listener_addr).expect("connect IPv6 TCP client");
+    tcp.set_read_timeout(Some(Duration::from_secs(3)))
+        .expect("set IPv6 TCP timeout");
+    let tcp_query = query(0x1101, "ipv6-tcp.example.");
+    let frame_length = u16::try_from(tcp_query.len()).expect("IPv6 TCP query fits frame");
+    tcp.write_all(&frame_length.to_be_bytes())
+        .expect("write IPv6 TCP query length");
+    tcp.write_all(&tcp_query).expect("write IPv6 TCP query");
+    let mut response_length = [0u8; 2];
+    tcp.read_exact(&mut response_length)
+        .expect("read IPv6 TCP response length");
+    let response_length = usize::from(u16::from_be_bytes(response_length));
+    let mut tcp_response = vec![0u8; response_length];
+    tcp.read_exact(&mut tcp_response)
+        .expect("read IPv6 TCP response");
+    let message = parse_message(&tcp_response).expect("parse IPv6 TCP response");
+    assert_eq!(message.header.id, 0x1101);
+    assert_eq!(message.header.flags.rcode(), 3);
 }
 
 #[test]
