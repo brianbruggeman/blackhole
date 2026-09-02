@@ -1340,6 +1340,10 @@ mod runtime {
         /// identity mapping and all configured policy rules.
         #[serde(default = "default_identity_filtering_enabled")]
         pub filtering_enabled: bool,
+        /// Optional fallback action for this client when no domain or regex
+        /// rule matches. A matching rule always takes precedence.
+        #[serde(default)]
+        pub default_action: Option<Action>,
         #[serde(default)]
         pub clients: Vec<IpAddr>,
         /// Optional bounded networks whose clients receive this identity.
@@ -5912,7 +5916,13 @@ mod runtime {
                         .and_then(|index| identities.get(index))
                         .map(|identity| identity.name.as_str())
                 });
-                self.reference.read(|reference| {
+                let identity_default = resolved_identity.and_then(|identity_name| {
+                    identities
+                        .iter()
+                        .find(|identity| identity.enabled && identity.name == identity_name)
+                        .and_then(|identity| identity.default_action)
+                });
+                let decision = self.reference.read(|reference| {
                     reference.decide(QueryContext {
                         name: &name,
                         qtype: query.qtype,
@@ -5920,13 +5930,20 @@ mod runtime {
                         client,
                         client_identity: resolved_identity,
                     })
-                })
+                });
+                (decision, identity_default)
             });
             reference
+                .0
                 .or_else(|| {
                     self.regex_decision(&normalize(&name), query.qtype, query.qclass, client)
                 })
-                .map_or(*self.default_action.snapshot(), |decision| decision.action)
+                .map_or(
+                    reference
+                        .1
+                        .unwrap_or_else(|| *self.default_action.snapshot()),
+                    |decision| decision.action,
+                )
         }
 
         fn regex_decision(
@@ -7221,6 +7238,7 @@ mod runtime {
                             "enabled": identity.enabled,
                             "query_log_enabled": identity.query_log_enabled,
                             "filtering_enabled": identity.filtering_enabled,
+                            "default_action": identity.default_action.map(action_label),
                             "clients": identity.clients.len(),
                             "client_cidrs": identity.client_cidrs.len(),
                         })
@@ -9046,6 +9064,7 @@ mod runtime {
                 enabled: true,
                 query_log_enabled: true,
                 filtering_enabled: true,
+                default_action: Some(Action::Reject),
                 clients: vec!["192.0.2.10".parse().expect("client")],
                 client_cidrs: Vec::new(),
             }];
@@ -9078,6 +9097,18 @@ mod runtime {
                 policy.action_for_view_with_client(view, Some("192.0.2.11".parse().unwrap())),
                 Action::Pass
             );
+            let unmatched = QueryView::parse(&[
+                0, 2, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 7, b'u', b'n', b'm', b'a', b't', b'c', b'h', 7,
+                b'e', b'x', b'a', b'm', b'p', b'l', b'e', 0, 0, 1, 0, 1,
+            ])
+            .expect("valid unmatched query");
+            assert_eq!(
+                policy.action_for_view_with_client(unmatched, Some("192.0.2.10".parse().unwrap())),
+                Action::Reject
+            );
+            let status: serde_json::Value =
+                serde_json::from_str(&policy.admin_client_identities()).expect("identity status");
+            assert_eq!(status["client_identities"][0]["default_action"], "reject");
         }
 
         #[test]
@@ -9089,6 +9120,7 @@ mod runtime {
                 enabled: true,
                 query_log_enabled: false,
                 filtering_enabled: false,
+                default_action: None,
                 clients: vec!["192.0.2.20".parse().expect("client")],
                 client_cidrs: Vec::new(),
             }];
@@ -9155,6 +9187,7 @@ mod runtime {
                 enabled: false,
                 query_log_enabled: true,
                 filtering_enabled: true,
+                default_action: None,
                 clients: vec!["192.0.2.10".parse().expect("client")],
                 client_cidrs: Vec::new(),
             }];
@@ -9196,6 +9229,7 @@ mod runtime {
                 enabled: true,
                 query_log_enabled: true,
                 filtering_enabled: true,
+                default_action: None,
                 clients: vec!["192.0.2.10".parse().expect("client")],
                 client_cidrs: Vec::new(),
             }];
@@ -9244,6 +9278,7 @@ mod runtime {
                 enabled: true,
                 query_log_enabled: true,
                 filtering_enabled: true,
+                default_action: None,
                 clients: Vec::new(),
                 client_cidrs: vec!["192.0.2.0/24".into()],
             }];
@@ -9292,6 +9327,7 @@ mod runtime {
                 enabled: true,
                 query_log_enabled: true,
                 filtering_enabled: true,
+                default_action: None,
                 clients: vec!["192.0.2.10".parse().expect("client")],
                 client_cidrs: vec!["192.0.2.0/24".into(), "2001:db8::/32".into()],
             }];
@@ -9335,6 +9371,7 @@ mod runtime {
                     enabled: true,
                     query_log_enabled: true,
                     filtering_enabled: true,
+                    default_action: None,
                     clients: vec!["192.0.2.10".parse().expect("client")],
                     client_cidrs: vec!["192.0.2.0/24".into()],
                 },
@@ -9343,6 +9380,7 @@ mod runtime {
                     enabled: true,
                     query_log_enabled: true,
                     filtering_enabled: true,
+                    default_action: None,
                     clients: Vec::new(),
                     client_cidrs: vec!["192.0.2.128/25".into()],
                 },
@@ -9389,6 +9427,7 @@ mod runtime {
                     enabled: true,
                     query_log_enabled: true,
                     filtering_enabled: true,
+                    default_action: None,
                     clients: vec![family],
                     client_cidrs: Vec::new(),
                 }]),
@@ -9408,6 +9447,7 @@ mod runtime {
                     enabled: true,
                     query_log_enabled: true,
                     filtering_enabled: true,
+                    default_action: None,
                     clients: Vec::new(),
                     client_cidrs: Vec::new(),
                 }]),

@@ -160,6 +160,7 @@ async fn listener_honors_per_client_filtering_toggle() {
         enabled: true,
         query_log_enabled: true,
         filtering_enabled: false,
+        default_action: None,
         clients: vec!["127.0.0.1".parse().expect("loopback client")],
         client_cidrs: Vec::new(),
     }];

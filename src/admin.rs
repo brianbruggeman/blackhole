@@ -2648,6 +2648,7 @@ mod tests {
             enabled: true,
             query_log_enabled: true,
             filtering_enabled: true,
+            default_action: None,
             clients: vec!["192.0.2.10".parse().expect("identity address")],
             client_cidrs: Vec::new(),
         }];
@@ -2878,6 +2879,7 @@ mod tests {
             enabled: true,
             query_log_enabled: true,
             filtering_enabled: true,
+            default_action: None,
             clients: vec!["192.0.2.10".parse().expect("identity address")],
             client_cidrs: Vec::new(),
         }];
