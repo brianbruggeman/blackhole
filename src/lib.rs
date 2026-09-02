@@ -838,6 +838,10 @@ mod runtime {
         /// snapshot used when the primary map cannot be loaded.
         #[serde(default)]
         pub last_good_path: Option<String>,
+        /// Treatment for clients not covered by the map. The default keeps
+        /// existing behavior; `observe` and `deny` make uncertainty explicit.
+        #[serde(default)]
+        pub unmapped_action: CountryUnmappedAction,
         /// Optional lowercase or uppercase 64-digit SHA-256 digest pin
         /// for the complete map contents. A mismatch rejects the refresh and
         /// retains the last good snapshot.
@@ -869,6 +873,15 @@ mod runtime {
         pub observe_asns: Vec<u32>,
     }
 
+    #[derive(Debug, Clone, Copy, Deserialize, serde::Serialize, Default, PartialEq, Eq)]
+    #[serde(rename_all = "lowercase")]
+    pub enum CountryUnmappedAction {
+        #[default]
+        Pass,
+        Observe,
+        Deny,
+    }
+
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct CountryEntry {
         country: String,
@@ -882,6 +895,7 @@ mod runtime {
         entries: Vec<CountryEntry>,
         source_fingerprint: u64,
         source_sha256: String,
+        unmapped_action: CountryUnmappedAction,
         deny: BTreeSet<String>,
         observe: BTreeSet<String>,
         deny_regions: BTreeSet<String>,
@@ -899,27 +913,33 @@ mod runtime {
         }
 
         fn denied(&self, client: IpAddr) -> bool {
-            self.entry_for(client).is_some_and(|entry| {
-                self.deny.contains(&entry.country)
-                    || entry
-                        .region
-                        .as_ref()
-                        .is_some_and(|region| self.deny_regions.contains(region))
-                    || entry.asn.is_some_and(|asn| self.deny_asns.contains(&asn))
-            })
+            match self.entry_for(client) {
+                Some(entry) => {
+                    self.deny.contains(&entry.country)
+                        || entry
+                            .region
+                            .as_ref()
+                            .is_some_and(|region| self.deny_regions.contains(region))
+                        || entry.asn.is_some_and(|asn| self.deny_asns.contains(&asn))
+                }
+                None => self.unmapped_action == CountryUnmappedAction::Deny,
+            }
         }
 
         fn observed(&self, client: IpAddr) -> bool {
-            self.entry_for(client).is_some_and(|entry| {
-                self.observe.contains(&entry.country)
-                    || entry
-                        .region
-                        .as_ref()
-                        .is_some_and(|region| self.observe_regions.contains(region))
-                    || entry
-                        .asn
-                        .is_some_and(|asn| self.observe_asns.contains(&asn))
-            })
+            match self.entry_for(client) {
+                Some(entry) => {
+                    self.observe.contains(&entry.country)
+                        || entry
+                            .region
+                            .as_ref()
+                            .is_some_and(|region| self.observe_regions.contains(region))
+                        || entry
+                            .asn
+                            .is_some_and(|asn| self.observe_asns.contains(&asn))
+                }
+                None => self.unmapped_action == CountryUnmappedAction::Observe,
+            }
         }
 
         fn country_for(&self, client: IpAddr) -> Option<&str> {
@@ -2429,6 +2449,7 @@ mod runtime {
             && config.observe_regions.is_empty()
             && config.deny_asns.is_empty()
             && config.observe_asns.is_empty()
+            && config.unmapped_action == CountryUnmappedAction::Pass
         {
             return Ok((None, None));
         }
@@ -2699,6 +2720,7 @@ mod runtime {
                 entries,
                 source_fingerprint: source_fingerprint(contents.as_bytes()),
                 source_sha256: contents_sha256,
+                unmapped_action: config.unmapped_action,
                 deny,
                 observe,
                 deny_regions,
@@ -10871,6 +10893,7 @@ mod runtime {
                 country_policy: CountryPolicyConfig {
                     map_path: Some(path.to_string_lossy().into_owned()),
                     last_good_path: None,
+                    unmapped_action: CountryUnmappedAction::Pass,
                     expected_sha256: None,
                     max_age_secs: None,
                     reload_interval_secs: 0,
@@ -11045,6 +11068,35 @@ mod runtime {
         }
 
         #[test]
+        fn country_map_unmapped_action_is_explicit_and_bounded() {
+            let path = std::env::temp_dir().join(format!(
+                "blackhole-country-unmapped-{}-{}.txt",
+                std::process::id(),
+                3
+            ));
+            std::fs::write(&path, "US 192.0.2.0/24\n").expect("write country map");
+            let mut config = CountryPolicyConfig {
+                map_path: Some(path.to_string_lossy().into_owned()),
+                unmapped_action: CountryUnmappedAction::Observe,
+                ..Default::default()
+            };
+            let observed = load_country_policy(&config)
+                .expect("load observe country policy")
+                .expect("country policy");
+            let unmapped = "198.51.100.10".parse().expect("unmapped address");
+            assert!(!observed.denied(unmapped));
+            assert!(observed.observed(unmapped));
+
+            config.unmapped_action = CountryUnmappedAction::Deny;
+            let denied = load_country_policy(&config)
+                .expect("load deny country policy")
+                .expect("country policy");
+            assert!(denied.denied(unmapped));
+            assert!(!denied.observed(unmapped));
+            std::fs::remove_file(path).expect("remove country map");
+        }
+
+        #[test]
         fn country_map_freshness_is_bounded_and_clock_skew_fails_closed() {
             let now = std::time::UNIX_EPOCH + Duration::from_secs(10_000);
             assert!(country_map_is_fresh(now - Duration::from_secs(60), now, 60));
@@ -11089,6 +11141,7 @@ mod runtime {
                 country_policy: CountryPolicyConfig {
                     map_path: Some(path.to_string_lossy().into_owned()),
                     last_good_path: None,
+                    unmapped_action: CountryUnmappedAction::Pass,
                     expected_sha256: None,
                     max_age_secs: None,
                     reload_interval_secs: 0,
