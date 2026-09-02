@@ -36,12 +36,14 @@ pub struct RuleConfig {
     pub priority: i32,
     /// Compatibility shorthand for a single qtype selector. When `qtypes`
     /// is non-empty, both selectors must agree and the set is used.
+    #[serde(default)]
     pub qtype: Option<u16>,
     /// Bounded qtype selectors; an empty set preserves the `qtype` shorthand.
     #[serde(default)]
     pub qtypes: Vec<u16>,
     /// Compatibility shorthand for a single qclass selector. When
     /// `qclasses` is non-empty, both selectors must agree and the set is used.
+    #[serde(default)]
     pub qclass: Option<u16>,
     /// Bounded qclass selectors; an empty set preserves the `qclass` shorthand.
     #[serde(default)]
@@ -582,6 +584,19 @@ mod tests {
             client: None,
             client_identity: None,
         }
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn selector_sets_can_be_deserialized_without_legacy_shorthands() {
+        let config: RuleConfig = serde_json::from_str(
+            r#"{"id":9,"domain":"example","action":"drop","qtypes":[1,28],"qclasses":[1]}"#,
+        )
+        .expect("selector-set rule config");
+        assert_eq!(config.qtype, None);
+        assert_eq!(config.qclass, None);
+        assert_eq!(config.qtypes, vec![1, 28]);
+        assert_eq!(config.qclasses, vec![1]);
     }
 
     #[test]
