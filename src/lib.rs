@@ -7664,6 +7664,11 @@ mod runtime {
             std::fs::write(&path, "new.example\n").expect("write replacement blocklist");
             assert_eq!(policy.reload_blocklists(), Ok(ReloadState::Published));
             assert_eq!(policy.reload_blocklists(), Ok(ReloadState::Unchanged));
+            let same_paths = vec![path.to_string_lossy().into_owned()];
+            assert_eq!(
+                policy.replace_blocklist_sources(&same_paths),
+                Ok(ReloadState::Unchanged)
+            );
             assert_eq!(policy.evaluate(&query("old.example.")).unwrap().rcode, 0);
             assert_eq!(policy.evaluate(&query("new.example.")).unwrap().rcode, 3);
 
