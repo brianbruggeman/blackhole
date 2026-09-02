@@ -75,6 +75,14 @@ ttl = 30
 # client_cidrs = ["192.0.2.0/24", "2001:db8::/32"]
 # Then set groups = ["family"] on a profile; do not combine groups with
 # client_cidrs on that same profile.
+# Optional Pi-hole-compatible conditional forwarding. A route without a
+# domain handles PTR queries for its client CIDRs; a route with a domain sends
+# all queries at that suffix. Targets must be named upstreams below.
+# Routes are startup configuration and require a restart to change.
+# [[policy.conditional_forwards]]
+# client_cidrs = ["192.168.50.0/24"]
+# upstream = "router"
+# domain = "home.arpa"
 # Optional exact-client identity labels for identity-scoped rules. Labels are
 # transient and are not retained in telemetry or recording.
 # [[policy.client_identities]]

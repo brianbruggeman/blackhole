@@ -6,7 +6,9 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 
 use blackhole::policy::Action;
-use blackhole::{ClientIdentityConfig, Config, Policy, RuleConfig, UpstreamConfig};
+use blackhole::{
+    ClientIdentityConfig, ConditionalForwardConfig, Config, Policy, RuleConfig, UpstreamConfig,
+};
 use bytes::Bytes;
 use proxima::pipe::SendPipe;
 use proxima::pipe::into_handle;
@@ -418,6 +420,65 @@ async fn named_client_upstream_route_and_cache_bypass_use_proxima_exchange() {
         .await
         .expect("uncached named upstream exchange");
     assert_eq!(socket.state.lock().expect("fake state").sent.len(), 2);
+}
+
+#[proxima::test]
+async fn conditional_forwarding_uses_named_proxima_upstream_for_local_suffix() {
+    let socket = FakeSocket::new(ReplyMode::Valid);
+    let mut config = Config::default();
+    config.policy.rules = vec![RuleConfig {
+        enabled: true,
+        id: 3,
+        domain: "printer.home.arpa".into(),
+        action: Action::Forward,
+        priority: 0,
+        qtype: None,
+        qtypes: Vec::new(),
+        qclass: None,
+        qclasses: Vec::new(),
+        client: None,
+        client_cidr: None,
+        client_cidrs: Vec::new(),
+        client_identity: None,
+    }];
+    config.upstreams.insert(
+        "router".into(),
+        UpstreamConfig {
+            resolver_ip: resolver_addr().ip().to_string(),
+            port: resolver_addr().port(),
+            query_timeout_ms: 10,
+            max_attempts: 1,
+            ..UpstreamConfig::default()
+        },
+    );
+    config.policy.conditional_forwards = vec![ConditionalForwardConfig {
+        enabled: true,
+        domain: Some("home.arpa".into()),
+        client_cidrs: vec!["192.0.2.0/24".into()],
+        upstream: "router".into(),
+    }];
+    let upstream = config.upstreams["router"].clone();
+    let policy = Policy::new(config)
+        .expect("valid conditional forward config")
+        .with_named_upstream(
+            "router",
+            Arc::new(FakeFactory {
+                socket: socket.clone(),
+            }),
+            DnsResolverConfig::builder()
+                .resolver_ip(upstream.resolver_ip)
+                .port(upstream.port)
+                .query_timeout_ms(upstream.query_timeout_ms)
+                .max_attempts(upstream.max_attempts)
+                .build(),
+            upstream.max_outstanding,
+        )
+        .expect("attach conditional upstream");
+    let mut request = request_from_client("192.0.2.10".parse().expect("client address"));
+    request.payload.name = "printer.home.arpa.".into();
+    let answer = policy.call(request).await.expect("conditional exchange");
+    assert_eq!(answer.payload.records.len(), 1);
+    assert_eq!(socket.state.lock().expect("fake state").sent.len(), 1);
 }
 
 #[proxima::test]

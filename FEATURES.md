@@ -96,6 +96,10 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   its own existing Proxima `DnsClientUpstream`, permit bound, circuit breaker,
   transport, and cache namespace; clients without a route use the default
   upstream.
+- Bounded conditional-forwarding routes can send PTR queries, or all queries
+  below an explicit local suffix, for selected client CIDRs to named upstreams;
+  longest suffix and client prefix win, and route targets reuse the existing
+  Proxima upstream lifecycle.
 - Client identities may independently lower their bounded query-rate,
   encoded-response-byte, and concurrent-request ceilings; absent overrides
   inherit the admission defaults.

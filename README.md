@@ -188,6 +188,11 @@ authentication.
 Profiles may name bounded client groups with `groups = ["family", "guest"]`;
 each group supplies exact IPv4/IPv6 client addresses and/or CIDRs, and a
 profile may target multiple groups.
+Conditional forwarding routes can send PTR queries, or all queries below an
+explicit local suffix, for selected client CIDRs to named upstreams. The
+most-specific matching suffix and client prefix win; routes use the existing
+Proxima exchange, cache namespace, permits, and circuit breaker, and unknown
+upstreams or invalid scopes fail configuration before startup.
 For direct identity-scoped rules, map bounded adapter-owned client addresses
 to an opaque label:
 
