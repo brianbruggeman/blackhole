@@ -586,3 +586,55 @@ fn shipped_binary_serves_bounded_stale_cache_during_upstream_timeout() {
     upstream_thread.join().expect("reap upstream");
     assert_eq!(exchanges.load(Ordering::Acquire), 2);
 }
+
+#[test]
+fn shipped_binary_fails_closed_on_malformed_upstream_reply() {
+    let upstream = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind upstream");
+    let upstream_addr = upstream.local_addr().expect("upstream address");
+    let upstream_thread = thread::spawn(move || {
+        let mut query = [0u8; 4096];
+        let (_, peer) = upstream
+            .recv_from(&mut query)
+            .expect("receive upstream query");
+        upstream
+            .send_to(&[0u8; 12], peer)
+            .expect("send malformed upstream reply");
+    });
+
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("reserve listener port");
+    let listener_addr = listener.local_addr().expect("listener address");
+    drop(listener);
+    let mut config = NamedTempFile::new().expect("create config");
+    writeln!(
+        config,
+        "[server]\nlisten = \"{listener_addr}\"\n\n[policy]\ndefault_action = \"forward\"\n\n[upstream]\nresolver_ip = \"127.0.0.1\"\nport = {}\ntransport = \"udp\"\nquery_timeout_ms = 500\nmax_attempts = 1",
+        upstream_addr.port()
+    )
+    .expect("write config");
+
+    let _child = ChildGuard(
+        Command::new(env!("CARGO_BIN_EXE_blackhole"))
+            .arg(config.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("start shipped blackhole binary"),
+    );
+    drop(wait_for_tcp(listener_addr));
+    let udp = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind UDP client");
+    udp.set_read_timeout(Some(Duration::from_secs(3)))
+        .expect("set UDP timeout");
+    let query = query(0x4001, "malformed-upstream.example.");
+    udp.send_to(&query, listener_addr)
+        .expect("send malformed-upstream query");
+    udp.set_read_timeout(Some(Duration::from_millis(500)))
+        .expect("set malformed-upstream response timeout");
+    let mut response = [0u8; 4096];
+    let result = udp.recv_from(&mut response);
+    assert!(matches!(
+        result,
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+    ));
+    upstream_thread.join().expect("reap upstream");
+}
