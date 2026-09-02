@@ -499,3 +499,23 @@ memchr retains a materially higher tail and coefficient of variation. Both
 real listener transports completed without errors. These measurements are
 provenance-corrected evidence, not a zero-copy, high-performance, or
 production-grade claim.
+
+## Row 20 — bounded WASM workload cells without timed input copies
+
+`MEASURED` on 2026-09-02, Linux `x86_64`, Node `v26.8.0`, debug WASM build,
+source commit `4cbbf5a`, and GitHub Proxima revision `03ea2c7d`. The harness
+preloaded four bounded packets into separate linear-memory slots and used 25
+samples of 10,000 probes per cell:
+
+```text
+valid_p50_ns=1976.7701 p95_ns=2536.9131 p99_ns=3832.5259 cov=0.1831198525 checksum=0
+short_p50_ns=138.0642 p95_ns=155.1446 p99_ns=155.3384 cov=0.0478959997 checksum=-250000
+long_p50_ns=2336.5596 p95_ns=2479.1236 p99_ns=2493.4051 cov=0.0237663738 checksum=0
+adversarial_p50_ns=1073.8193 p95_ns=1100.6497 p99_ns=1106.6925 cov=0.0126385719 checksum=-250000
+mixed_p50_ns=1856.2031 p95_ns=1895.5691 p99_ns=1925.5408 cov=0.0154587777 checksum=-83325
+module_bytes=5618089 memory_bytes=2162688
+```
+
+The timed loop performs no JavaScript-to-WASM packet copy; setup copies are
+outside the samples. This is workload evidence for the pure edge probe only,
+not a production-performance or zero-copy claim.
