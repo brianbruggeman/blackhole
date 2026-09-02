@@ -3913,6 +3913,12 @@ mod runtime {
             let _reload = self.reload_lock.write().expect("reload lock");
             let started = Instant::now();
             let next = load_country_policy(config)?;
+            if self.country_policy.read(|current| current == &next)
+                && self.country_policy_config.read(|current| current == config)
+            {
+                self.observe_reload_latency("country_replace_unchanged", started);
+                return Ok(ReloadState::Unchanged);
+            }
             self.country_policy_control.replace(next);
             self.country_policy_config_control.replace(config.clone());
             self.policy_generation.fetch_add(1, Ordering::Relaxed);

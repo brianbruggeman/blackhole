@@ -473,7 +473,12 @@ impl SendPipe for AdminHandler {
                     }
                 };
                 match self.policy.replace_country_policy(&config) {
-                    Ok(_) => Ok(Response::ok("{\"status\":\"replaced\"}")),
+                    Ok(crate::snapshot::ReloadState::Published) => {
+                        Ok(Response::ok("{\"status\":\"replaced\"}"))
+                    }
+                    Ok(crate::snapshot::ReloadState::Unchanged) => {
+                        Ok(Response::ok("{\"status\":\"unchanged\"}"))
+                    }
                     Err(error) => Ok(Response::new(422).with_body(format!(
                         "{{\"status\":\"error\",\"message\":{}}}",
                         serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
@@ -2161,6 +2166,20 @@ mod tests {
         assert_eq!(status["entries"], 1);
         assert_eq!(status["deny"], serde_json::json!(["US"]));
         assert_eq!(status["deny_regions"], serde_json::json!(["us-ca"]));
+
+        let unchanged = block_on(
+            handler.call(
+                Request::builder()
+                    .method("POST")
+                    .path("/reload/country/replace")
+                    .payload(serde_json::to_string(&config).expect("country config JSON"))
+                    .build()
+                    .expect("repeated country replacement request"),
+            ),
+        )
+        .expect("repeated country replacement response");
+        assert_eq!(unchanged.status, 200);
+        assert_eq!(unchanged.payload.as_ref(), br#"{"status":"unchanged"}"#);
 
         let failed = block_on(
             handler.call(
