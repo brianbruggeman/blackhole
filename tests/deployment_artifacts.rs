@@ -387,6 +387,9 @@ fn linux_workflow_selects_one_debian_package_for_inspection() {
     assert!(package_contract.contains("ar p \"$new_package\" control.tar.gz"));
     assert!(package_contract.contains("ar p \"$new_package\" data.tar.gz"));
     let smoke_contract = &workflow[smoke..];
+    assert!(workflow.contains("name: probe Debian package smoke capability"));
+    assert!(smoke_contract.contains("if: steps.debian-capability.outputs.available == 'true'"));
+    assert!(workflow.contains("test \"$(id -u)\" = 0"));
     assert!(smoke_contract.contains("package_version=$(sed -n"));
 }
 

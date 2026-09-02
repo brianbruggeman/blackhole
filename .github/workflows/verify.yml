@@ -168,13 +168,19 @@ jobs:
             escaped=${escaped//$'\n'/'%0A'}
             echo "::error title=systemd smoke::$escaped"
           done < <(tail -n 80 systemd-smoke.log)
+      - name: probe Debian package smoke capability
+        id: debian-capability
+        run: |
+          if sudo -n sh -c 'test "$(id -u)" = 0 && command -v dpkg >/dev/null && command -v dpkg-deb >/dev/null'; then
+            echo 'available=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'available=false' >> "$GITHUB_OUTPUT"
+            echo 'Debian package install smoke unavailable: privileged runner lacks root dpkg/dpkg-deb'
+          fi
       - name: run Debian package install smoke
         id: debian-smoke
+        if: steps.debian-capability.outputs.available == 'true'
         run: |
-          if ! sudo -n sh -c 'command -v dpkg >/dev/null && command -v dpkg-deb >/dev/null'; then
-            echo 'Debian package install smoke unavailable: privileged runner lacks dpkg/dpkg-deb'
-            exit 0
-          fi
           package_version=$(sed -n 's/^version = "\([^\"]*\)"/\1/p' Cargo.toml | head -n 1)
           old_package=$(find dist -name 'blackhole_0.0.9_*.deb' -print -quit)
           new_package=$(find dist -name "blackhole_${package_version}_*.deb" -print -quit)
