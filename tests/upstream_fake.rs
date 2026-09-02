@@ -456,6 +456,7 @@ async fn conditional_forwarding_uses_named_proxima_upstream_for_local_suffix() {
         enabled: true,
         domain: Some("home.arpa".into()),
         client_cidrs: vec!["192.0.2.0/24".into()],
+        client_identity: None,
         upstream: "router".into(),
     }];
     let upstream = config.upstreams["router"].clone();

@@ -1331,6 +1331,11 @@ mod runtime {
         /// Client networks allowed to use this route. The most-specific
         /// matching prefix wins when routes overlap.
         pub client_cidrs: Vec<String>,
+        /// Optional enabled client identity that must match the adapter-owned
+        /// identity for this route. When combined with `client_cidrs`, both
+        /// selectors must match.
+        #[serde(default)]
+        pub client_identity: Option<String>,
         /// Name of an existing `Config.upstreams` entry. Conditional routes
         /// reuse the same attached Proxima `DnsClientUpstream` instance.
         pub upstream: String,
@@ -3604,11 +3609,13 @@ mod runtime {
         enabled: bool,
         domain: Option<String>,
         client_networks: Vec<policy::IpNetwork>,
+        client_identity: Option<String>,
         upstream: String,
     }
 
     fn compile_conditional_forwards(
         config: &Config,
+        identities: &[ClientIdentityConfig],
     ) -> Result<Vec<ConditionalForward>, policy::PolicyError> {
         if config.policy.conditional_forwards.len() > MAX_CONDITIONAL_FORWARDS {
             return Err(policy::PolicyError::InvalidUpstream {
@@ -3625,13 +3632,26 @@ mod runtime {
                     ),
                 });
             }
-            if route.client_cidrs.is_empty() || route.client_cidrs.len() > policy::MAX_CLIENT_CIDRS
+            if route.client_cidrs.is_empty() && route.client_identity.is_none()
+                || route.client_cidrs.len() > policy::MAX_CLIENT_CIDRS
             {
                 return Err(policy::PolicyError::InvalidClientCidr {
                     id: 0,
                     value: format!(
                         "conditional forward client_cidrs must contain 1..={} networks",
                         policy::MAX_CLIENT_CIDRS
+                    ),
+                });
+            }
+            if let Some(identity) = route.client_identity.as_deref()
+                && !identities
+                    .iter()
+                    .any(|configured| configured.enabled && configured.name == identity)
+            {
+                return Err(policy::PolicyError::InvalidUpstream {
+                    reason: format!(
+                        "conditional forward references unknown or disabled client identity {:?}",
+                        identity
                     ),
                 });
             }
@@ -3672,6 +3692,7 @@ mod runtime {
                 enabled: route.enabled,
                 domain,
                 client_networks,
+                client_identity: route.client_identity.clone(),
                 upstream: route.upstream.clone(),
             });
         }
@@ -4061,6 +4082,7 @@ mod runtime {
                     ),
                 });
             }
+            let client_identities = validate_client_identities(&config.policy.client_identities)?;
             let mut profile_rules = compile_profiles_with_identity_assignments(
                 &config.policy.profiles,
                 &config.policy.client_groups,
@@ -4090,7 +4112,7 @@ mod runtime {
             let retained_blocklist_rules = blocklist_rules.clone();
             let country_policy = load_country_policy(&config.country_policy)?;
             let rewrites = compile_rewrites(&config.policy.rewrites)?;
-            let conditional_forwards = compile_conditional_forwards(&config)?;
+            let conditional_forwards = compile_conditional_forwards(&config, &client_identities)?;
             config.policy.rules.extend(blocklist_rules);
             let mut rule_ids = BTreeSet::new();
             for rule in &config.policy.rules {
@@ -4132,7 +4154,6 @@ mod runtime {
             let profiles = config.policy.profiles.clone();
             let client_groups = config.policy.client_groups.clone();
             let service_profiles_by_identity = config.policy.service_profiles_by_identity.clone();
-            let client_identities = validate_client_identities(&config.policy.client_identities)?;
             let blocklist_paths = config.policy.blocklists.clone();
             let disabled_blocklist_paths =
                 config.policy.disabled_blocklists.iter().cloned().collect();
@@ -6793,6 +6814,7 @@ mod runtime {
             &self,
             query: &proxima_dns::DnsQuery,
             client: Option<std::net::IpAddr>,
+            client_identity: Option<&str>,
         ) -> Option<String> {
             let client = client?;
             let name = normalize(&query.name);
@@ -6802,9 +6824,14 @@ mod runtime {
                 .filter(|(_, route)| route.enabled)
                 .filter(|(_, route)| {
                     route
-                        .client_networks
-                        .iter()
-                        .any(|network| network.contains(client))
+                        .client_identity
+                        .as_deref()
+                        .is_none_or(|identity| client_identity == Some(identity))
+                        && (route.client_networks.is_empty()
+                            || route
+                                .client_networks
+                                .iter()
+                                .any(|network| network.contains(client)))
                 })
                 .filter(|(_, route)| match route.domain.as_deref() {
                     Some(domain) => {
@@ -6821,6 +6848,7 @@ mod runtime {
                             .domain
                             .as_deref()
                             .map_or(0, |domain| domain.matches('.').count() + 1),
+                        usize::from(route.client_identity.is_some()),
                         route
                             .client_networks
                             .iter()
@@ -6838,8 +6866,9 @@ mod runtime {
             &self,
             query: &proxima_dns::DnsQuery,
             client: Option<std::net::IpAddr>,
+            client_identity: Option<&str>,
         ) -> Option<String> {
-            self.conditional_upstream_name(query, client)
+            self.conditional_upstream_name(query, client, client_identity)
                 .or_else(|| self.client_upstream_name(client))
         }
 
@@ -9404,7 +9433,8 @@ mod runtime {
                 _ => None,
             };
             if let Some(forwarding_action) = forwarding_action {
-                let route_name = self.selected_upstream_name(&query, client);
+                let route_name =
+                    self.selected_upstream_name(&query, client, client_identity.as_deref());
                 let selected_upstream = match route_name.as_deref() {
                     Some(name) => self
                         .named_upstreams
@@ -10802,12 +10832,14 @@ mod runtime {
                     enabled: true,
                     domain: None,
                     client_cidrs: vec!["192.0.2.0/24".into()],
+                    client_identity: None,
                     upstream: "router".into(),
                 },
                 ConditionalForwardConfig {
                     enabled: true,
                     domain: Some("home.arpa".into()),
                     client_cidrs: vec!["192.0.2.10/32".into()],
+                    client_identity: None,
                     upstream: "internal".into(),
                 },
             ];
@@ -10820,7 +10852,7 @@ mod runtime {
                 qclass: 1,
             };
             assert_eq!(
-                policy.conditional_upstream_name(&ptr, Some("192.0.2.10".parse().unwrap())),
+                policy.conditional_upstream_name(&ptr, Some("192.0.2.10".parse().unwrap()), None),
                 Some("router".into())
             );
             let local = proxima_dns::DnsQuery {
@@ -10829,11 +10861,11 @@ mod runtime {
                 ..ptr
             };
             assert_eq!(
-                policy.conditional_upstream_name(&local, Some("192.0.2.10".parse().unwrap())),
+                policy.conditional_upstream_name(&local, Some("192.0.2.10".parse().unwrap()), None),
                 Some("internal".into())
             );
             assert_eq!(
-                policy.conditional_upstream_name(&local, Some("192.0.2.11".parse().unwrap())),
+                policy.conditional_upstream_name(&local, Some("192.0.2.11".parse().unwrap()), None),
                 None
             );
             let status: serde_json::Value =
@@ -10851,6 +10883,7 @@ mod runtime {
                     enabled: true,
                     domain: None,
                     client_cidrs: vec!["192.0.2.0/24".into()],
+                    client_identity: None,
                     upstream: "missing".into(),
                 });
             assert!(matches!(
@@ -10869,12 +10902,87 @@ mod runtime {
                     enabled: true,
                     domain: Some("home.arpa".into()),
                     client_cidrs: Vec::new(),
+                    client_identity: None,
                     upstream: "router".into(),
                 });
             assert!(matches!(
                 Policy::new(no_clients),
                 Err(policy::PolicyError::InvalidClientCidr { .. })
             ));
+
+            let mut unknown_identity = Config::default();
+            unknown_identity
+                .upstreams
+                .insert("router".into(), UpstreamConfig::default());
+            unknown_identity
+                .policy
+                .conditional_forwards
+                .push(ConditionalForwardConfig {
+                    enabled: true,
+                    domain: None,
+                    client_cidrs: Vec::new(),
+                    client_identity: Some("missing".into()),
+                    upstream: "router".into(),
+                });
+            assert!(matches!(
+                Policy::new(unknown_identity),
+                Err(policy::PolicyError::InvalidUpstream { .. })
+            ));
+        }
+
+        #[test]
+        fn conditional_forwarding_can_target_a_client_identity() {
+            let mut config = Config::default();
+            config
+                .upstreams
+                .insert("family-dns".into(), UpstreamConfig::default());
+            config.policy.client_identities = vec![ClientIdentityConfig {
+                name: "family-router".into(),
+                enabled: true,
+                query_log_enabled: true,
+                statistics_enabled: true,
+                cache_enabled: true,
+                filtering_enabled: true,
+                default_action: None,
+                upstream: None,
+                clients: vec!["192.0.2.10".parse().unwrap()],
+                max_queries_per_second: None,
+                max_response_bytes_per_second: None,
+                max_response_bytes_per_network_per_second: None,
+                max_inflight_requests: None,
+                client_cidrs: Vec::new(),
+            }];
+            config.policy.conditional_forwards = vec![ConditionalForwardConfig {
+                enabled: true,
+                domain: Some("home.arpa".into()),
+                client_cidrs: Vec::new(),
+                client_identity: Some("family-router".into()),
+                upstream: "family-dns".into(),
+            }];
+            let policy = Policy::new(config).expect("valid identity route");
+            let query = proxima_dns::DnsQuery {
+                id: 7,
+                recursion_desired: true,
+                name: "printer.home.arpa.".into(),
+                qtype: 1,
+                qclass: 1,
+            };
+            assert_eq!(
+                policy.conditional_upstream_name(
+                    &query,
+                    Some("192.0.2.10".parse().unwrap()),
+                    Some("family-router"),
+                ),
+                Some("family-dns".into())
+            );
+            assert_eq!(
+                policy.conditional_upstream_name(
+                    &query,
+                    Some("192.0.2.10".parse().unwrap()),
+                    Some("guest-router"),
+                ),
+                None
+            );
         }
 
         #[test]

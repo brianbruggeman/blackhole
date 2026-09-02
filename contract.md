@@ -40,13 +40,15 @@ authoritative rule set per group. Direct `client_cidrs` and named `groups`
 cannot be combined, and an unknown or empty group fails configuration before
 publication.
 
-Conditional forwarding routes are bounded client-CIDR routes to named
-upstreams. A route without `domain` handles only PTR queries; a route with a
-domain handles that exact suffix and its subdomains for every query type.
-Overlapping routes select the longest matching domain, then the longest client
-network prefix. Named upstream validation applies before startup, and each
-route reuses that upstream's Proxima exchange, permits, breaker, and cache
-namespace. Routes are startup configuration; a live configuration reload
+Conditional forwarding routes are bounded client-CIDR or client-identity routes
+to named upstreams. A route without `domain` handles only PTR queries; a route
+with a domain handles that exact suffix and its subdomains for every query
+type. An identity selector may be used alone or combined with CIDRs; when both
+are present, both selectors must match. Overlapping routes select the longest
+matching domain, then identity-scoped routes, then the longest client network
+prefix. Named upstream and enabled-identity validation applies before startup,
+and each route reuses that upstream's Proxima exchange, permits, breaker, and
+cache namespace. Routes are startup configuration; a live configuration reload
 rejects changes rather than silently leaving the old route active.
 
 Blocklist sources named by `[policy.blocklist_groups]` are removed from the
