@@ -746,6 +746,10 @@ mod runtime {
 
     #[derive(Debug, Clone, Deserialize, serde::Serialize, PartialEq, Eq)]
     pub struct AdmissionConfig {
+        /// When non-empty, only clients in these IPv4/IPv6 CIDRs may use the
+        /// DNS service. Unidentified callers fail closed.
+        #[serde(default)]
+        pub allow_client_cidrs: Vec<String>,
         /// Client IPv4/IPv6 CIDRs denied before DNS policy evaluation.
         /// Individual addresses use `/32` or `/128`.
         #[serde(default)]
@@ -801,6 +805,7 @@ mod runtime {
     impl Default for AdmissionConfig {
         fn default() -> Self {
             Self {
+                allow_client_cidrs: Vec::new(),
                 deny_client_cidrs: Vec::new(),
                 global_rate_limit_whitelist_cidrs: Vec::new(),
                 max_name_bytes: default_max_name_bytes(),
@@ -3931,6 +3936,19 @@ mod runtime {
                     reason: "max_name_bytes must be between 1 and 253".into(),
                 });
             }
+            if config.admission.allow_client_cidrs.len() > policy::MAX_CLIENT_CIDRS
+                || config.admission.allow_client_cidrs.iter().any(|value| {
+                    value.len() > policy::MAX_DOMAIN_BYTES
+                        || policy::IpNetwork::parse(value).is_none()
+                })
+            {
+                return Err(policy::PolicyError::InvalidAdmission {
+                    reason: format!(
+                        "allow_client_cidrs must contain at most {} valid IPv4/IPv6 CIDRs",
+                        policy::MAX_CLIENT_CIDRS
+                    ),
+                });
+            }
             if config.admission.deny_client_cidrs.len() > policy::MAX_CLIENT_CIDRS
                 || config.admission.deny_client_cidrs.iter().any(|value| {
                     value.len() > policy::MAX_DOMAIN_BYTES
@@ -4482,6 +4500,19 @@ mod runtime {
             if admission.max_name_bytes == 0 || admission.max_name_bytes > 253 {
                 return Err(policy::PolicyError::InvalidAdmission {
                     reason: "max_name_bytes must be between 1 and 253".into(),
+                });
+            }
+            if admission.allow_client_cidrs.len() > policy::MAX_CLIENT_CIDRS
+                || admission.allow_client_cidrs.iter().any(|value| {
+                    value.len() > policy::MAX_DOMAIN_BYTES
+                        || policy::IpNetwork::parse(value).is_none()
+                })
+            {
+                return Err(policy::PolicyError::InvalidAdmission {
+                    reason: format!(
+                        "allow_client_cidrs must contain at most {} valid IPv4/IPv6 CIDRs",
+                        policy::MAX_CLIENT_CIDRS
+                    ),
                 });
             }
             if admission.deny_client_cidrs.len() > policy::MAX_CLIENT_CIDRS
@@ -7004,6 +7035,17 @@ mod runtime {
                 })
         }
 
+        fn allow_client(&self, client: Option<IpAddr>) -> bool {
+            let admission = self.admission_config();
+            admission.allow_client_cidrs.is_empty()
+                || client.is_some_and(|client| {
+                    admission.allow_client_cidrs.iter().any(|cidr| {
+                        policy::IpNetwork::parse(cidr)
+                            .is_some_and(|network| network.contains(client))
+                    })
+                })
+        }
+
         fn try_client_admission(&self, client: Option<IpAddr>) -> Option<ClientPermit> {
             let client = client?;
             let admission = self.admission_config();
@@ -8359,6 +8401,7 @@ mod runtime {
         pub(crate) fn admin_admission_status(&self) -> String {
             let admission = self.admission_config();
             serde_json::json!({
+                "allow_client_cidr_count": admission.allow_client_cidrs.len(),
                 "deny_client_cidr_count": admission.deny_client_cidrs.len(),
                 "global_rate_limit_whitelist_cidr_count": admission
                     .global_rate_limit_whitelist_cidrs
@@ -9356,6 +9399,11 @@ mod runtime {
                 return Ok(DnsPipeReply::typed(200, server_failure_answer()));
             };
             let client = Policy::client_ip(request.context.peer.as_ref());
+            if !self.allow_client(client) {
+                self.observe_failure("client_allowlist");
+                self.observe_for_client(Action::Reject, client);
+                return Ok(DnsPipeReply::typed(200, refused_answer()));
+            }
             if self.deny_client(client) {
                 self.observe_failure("client_denylist");
                 self.observe_for_client(Action::Reject, client);
@@ -13897,6 +13945,14 @@ mod runtime {
                 })
                 .is_err()
             );
+            assert!(
+                Policy::new({
+                    let mut config = Config::default();
+                    config.admission.allow_client_cidrs = vec!["not-a-cidr".into()];
+                    config
+                })
+                .is_err()
+            );
         }
 
         #[test]
@@ -13993,6 +14049,56 @@ mod runtime {
             let status: serde_json::Value =
                 serde_json::from_str(&policy.admin_admission_status()).expect("status");
             assert_eq!(status["deny_client_cidr_count"], 2);
+        }
+
+        #[test]
+        fn configured_client_allowlist_fails_closed_outside_selected_networks() {
+            let mut config = Config::default();
+            config.admission.allow_client_cidrs = vec!["192.0.2.0/24".into()];
+            let policy = Policy::new(config).expect("valid allowlist");
+            let query = proxima_dns::DnsQuery {
+                id: 1,
+                recursion_desired: true,
+                name: "example.com.".into(),
+                qtype: 1,
+                qclass: 1,
+            };
+            let request = |client: Option<std::net::IpAddr>| DnsPipeRequest {
+                method: proxima_primitives::pipe::method::Method::from_wire(
+                    bytes::Bytes::from_static(b"DNS"),
+                ),
+                path: bytes::Bytes::from_static(b"/"),
+                query: proxima_primitives::pipe::header_list::HeaderList::new(),
+                metadata: proxima_primitives::pipe::header_list::HeaderList::new(),
+                payload: query.clone(),
+                stream: None,
+                context: RequestContext {
+                    peer: client
+                        .map(|client| PeerInfo::Tcp(std::net::SocketAddr::new(client, 5353))),
+                    ..RequestContext::default()
+                },
+            };
+            let inside = "192.0.2.10".parse().unwrap();
+            let outside = "198.51.100.10".parse().unwrap();
+            assert_eq!(
+                futures::executor::block_on(policy.call(request(Some(inside))))
+                    .expect("allowlisted client response")
+                    .payload
+                    .rcode,
+                0
+            );
+            for client in [Some(outside), None] {
+                assert_eq!(
+                    futures::executor::block_on(policy.call(request(client)))
+                        .expect("non-allowlisted client response")
+                        .payload
+                        .rcode,
+                    5
+                );
+            }
+            let status: serde_json::Value =
+                serde_json::from_str(&policy.admin_admission_status()).expect("status");
+            assert_eq!(status["allow_client_cidr_count"], 1);
         }
 
         #[test]

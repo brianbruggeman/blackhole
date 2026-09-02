@@ -155,6 +155,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - A bounded global rate-limit whitelist for trusted IPv4/IPv6 CIDRs that skips
   only the global query-rate bucket while retaining other admission and abuse
   controls.
+- An operator-configured bounded IPv4/IPv6 CIDR client admission allowlist;
+  when non-empty it fails closed for unidentified or non-member clients,
+  evaluates before the denylist and DNS policy, and is atomically reloadable.
 - Authenticated add/remove endpoints for operating that whitelist without
   replacing unrelated admission settings.
 - An operator-configured bounded IPv4/IPv6 CIDR denylist, including exact

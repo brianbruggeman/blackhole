@@ -100,6 +100,11 @@ Operators can also set `[admission].deny_client_cidrs` to a bounded list of
 IPv4/IPv6 CIDRs (use `/32` or `/128` for one address); those clients receive
 REFUSED before policy matching, rate accounting, or forwarding. The denylist
 is live-reloadable and invalid replacements are rejected without publication.
+Set `[admission].allow_client_cidrs` to make admission default-deny: only
+identified clients in the listed IPv4/IPv6 CIDRs are served, and unidentified
+clients are refused before the denylist and DNS policy are evaluated. The
+allowlist is bounded, live-reloadable with the rest of admission, and invalid
+replacements are rejected without publication.
 `[admission].global_rate_limit_whitelist_cidrs` can exempt bounded IPv4/IPv6
 CIDRs from only the global query-rate ceiling; per-client, network, response,
 and abuse limits still apply.

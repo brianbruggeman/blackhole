@@ -126,6 +126,13 @@ byte budget for its configured client network. An absent value inherits the
 global network budget; zero and values above the bounded identity ceiling fail
 configuration before publication.
 
+Admission may define a bounded `[admission].allow_client_cidrs` list. When the
+list is empty, admission is unchanged; when it is non-empty, only identified
+clients contained by at least one listed network proceed. Unidentified clients
+and clients outside the list receive `REFUSED` before denylist checks, rate
+accounting, forwarding, or DNS policy evaluation. The denylist remains a
+separate subtractive check for clients that pass the allowlist.
+
 The authenticated `POST /country/preview` route performs the same kind of
 non-retaining dry-run for a client address against the live country map. It
 reports the matched country, region, ASN, and deny/observe results; it does
