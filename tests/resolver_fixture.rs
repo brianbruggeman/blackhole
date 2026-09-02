@@ -571,9 +571,12 @@ async fn listener_forwards_allowed_query_to_loopback_upstream() {
 
 #[proxima::test]
 async fn listener_retries_a_truncated_upstream_reply_over_tcp() {
-    let upstream_udp = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind upstream udp");
-    let upstream_addr = upstream_udp.local_addr().expect("upstream address");
-    let upstream_tcp = TcpListener::bind(upstream_addr).expect("bind upstream tcp");
+    // Reserve the TCP port first. TCP and UDP have separate bind namespaces,
+    // so the UDP socket can safely share the selected port; choosing a UDP
+    // port first can collide with another parallel TCP fixture.
+    let upstream_tcp = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind upstream tcp");
+    let upstream_addr = upstream_tcp.local_addr().expect("upstream address");
+    let upstream_udp = UdpSocket::bind(upstream_addr).expect("bind upstream udp");
     let upstream_thread = std::thread::spawn(move || {
         let mut query = [0u8; 4096];
         let (len, peer) = upstream_udp
