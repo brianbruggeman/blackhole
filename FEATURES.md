@@ -162,6 +162,10 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   map and selectors when validation or loading fails.
 - Country-policy request reads use Proxima's lock-free `Live` snapshot;
   validated reloads replace one complete immutable generation.
+- Runtime policy configuration mirrors for domain rules, profiles, client
+  groups, rewrites, country policy, and blocklist sources use Proxima's
+  lock-free `Live` snapshots; the remaining reload coordinator lock is
+  control-plane-only and does not sit on DNS request reads.
 - A committed libFuzzer target for the borrowed DNS query boundary, with a
   privacy-safe corpus location for minimized wire samples.
 - Proxima-native action counters, bounded failure-cause counters, and
