@@ -1,7 +1,6 @@
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, UdpSocket};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU16, Ordering};
 
 use blackhole::admin::AdminHandler;
 use blackhole::listener::{TcpProtocol, UdpProtocol};
@@ -20,13 +19,14 @@ use proxima_primitives::stream::DatagramFactory;
 use proxima_primitives::stream::StreamUpstreamExt;
 use proxima_protocols::dns::{Flags, encode, parse_message};
 
-static NEXT_TEST_PORT: AtomicU16 = AtomicU16::new(30_000);
-
 fn test_listener_addr() -> SocketAddr {
-    let pid = std::process::id();
-    let offset = u32::from(NEXT_TEST_PORT.fetch_add(1, Ordering::Relaxed) - 30_000);
-    let port = 20_000 + ((pid + offset) % 40_000) as u16;
-    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)
+    // Ask the kernel for an ephemeral port instead of deriving one from the
+    // test PID. The latter collides with parallel test binaries and unrelated
+    // local processes despite looking deterministic.
+    let reservation = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("reserve test port");
+    let address = reservation.local_addr().expect("reserved test address");
+    drop(reservation);
+    address
 }
 
 #[proxima::test]
