@@ -320,6 +320,9 @@ without replacing the last good published snapshot.
 `GET /abuse/status` reports bounded live breaker occupancy together with the
 configured client, network, and global violation thresholds, windows,
 cooldowns, and incident-persistence flag; it never exposes breaker keys.
+`GET /status` also reports the bounded upstream circuit-breaker state
+(`closed`, `open`, or `half_open`) so operators can distinguish an idle
+resolver from one fail-closed by upstream health.
 For deterministic offline inspection, run `blackhole --replay recording.jsonl`.
 To remove a durable decision recording, run `blackhole --delete-recording
 recording.jsonl`; this deletes only the exact file and its bounded `.1` through

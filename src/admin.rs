@@ -1748,6 +1748,7 @@ mod tests {
         assert_eq!(status["profiles_configured"], 0);
         assert_eq!(status["client_groups_configured"], 0);
         assert_eq!(status["upstream_configured"], false);
+        assert_eq!(status["upstream_breaker_state"], "closed");
         assert_eq!(status["country_policy_configured"], false);
         assert_eq!(status["country_reload_interval_secs"], 0);
         assert_eq!(status["cache_entries"], 0);

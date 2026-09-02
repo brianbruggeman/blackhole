@@ -106,10 +106,12 @@ mod runtime {
         DnsAnswer, DnsAnswerRecord, DnsAnswerWithMetadata, DnsClientError, DnsClientUpstream,
         DnsPipeReply, DnsPipeRequest,
     };
-    use proxima_primitives::pipe::AtomicCircuitBreaker as ProximaCircuitBreaker;
     use proxima_primitives::pipe::SendPipe;
     use proxima_primitives::pipe::bucket_table::BucketTable;
     use proxima_primitives::pipe::endpoint::PeerInfo;
+    use proxima_primitives::pipe::{
+        AtomicCircuitBreaker as ProximaCircuitBreaker, CircuitState as ProximaCircuitState,
+    };
     use proxima_primitives::stream::DatagramFactory;
     use proxima_primitives::sync::AtomicPermitPool;
     use serde::Deserialize;
@@ -6357,6 +6359,11 @@ mod runtime {
         pub(crate) fn admin_status(&self) -> String {
             let _reload = self.reload_lock.read().expect("reload lock");
             let cache = self.cache.snapshot();
+            let upstream_breaker_state = match self.breaker.state() {
+                ProximaCircuitState::Closed => "closed",
+                ProximaCircuitState::Open => "open",
+                ProximaCircuitState::HalfOpen => "half_open",
+            };
             serde_json::json!({
                 "status": "ok",
                 "rules_configured": self.rules_configured.load(Ordering::Acquire),
@@ -6364,6 +6371,7 @@ mod runtime {
                 "profiles_configured": self.profiles.read(Vec::len),
                 "client_groups_configured": self.client_groups.read(Vec::len),
                 "upstream_configured": self.upstream.is_some(),
+                "upstream_breaker_state": upstream_breaker_state,
                 "country_policy_configured": self.country_policy.snapshot().is_some(),
                 "country_reload_interval_secs": self.config.country_policy.reload_interval_secs,
                 "cache_entries": cache.entries.len(),
