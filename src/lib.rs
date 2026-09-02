@@ -9992,6 +9992,23 @@ mod runtime {
     mod tests {
         use super::*;
         use proxima_primitives::pipe::request::RequestContext;
+        use std::io::Read;
+
+        fn read_http_request(stream: &mut std::net::TcpStream) -> Vec<u8> {
+            let mut request = Vec::with_capacity(2048);
+            let mut chunk = [0_u8; 256];
+            while request.len() < 2048 {
+                let size = stream.read(&mut chunk).expect("read HTTP request");
+                if size == 0 {
+                    break;
+                }
+                request.extend_from_slice(&chunk[..size]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            request
+        }
 
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
         enum ProofAction {
@@ -10577,17 +10594,16 @@ mod runtime {
 
         #[test]
         fn hosted_blocklist_sources_use_proxima_http_and_remain_bounded() {
-            use std::io::{Read, Write};
+            use std::io::Write;
 
             let server = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
                 .expect("bind blocklist fixture");
             let address = server.local_addr().expect("blocklist fixture address");
             let thread = std::thread::spawn(move || {
                 let (mut stream, _) = server.accept().expect("accept blocklist request");
-                let mut request = [0_u8; 2048];
-                let size = stream.read(&mut request).expect("read blocklist request");
+                let request = read_http_request(&mut stream);
                 assert!(
-                    std::str::from_utf8(&request[..size])
+                    std::str::from_utf8(&request)
                         .expect("request is UTF-8")
                         .contains("GET /filters/list.txt HTTP/1.1")
                 );
@@ -10643,17 +10659,16 @@ mod runtime {
 
         #[test]
         fn hosted_country_maps_use_proxima_http_and_enforce_freshness_contract() {
-            use std::io::{Read, Write};
+            use std::io::Write;
 
             let server = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
                 .expect("bind country map fixture");
             let address = server.local_addr().expect("country map fixture address");
             let thread = std::thread::spawn(move || {
                 let (mut stream, _) = server.accept().expect("accept country map request");
-                let mut request = [0_u8; 2048];
-                let size = stream.read(&mut request).expect("read country map request");
+                let request = read_http_request(&mut stream);
                 assert!(
-                    std::str::from_utf8(&request[..size])
+                    std::str::from_utf8(&request)
                         .expect("request is UTF-8")
                         .contains("GET /maps/country.txt HTTP/1.1")
                 );

@@ -39,6 +39,22 @@ fn wait_for_tcp(addr: SocketAddr) -> TcpStream {
     }
 }
 
+fn read_http_request(stream: &mut TcpStream) -> Vec<u8> {
+    let mut request = Vec::with_capacity(2048);
+    let mut chunk = [0_u8; 256];
+    while request.len() < 2048 {
+        let size = stream.read(&mut chunk).expect("read HTTP request");
+        if size == 0 {
+            break;
+        }
+        request.extend_from_slice(&chunk[..size]);
+        if request.windows(4).any(|window| window == b"\r\n\r\n") {
+            break;
+        }
+    }
+    request
+}
+
 struct ChildGuard(Child);
 
 impl Drop for ChildGuard {
@@ -1356,9 +1372,7 @@ fn shipped_binary_loads_a_remote_country_map_through_proxima_http() {
     let map_addr = map_server.local_addr().expect("country map server address");
     let map_thread = thread::spawn(move || {
         let (mut stream, _) = map_server.accept().expect("accept country map request");
-        let mut request = [0u8; 2048];
-        let length = stream.read(&mut request).expect("read country map request");
-        let request = String::from_utf8_lossy(&request[..length]).into_owned();
+        let request = String::from_utf8_lossy(&read_http_request(&mut stream)).into_owned();
         let body = b"US 127.0.0.0/8 US-LOCAL AS64500\n";
         let mut response = format!(
             "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
