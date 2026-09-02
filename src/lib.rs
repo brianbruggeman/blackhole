@@ -2615,10 +2615,24 @@ mod runtime {
                 .unwrap_or("country-map"),
             std::process::id()
         ));
-        std::fs::write(&temp, contents).map_err(|error| {
+        let mut file = std::fs::File::create(&temp).map_err(|error| {
             policy::PolicyError::InvalidCountryMap {
                 path: destination.into(),
                 reason: format!("cannot write last-good snapshot: {error}"),
+            }
+        })?;
+        std::io::Write::write_all(&mut file, contents).map_err(|error| {
+            let _ = std::fs::remove_file(&temp);
+            policy::PolicyError::InvalidCountryMap {
+                path: destination.into(),
+                reason: format!("cannot write last-good snapshot: {error}"),
+            }
+        })?;
+        file.sync_all().map_err(|error| {
+            let _ = std::fs::remove_file(&temp);
+            policy::PolicyError::InvalidCountryMap {
+                path: destination.into(),
+                reason: format!("cannot sync last-good snapshot: {error}"),
             }
         })?;
         if let Err(error) = std::fs::rename(&temp, destination_path) {
@@ -2628,6 +2642,12 @@ mod runtime {
                 reason: format!("cannot publish last-good snapshot: {error}"),
             });
         }
+        std::fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| policy::PolicyError::InvalidCountryMap {
+                path: destination.into(),
+                reason: format!("cannot sync last-good snapshot directory: {error}"),
+            })?;
         Ok(())
     }
 
