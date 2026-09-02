@@ -45,14 +45,16 @@ export DPKG_ROOT="$root"
 
 phase() { printf 'debian-smoke: %s\n' "$1"; }
 
+dpkg_args="--admindir=$root/var/lib/dpkg --instdir=$root"
+
 mkdir -p "$root/etc" "$root/var/lib/dpkg" "$root/var/log"
 printf 'Package: blackhole\nStatus: install ok installed\n' > "$root/var/lib/dpkg/status"
 cp /etc/passwd /etc/group /etc/shadow "$root/etc/"
 
 phase 'unpack initial package'
-dpkg --root="$root" --unpack "$package"
+dpkg $dpkg_args --unpack "$package"
 phase 'configure initial package'
-dpkg --root="$root" --force-confold --configure blackhole
+dpkg $dpkg_args --force-confold --configure blackhole
 
 old_version=$(dpkg-deb --field "$package" Version)
 new_version=$(dpkg-deb --field "$upgrade_package" Version)
@@ -70,18 +72,18 @@ printf 'operator-policy = "retain-me"\n' > "$root/etc/blackhole/blackhole.toml"
 # A second real transaction catches non-idempotent maintainer scripts and,
 # when supplied, exercises a real newer-package upgrade.
 phase 'unpack upgrade package'
-dpkg --root="$root" --force-confold --unpack "$upgrade_package"
+    dpkg $dpkg_args --force-confold --unpack "$upgrade_package"
 phase 'configure upgrade package'
-dpkg --root="$root" --force-confold --configure blackhole
+dpkg $dpkg_args --force-confold --configure blackhole
 phase 'verify installed package'
 grep -Fx 'operator-policy = "retain-me"' "$root/etc/blackhole/blackhole.toml" >/dev/null
 
 if [ "$package" != "$upgrade_package" ]; then
-    installed_version=$(dpkg-query --root="$root" -W -f='${Version}' blackhole)
+    installed_version=$(dpkg-query --admindir="$root/var/lib/dpkg" -W -f='${Version}' blackhole)
     test "$installed_version" = "$new_version"
 fi
 
-dpkg-query --root="$root" -W -f='${Status}\n' blackhole | grep -Fx \
+dpkg-query --admindir="$root/var/lib/dpkg" -W -f='${Status}\n' blackhole | grep -Fx \
     'install ok installed' >/dev/null
 test -x "$root/usr/local/bin/blackhole"
 test -f "$root/etc/blackhole/blackhole.toml"

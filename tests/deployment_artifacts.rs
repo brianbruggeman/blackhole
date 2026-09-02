@@ -477,15 +477,16 @@ fn deb_smoke_exercises_a_disposable_root_transaction() {
     assert!(script.contains("usage: $0 DEB [UPGRADE_DEB]"));
     assert!(script.contains("upgrade_package=${2:-$package}"));
     assert!(script.contains("export DPKG_ROOT=\"$root\""));
-    assert!(script.contains("dpkg --root=\"$root\" --unpack"));
+    assert!(script.contains("dpkg_args=\"--admindir=$root/var/lib/dpkg --instdir=$root\""));
+    assert!(script.contains("dpkg $dpkg_args --unpack"));
     assert!(script.contains("export DEBIAN_FRONTEND=noninteractive"));
-    assert!(script.contains("dpkg --root=\"$root\" --force-confold --configure blackhole"));
+    assert!(script.contains("dpkg $dpkg_args --force-confold --configure blackhole"));
     assert!(script.contains("dpkg-deb --field \"$package\" Version"));
     assert!(script.contains("dpkg --compare-versions \"$new_version\" gt \"$old_version\""));
     assert!(script.contains("--unpack \"$upgrade_package\""));
     assert!(script.contains("--force-confold --unpack"));
     assert!(script.contains("installed_version=$(dpkg-query"));
-    assert!(script.contains("dpkg-query --root=\"$root\""));
+    assert!(script.contains("dpkg-query --admindir=\"$root/var/lib/dpkg\""));
     assert!(script.contains("/var/lib/blackhole"));
 }
 
