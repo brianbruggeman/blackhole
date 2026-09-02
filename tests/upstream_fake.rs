@@ -382,6 +382,7 @@ async fn named_client_upstream_route_and_cache_bypass_use_proxima_exchange() {
         default_action: None,
         upstream: Some("family".into()),
         clients: vec!["192.0.2.10".parse().expect("client address")],
+        max_queries_per_second: None,
         client_cidrs: Vec::new(),
     }];
     let upstream = config.upstreams["family"].clone();

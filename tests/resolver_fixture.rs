@@ -165,6 +165,7 @@ async fn listener_honors_per_client_filtering_toggle() {
         default_action: None,
         upstream: None,
         clients: vec!["127.0.0.1".parse().expect("loopback client")],
+        max_queries_per_second: None,
         client_cidrs: Vec::new(),
     }];
     config.policy.rules = vec![RuleConfig {
@@ -496,6 +497,7 @@ async fn listener_forwards_allowed_query_to_loopback_upstream() {
         default_action: None,
         upstream: Some("loopback".into()),
         clients: vec![Ipv4Addr::LOCALHOST.into()],
+        max_queries_per_second: None,
         client_cidrs: Vec::new(),
     }];
 

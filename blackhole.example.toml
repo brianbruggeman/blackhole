@@ -82,6 +82,7 @@ ttl = 30
 # statistics_enabled = true
 # cache_enabled = true
 # clients = ["192.0.2.10"]
+# max_queries_per_second = 100  # optional per-client rate ceiling
 # upstream = "family"  # selects a named upstream declared below
 [[policy.profiles]]
 id = 40000

@@ -49,6 +49,8 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   response caching while retaining upstream forwarding.
 - Each identity may select a bounded default action for unmatched queries;
   explicit domain, regex, and rewrite precedence remains unchanged.
+- Each identity may set an optional bounded per-client query-rate ceiling;
+  identities without an override use the admission default.
 - Bounded Pi-hole/AdGuard-compatible blocklist ingestion from hosts/domain files
   with comments, normalization, deduplication, apex-and-subdomain blocking,
   `@@` exceptions, `$important` priority, order-independent `$badfilter`
