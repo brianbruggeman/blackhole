@@ -2379,6 +2379,7 @@ mod runtime {
 
     const MAX_COUNTRY_MAP_BYTES: u64 = 16 * 1024 * 1024;
     const MAX_COUNTRY_MAP_LINE_BYTES: usize = 256;
+    const MAX_COUNTRY_MAP_ENTRIES: usize = 65_536;
     const MAX_COUNTRY_SELECTORS: usize = 256;
 
     fn country_code(value: &str) -> Option<String> {
@@ -2766,6 +2767,12 @@ mod runtime {
                     })
                 })
                 .transpose()?;
+            if entries.len() >= MAX_COUNTRY_MAP_ENTRIES {
+                return Err(policy::PolicyError::InvalidCountryMap {
+                    path: path.into(),
+                    reason: format!("map entry count exceeds {MAX_COUNTRY_MAP_ENTRIES}"),
+                });
+            }
             entries.push(CountryEntry {
                 country,
                 region,
@@ -11552,6 +11559,27 @@ mod runtime {
                 .payload;
             assert_eq!(outside_answer.rcode, 0);
             std::fs::remove_file(path).expect("remove country map");
+        }
+
+        #[test]
+        fn country_map_entry_count_is_bounded_before_publication() {
+            let path = std::env::temp_dir().join(format!(
+                "blackhole-country-entry-limit-{}-{}.txt",
+                std::process::id(),
+                1
+            ));
+            let mut contents = String::new();
+            for _ in 0..=MAX_COUNTRY_MAP_ENTRIES {
+                contents.push_str("US 192.0.2.0/24\n");
+            }
+            std::fs::write(&path, contents).expect("write oversized country map");
+            let config = CountryPolicyConfig {
+                map_path: Some(path.to_string_lossy().into_owned()),
+                ..CountryPolicyConfig::default()
+            };
+            let error = load_country_policy(&config).expect_err("entry bound");
+            assert!(error.to_string().contains("map entry count exceeds"));
+            std::fs::remove_file(path).expect("remove oversized country map");
         }
 
         #[test]
