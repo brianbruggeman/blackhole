@@ -3853,17 +3853,10 @@ mod runtime {
             Ok(published)
         }
 
-        /// Reload the configured country/CIDR map and publish it only after
-        /// the complete replacement has passed bounded validation.
+        /// Reload the configured country/CIDR map and publish only a changed
+        /// complete replacement after bounded validation.
         pub fn reload_country_policy(&self) -> Result<ReloadState, policy::PolicyError> {
-            let _reload = self.reload_lock.write().expect("reload lock");
-            let started = Instant::now();
-            let config = self.country_policy_config.snapshot().as_ref().clone();
-            let next = load_country_policy(&config)?;
-            self.country_policy_control.replace(next);
-            self.policy_generation.fetch_add(1, Ordering::Relaxed);
-            self.observe_reload_latency("country", started);
-            Ok(ReloadState::Published)
+            self.reload_country_policy_if_changed()
         }
 
         /// Reload the country map only when its bounded contents changed.
@@ -8530,6 +8523,7 @@ mod runtime {
                 policy.reload_country_policy_if_changed(),
                 Ok(ReloadState::Unchanged)
             );
+            assert_eq!(policy.reload_country_policy(), Ok(ReloadState::Unchanged));
             let unchanged_status: serde_json::Value =
                 serde_json::from_str(&policy.admin_policy_status()).expect("status");
             let unchanged_country_status: serde_json::Value =
