@@ -12,6 +12,8 @@ default_action = "pass"
 # Add bounded Pi-hole/AdGuard-compatible files here after creating them with
 # the service account, for example:
 # blocklists = ["/etc/blackhole/lists/ads.txt"]
+# Optional identity-scoped exceptions require a matching client identity in
+# the full configuration; see blackhole.example.toml.
 
 [upstream]
 resolver_ip = "9.9.9.9"

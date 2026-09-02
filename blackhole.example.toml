@@ -50,6 +50,10 @@ default_action = "pass"
 blocklists = []
 # Optional bounded allowlist; each domain includes its apex and subdomains.
 # allowlist = ["updates.example"]
+# Optional identity-scoped allowlists. The identity must be declared below;
+# each domain includes its apex and subdomains for that client identity.
+# [policy.allowlist_by_identity]
+# family-router = ["updates.example"]
 # Optional cancellable background reload interval; zero disables polling.
 blocklist_reload_interval_secs = 0
 # Optional group-scoped sources. A referenced source is removed from the
