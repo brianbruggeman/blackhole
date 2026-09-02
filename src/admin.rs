@@ -3773,6 +3773,76 @@ mod tests {
     }
 
     #[test]
+    fn identity_blocklist_route_replaces_and_rejects_unknown_identity() {
+        let path = std::env::temp_dir().join(format!(
+            "blackhole-admin-identity-blocklist-{}-{}.txt",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        ));
+        std::fs::write(&path, "identity.example\n").expect("write blocklist");
+        let source = path.to_string_lossy().into_owned();
+        let mut config = crate::Config::default();
+        config.policy.blocklists = vec![source.clone()];
+        config.policy.client_identities = vec![crate::ClientIdentityConfig {
+            name: "family-router".into(),
+            enabled: true,
+            query_log_enabled: false,
+            statistics_enabled: true,
+            cache_enabled: true,
+            filtering_enabled: true,
+            default_action: None,
+            upstream: None,
+            clients: vec!["192.0.2.10".parse().expect("client address")],
+            max_queries_per_second: None,
+            max_response_bytes_per_second: None,
+            max_response_bytes_per_network_per_second: None,
+            max_inflight_requests: None,
+            client_cidrs: Vec::new(),
+        }];
+        let policy = Arc::new(Policy::new(config).expect("identity blocklist policy"));
+        let handler = AdminHandler::new(Arc::clone(&policy));
+        let replacement = Request::builder()
+            .method("POST")
+            .path("/reload/blocklists-by-identity")
+            .payload(
+                serde_json::to_string(&std::collections::BTreeMap::from([(
+                    "family-router".to_owned(),
+                    vec![source.clone()],
+                )]))
+                .expect("identity blocklist JSON"),
+            )
+            .build()
+            .expect("identity blocklist replacement request");
+        let response = block_on(handler.call(replacement)).expect("identity replacement response");
+        assert_eq!(response.status, 200);
+
+        let response = block_on(handler.call(request("GET", "/blocklists-by-identity")))
+            .expect("identity blocklist status response");
+        let status: serde_json::Value =
+            serde_json::from_slice(&response.payload).expect("identity blocklist status JSON");
+        assert_eq!(status["count"], 1);
+        assert_eq!(status["identities"]["family-router"][0], source);
+
+        let invalid = Request::builder()
+            .method("POST")
+            .path("/reload/blocklists-by-identity")
+            .payload(r#"{"missing":["/definitely/missing/blackhole.list"]}"#)
+            .build()
+            .expect("invalid identity blocklist request");
+        let response = block_on(handler.call(invalid)).expect("invalid identity response");
+        assert_eq!(response.status, 422);
+        let response = block_on(handler.call(request("GET", "/blocklists-by-identity")))
+            .expect("identity blocklist retained response");
+        let retained: serde_json::Value =
+            serde_json::from_slice(&response.payload).expect("retained identity JSON");
+        assert_eq!(retained["identities"]["family-router"][0], source);
+        std::fs::remove_file(path).expect("remove blocklist");
+    }
+
+    #[test]
     fn policy_reload_publishes_valid_rules_and_rejects_bad_json() {
         let policy = Arc::new(Policy::new(crate::Config::default()).expect("default policy"));
         let handler = AdminHandler::new(Arc::clone(&policy));
