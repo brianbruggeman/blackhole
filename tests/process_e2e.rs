@@ -909,7 +909,7 @@ fn shipped_binary_fails_closed_on_malformed_upstream_reply() {
 }
 
 #[test]
-fn shipped_binary_applies_country_policy_to_real_udp_peers() {
+fn shipped_binary_applies_country_policy_to_real_udp_and_tcp_peers() {
     let map = NamedTempFile::new().expect("create country map");
     std::fs::write(map.path(), "US 127.0.0.0/8 US-LOCAL AS64500\n").expect("write country map");
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("reserve listener port");
@@ -949,4 +949,24 @@ fn shipped_binary_applies_country_policy_to_real_udp_peers() {
     assert_eq!(message.header.id, 0x4040);
     assert_eq!(message.header.flags.rcode(), 5);
     assert!(message.answers().next().is_none());
+
+    let mut tcp = TcpStream::connect(listener_addr).expect("connect TCP client");
+    tcp.set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("set TCP timeout");
+    let tcp_query = query(0x4041, "country-denied.example.");
+    let tcp_length = u16::try_from(tcp_query.len()).expect("TCP query fits frame");
+    tcp.write_all(&tcp_length.to_be_bytes())
+        .expect("write TCP query length");
+    tcp.write_all(&tcp_query).expect("write TCP query");
+    let mut tcp_response_length = [0u8; 2];
+    tcp.read_exact(&mut tcp_response_length)
+        .expect("read TCP response length");
+    let tcp_response_length = usize::from(u16::from_be_bytes(tcp_response_length));
+    let mut tcp_response = vec![0u8; tcp_response_length];
+    tcp.read_exact(&mut tcp_response)
+        .expect("read TCP response");
+    let tcp_message = parse_message(&tcp_response).expect("parse TCP country denial");
+    assert_eq!(tcp_message.header.id, 0x4041);
+    assert_eq!(tcp_message.header.flags.rcode(), 5);
+    assert!(tcp_message.answers().next().is_none());
 }
