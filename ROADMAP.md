@@ -31,11 +31,6 @@ below are future capabilities, grouped by the dependency layer they extend.
 
 ## Incumbent parity and extensions
 
-- Extend the bounded privacy-safe query-decision log with additional
-  operator-selected deletion-verification backends beyond the current
-  exact-target and bounded parent-directory checks, byte-bounded Proxima JSONL
-  destination, and bounded startup rotation. The current `metadata` and
-  `action_only` redaction modes are part of the baseline.
 - Add the remaining Pi-hole/AdGuard Home policy features that fit Blackhole's
   explicit-action model, including additional client-specific service settings
   beyond the current identity, per-client filtering toggle, fallback-action,
