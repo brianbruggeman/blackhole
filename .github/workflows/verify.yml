@@ -41,7 +41,7 @@ jobs:
       - run: cargo check --locked --features doq --all-targets
       - run: RUSTFLAGS='-C panic=abort' cargo check --locked --no-default-features
       - run: cargo check --locked --examples
-      - run: cargo run --locked -- --check blackhole.example.toml
+      - run: timeout 120s cargo run --locked -- --check blackhole.example.toml
       - run: cargo test --locked --all-targets
       - uses: taiki-e/install-action@nextest
       - run: cargo nextest run --locked --workspace
