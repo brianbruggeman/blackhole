@@ -3714,6 +3714,7 @@ mod runtime {
             enabled: bool,
         ) -> Result<ReloadState, policy::PolicyError> {
             let _reload = self.reload_lock.write().expect("reload lock");
+            let started = Instant::now();
             if paths.is_empty() {
                 return Err(policy::PolicyError::InvalidBlocklist {
                     path: "<sources>".into(),
@@ -3735,12 +3736,18 @@ mod runtime {
                     disabled.insert(path.clone());
                 }
             }
+            if self
+                .disabled_blocklist_paths
+                .read(|current| current == &disabled)
+            {
+                self.observe_reload_latency("blocklists_enable_unchanged", started);
+                return Ok(ReloadState::Unchanged);
+            }
             let active = configured
                 .iter()
                 .filter(|path| !disabled.contains(*path))
                 .cloned()
                 .collect::<Vec<_>>();
-            let started = Instant::now();
             let result = self.replace_active_blocklist_rules_locked(
                 &active,
                 started,
