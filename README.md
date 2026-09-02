@@ -235,7 +235,8 @@ operator-managed additions and revocations), bounded
 managed denylist), bounded
 `GET /abuse/incidents` (redacted bounded incident review), bounded
 `GET /abuse/incidents/export` (bounded durable incident export), bounded
-`POST /reload/country`, bounded `POST /reload/policy` (a JSON array of complete rule objects), bounded
+`POST /reload/country` (returns `reloaded` or `unchanged`), bounded
+`POST /reload/policy` (a JSON array of complete rule objects), bounded
 `POST /reload/country/replace` (an atomic country/CIDR selector and map
 configuration replacement), bounded
 `POST /reload/policy/add` (a non-empty JSON array appended atomically to the current domain rules), bounded
