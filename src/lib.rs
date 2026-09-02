@@ -13454,6 +13454,31 @@ mod runtime {
         }
 
         #[test]
+        fn identity_network_response_budget_rejects_zero() {
+            let mut config = Config::default();
+            config.policy.client_identities = vec![ClientIdentityConfig {
+                name: "invalid-network-budget".into(),
+                enabled: true,
+                query_log_enabled: true,
+                statistics_enabled: true,
+                cache_enabled: true,
+                filtering_enabled: true,
+                default_action: None,
+                upstream: None,
+                max_queries_per_second: None,
+                max_response_bytes_per_second: None,
+                max_response_bytes_per_network_per_second: Some(0),
+                max_inflight_requests: None,
+                clients: vec!["192.0.2.30".parse().expect("client")],
+                client_cidrs: Vec::new(),
+            }];
+            assert!(matches!(
+                Policy::new(config),
+                Err(policy::PolicyError::InvalidClientIdentityMap { .. })
+            ));
+        }
+
+        #[test]
         fn global_rate_limit_sheds_anonymous_and_identified_requests() {
             let mut config = Config::default();
             config.admission.max_queries_per_second = 2;
