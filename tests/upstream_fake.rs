@@ -32,6 +32,7 @@ enum ReplyMode {
     Overflow,
     CnameChain,
     CnameChainAllowed,
+    CnameChainDrop,
 }
 
 struct FakeState {
@@ -76,6 +77,7 @@ impl FakeSocket {
             | ReplyMode::Overflow
             | ReplyMode::CnameChain
             | ReplyMode::CnameChainAllowed
+            | ReplyMode::CnameChainDrop
             | ReplyMode::WrongQuestion
             | ReplyMode::NotResponse => {
                 let message = parse_message(query).expect("fake query");
@@ -108,7 +110,12 @@ impl FakeSocket {
                 };
                 let records = if matches!(mode, ReplyMode::Negative | ReplyMode::Servfail) {
                     Vec::new()
-                } else if matches!(mode, ReplyMode::CnameChain | ReplyMode::CnameChainAllowed) {
+                } else if matches!(
+                    mode,
+                    ReplyMode::CnameChain
+                        | ReplyMode::CnameChainAllowed
+                        | ReplyMode::CnameChainDrop
+                ) {
                     vec![
                         encode::AnswerRecord {
                             name: &name,
@@ -229,12 +236,14 @@ fn policy(mode: ReplyMode) -> (Policy, FakeSocket) {
 
 fn policy_with_action(mode: ReplyMode, action: Action) -> (Policy, FakeSocket) {
     let mut config = Config::default();
-    config.admission.max_response_records =
-        if matches!(mode, ReplyMode::CnameChain | ReplyMode::CnameChainAllowed) {
-            2
-        } else {
-            1
-        };
+    config.admission.max_response_records = if matches!(
+        mode,
+        ReplyMode::CnameChain | ReplyMode::CnameChainAllowed | ReplyMode::CnameChainDrop
+    ) {
+        2
+    } else {
+        1
+    };
     config.policy.rules = vec![RuleConfig {
         enabled: true,
         id: 1,
@@ -250,12 +259,16 @@ fn policy_with_action(mode: ReplyMode, action: Action) -> (Policy, FakeSocket) {
         client_cidrs: Vec::new(),
         client_identity: None,
     }];
-    if matches!(mode, ReplyMode::CnameChain) {
+    if matches!(mode, ReplyMode::CnameChain | ReplyMode::CnameChainDrop) {
         config.policy.rules.push(RuleConfig {
             enabled: true,
             id: 2,
             domain: "blocked.example".into(),
-            action: Action::Nxdomain,
+            action: if matches!(mode, ReplyMode::CnameChainDrop) {
+                Action::Drop
+            } else {
+                Action::Nxdomain
+            },
             priority: 0,
             qtype: Some(5),
             qtypes: Vec::new(),
@@ -420,6 +433,14 @@ async fn fake_upstream_allowed_cname_target_is_returned_and_cached() {
         1,
         "an allowed CNAME chain should be cached normally"
     );
+}
+
+#[proxima::test]
+async fn fake_upstream_cname_drop_target_emits_no_dns_response() {
+    let (policy, socket) = policy(ReplyMode::CnameChainDrop);
+    let client = "192.0.2.10".parse().expect("client address");
+    assert!(policy.call(request_from_client(client)).await.is_err());
+    assert_eq!(socket.state.lock().expect("fake state").sent.len(), 1);
 }
 
 #[proxima::test]
