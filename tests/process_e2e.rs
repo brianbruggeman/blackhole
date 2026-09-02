@@ -55,7 +55,7 @@ fn shipped_binary_serves_udp_datagrams_and_tcp_frames() {
     let upstream_addr = upstream.local_addr().expect("upstream address");
     let upstream_thread = thread::spawn(move || {
         let mut packet = [0u8; 4096];
-        for _ in 0..4 {
+        for _ in 0..5 {
             let (length, peer) = upstream
                 .recv_from(&mut packet)
                 .expect("receive upstream query");
@@ -74,16 +74,18 @@ fn shipped_binary_serves_udp_datagrams_and_tcp_frames() {
                 ttl: 30,
                 rdata: &address,
             };
+            let negative = name == "negative.example.";
+            let records = if negative { Vec::new() } else { vec![answer] };
             let mut response = Vec::new();
             encode::encode_response(
                 message.header.id,
-                Flags::for_response(true, false, true, 0),
+                Flags::for_response(true, false, true, if negative { 3 } else { 0 }),
                 encode::EncodeQuestion {
                     name: &name,
                     qtype: question.qtype,
                     qclass: question.qclass,
                 },
-                &[answer],
+                &records,
                 &mut response,
             )
             .expect("encode upstream response");
@@ -264,6 +266,30 @@ fn shipped_binary_serves_udp_datagrams_and_tcp_frames() {
         parse_message(&udp_response[..cached_length]).expect("parse cached UDP response");
     assert_eq!(cached_message.header.id, 0x1008);
     assert_eq!(cached_message.answers().count(), 1);
+
+    let negative_query = query(0x100E, "negative.example.");
+    udp.send_to(&negative_query, listener_addr)
+        .expect("send negative UDP query");
+    let (negative_length, _) = udp
+        .recv_from(&mut udp_response)
+        .expect("receive negative UDP response");
+    let negative_message =
+        parse_message(&udp_response[..negative_length]).expect("parse negative UDP response");
+    assert_eq!(negative_message.header.id, 0x100E);
+    assert_eq!(negative_message.header.flags.rcode(), 3);
+    assert!(negative_message.answers().next().is_none());
+
+    let cached_negative_query = query(0x100F, "negative.example.");
+    udp.send_to(&cached_negative_query, listener_addr)
+        .expect("send cached negative UDP query");
+    let (cached_negative_length, _) = udp
+        .recv_from(&mut udp_response)
+        .expect("receive cached negative UDP response");
+    let cached_negative_message = parse_message(&udp_response[..cached_negative_length])
+        .expect("parse cached negative UDP response");
+    assert_eq!(cached_negative_message.header.id, 0x100F);
+    assert_eq!(cached_negative_message.header.flags.rcode(), 3);
+    assert!(cached_negative_message.answers().next().is_none());
 
     let tcp_reject_query = query(0x1005, "blocked.example.");
     tcp.write_all(
