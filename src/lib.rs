@@ -3725,6 +3725,7 @@ mod runtime {
 
     pub struct Policy {
         config: Config,
+        capture_original_destination: Option<SocketAddr>,
         base_rules: Live<Vec<RuleConfig>>,
         base_rules_control: LiveControl<Vec<RuleConfig>>,
         explicit_rules: Live<Vec<RuleConfig>>,
@@ -3925,6 +3926,19 @@ mod runtime {
 
     impl Policy {
         pub fn new(mut config: Config) -> Result<Self, policy::PolicyError> {
+            let capture_original_destination = if config.capture.enabled {
+                Some(
+                    config
+                        .capture
+                        .original_destination
+                        .parse()
+                        .map_err(|error| policy::PolicyError::InvalidAdmission {
+                            reason: format!("capture original_destination is invalid: {error}"),
+                        })?,
+                )
+            } else {
+                None
+            };
             validate_dhcp(&config.dhcp)?;
             if config.cache.max_ttl_secs == 0 {
                 return Err(policy::PolicyError::InvalidCache {
@@ -4241,6 +4255,7 @@ mod runtime {
                 live(config.privacy.query_recording_redaction);
             let policy = Self {
                 config,
+                capture_original_destination,
                 base_rules,
                 base_rules_control,
                 explicit_rules,
@@ -4348,11 +4363,7 @@ mod runtime {
         /// destination is configuration/payload data, not listener state, so
         /// UDP and TCP adapters share the same source of truth.
         pub(crate) fn configured_original_destination(&self) -> Option<SocketAddr> {
-            self.config
-                .capture
-                .enabled
-                .then(|| self.config.capture.original_destination.parse().ok())
-                .flatten()
+            self.capture_original_destination
         }
 
         /// Attach a Proxima recording backend behind its bounded recording

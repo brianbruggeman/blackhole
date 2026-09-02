@@ -604,6 +604,23 @@ mod tests {
     }
 
     #[test]
+    fn enabled_capture_rejects_an_invalid_destination_at_policy_construction() {
+        let mut config = Config::default();
+        config.capture.enabled = true;
+        config.capture.original_destination = "not-a-socket-address".into();
+
+        let error = match Policy::new(config) {
+            Ok(_) => panic!("invalid capture destination was accepted"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error,
+            crate::policy::PolicyError::InvalidAdmission { reason }
+                if reason.contains("capture original_destination is invalid")
+        ));
+    }
+
+    #[test]
     fn universal_listener_drives_udp_and_tcp_adapters_into_the_fsm() {
         let mut config = Config::default();
         config.policy.rules = vec![crate::RuleConfig {
