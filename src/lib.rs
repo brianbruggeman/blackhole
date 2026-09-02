@@ -9661,6 +9661,11 @@ mod runtime {
                         if let Some(action) = self.cname_target_action(&query, &answer, client) {
                             self.observe_failure("upstream_cname_policy");
                             self.observe_for_client(action, client);
+                            if matches!(action, Action::Drop | Action::Ignore) {
+                                return Err(ProximaError::Upstream(
+                                    "upstream CNAME target policy suppressed the response".into(),
+                                ));
+                            }
                             if let Some(answer) = self.cname_policy_answer(&query, action) {
                                 return Ok(DnsPipeReply::typed(200, answer));
                             }
