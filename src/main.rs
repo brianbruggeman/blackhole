@@ -1531,8 +1531,14 @@ async fn main() -> Result<(), ProximaError> {
             config_reload_interval
         );
     }
-    let server = match Listener::builder()
-        .bind(bind)
+    let mut listener = Listener::builder().bind(bind);
+    if capture_config.enabled {
+        listener = listener.spec(
+            "blackhole-original-destination",
+            serde_json::Value::String(capture_config.original_destination.clone()),
+        );
+    }
+    let server = match listener
         .any()
         .protocol(UdpProtocol::new(Arc::clone(&policy)))
         .protocol(TcpProtocol::new(Arc::clone(&policy)))
