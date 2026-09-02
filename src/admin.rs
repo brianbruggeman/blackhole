@@ -112,7 +112,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <meta charset="utf-8">
 <title>Blackhole</title>
 <h1>Blackhole</h1>
-<p><button id="clear-logs">Clear log</button> <button id="verify-durable-logs">Verify durable log</button> <button id="clear-durable-logs">Delete durable log</button> <button id="clear-stats">Clear stats</button> <button id="clear-cache">Clear cache</button> <button id="clear-abuse">Clear abuse</button> <button id="revoke-global-abuse">Revoke global abuse</button> <button id="reload-blocklists-top">Reload lists</button> <button id="reload-country">Reload country</button> <button id="reload-admission">Reload admission</button> <button id="reload-bundle">Publish config</button> <button id="toggle-filtering">Toggle filtering</button></p>
+<p><button id="clear-logs">Clear log</button> <button id="verify-durable-logs">Verify durable log</button> <button id="clear-durable-logs">Delete durable log</button> <button id="clear-stats">Clear stats</button> <button id="clear-cache">Clear cache</button> <button id="clear-abuse">Clear abuse</button> <button id="revoke-global-abuse">Revoke global abuse</button> <button id="reload-blocklists-top">Reload lists</button> <button id="reload-hosts">Reload hosts</button> <button id="reload-country">Reload country</button> <button id="reload-admission">Reload admission</button> <button id="reload-bundle">Publish config</button> <button id="toggle-filtering">Toggle filtering</button></p>
 <p id="operation-status"></p>
 <h2>Status</h2><pre id="status"></pre>
 <h2>Stats</h2><pre id="stats"></pre>
@@ -300,6 +300,7 @@ document.querySelector('#validate-regex').onclick = () => editArray('#regex-edit
 document.querySelector('#upsert-regex').onclick = () => editArray('#regex-editor', '/reload/regex/upsert');
 for (const id of ['reload-blocklists-top', 'reload-blocklists']) document.querySelector(`#${id}`).onclick = () => operate('/reload/blocklists', {method:'POST'}).then(refresh);
 document.querySelector('#reload-country').onclick = () => operate('/reload/country', {method:'POST'}).then(refresh);
+document.querySelector('#reload-hosts').onclick = () => operate('/reload/hosts', {method:'POST'}).then(refresh);
 document.querySelector('#reload-admission').onclick = () => operate('/reload/admission', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#admission-config').value}).then(refresh);
 document.querySelector('#reload-bundle').onclick = () => operate('/reload/config', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#policy-bundle').value}).then(refresh);
 document.querySelector('#validate-bundle').onclick = () => operate('/validate/policy-bundle', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#policy-bundle').value});
@@ -1356,6 +1357,18 @@ impl SendPipe for AdminHandler {
                     serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
                 ))),
             },
+            ("POST", "/reload/hosts") => match self.policy.reload_hosts_if_changed() {
+                Ok(crate::snapshot::ReloadState::Published) => {
+                    Ok(Response::ok("{\"status\":\"reloaded\"}"))
+                }
+                Ok(crate::snapshot::ReloadState::Unchanged) => {
+                    Ok(Response::ok("{\"status\":\"unchanged\"}"))
+                }
+                Err(error) => Ok(Response::new(422).with_body(format!(
+                    "{{\"status\":\"error\",\"message\":{}}}",
+                    serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                ))),
+            },
             ("POST", "/reload/policy" | "/reload/policy/add" | "/reload/policy/upsert") => {
                 if request.payload.len() > MAX_POLICY_BODY_BYTES {
                     return Ok(Response::new(413));
@@ -1691,6 +1704,7 @@ impl SendPipe for AdminHandler {
                 | "/reload/blocklists/enable"
                 | "/reload/blocklists/disable"
                 | "/reload/country"
+                | "/reload/hosts"
                 | "/reload/policy"
                 | "/reload/policy/add"
                 | "/reload/policy/upsert"
@@ -1851,6 +1865,11 @@ mod tests {
             ui.payload
                 .windows(b"/reload/country".len())
                 .any(|window| window == b"/reload/country")
+        );
+        assert!(
+            ui.payload
+                .windows(b"/reload/hosts".len())
+                .any(|window| window == b"/reload/hosts")
         );
         assert!(
             ui.payload
@@ -4268,6 +4287,38 @@ mod tests {
             reload.payload,
             Bytes::from_static(b"{\"status\":\"unchanged\"}")
         );
+    }
+
+    #[test]
+    fn hosts_reload_route_publishes_and_reports_unchanged() {
+        let path = std::env::temp_dir().join(format!(
+            "blackhole-admin-hosts-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        std::fs::write(&path, "192.0.2.44 admin-host.example\n").expect("write hosts source");
+        let mut config = crate::Config::default();
+        config.policy.hosts_path = Some(path.to_string_lossy().into_owned());
+        let policy = Arc::new(Policy::new(config).expect("hosts policy"));
+        let handler = AdminHandler::new(policy);
+
+        let first = block_on(handler.call(request("POST", "/reload/hosts")))
+            .expect("hosts reload response");
+        assert_eq!(first.status, 200);
+        assert_eq!(
+            first.payload,
+            Bytes::from_static(b"{\"status\":\"unchanged\"}")
+        );
+
+        std::fs::write(&path, "192.0.2.45 admin-host.example\n").expect("replace hosts source");
+        let second = block_on(handler.call(request("POST", "/reload/hosts")))
+            .expect("changed hosts reload response");
+        assert_eq!(second.status, 200);
+        assert_eq!(
+            second.payload,
+            Bytes::from_static(b"{\"status\":\"reloaded\"}")
+        );
+        std::fs::remove_file(path).expect("remove hosts source");
     }
 
     #[test]

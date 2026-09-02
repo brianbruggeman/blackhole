@@ -94,7 +94,8 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Bounded startup loading of standard hosts files through `policy.hosts_path`
   into local A/AAAA rewrites, including comments, multiple names per address,
   explicit-rewrite precedence, fail-closed path, line, file, name, and entry
-  bounds, and optional bounded Proxima interval reload with last-good retention.
+  bounds, optional bounded Proxima interval reload with last-good retention,
+  and an authenticated manual reload operation with unchanged/error results.
 - Named service-blocking profiles compile into the authoritative rule table,
   with bounded domains, optional IPv4/IPv6 client-network scopes, stable
   generated IDs, independent qtype/qclass filters, optional adapter-owned

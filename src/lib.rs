@@ -4431,7 +4431,6 @@ mod runtime {
             let legacy_mode = config.policy.mode;
             let default_action = config.policy.default_action;
             let filtering_enabled = config.policy.filtering_enabled;
-            let rewrite_configs = config.policy.rewrites.clone();
             let admission = config.admission.clone();
             let country_policy_config = config.country_policy.clone();
             let (client_identities, client_identity_control) = live(client_identities);

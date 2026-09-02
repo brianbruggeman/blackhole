@@ -356,6 +356,8 @@ managed denylist), bounded
 `GET /abuse/incidents` (redacted bounded incident review), bounded
 `GET /abuse/incidents/export` (bounded durable incident export), bounded
 `POST /reload/country` (returns `reloaded` or `unchanged`), bounded
+`POST /reload/hosts` (manually reloads the configured hosts source and retains
+the last valid rewrite snapshot on failure), bounded
 `POST /reload/policy` (a JSON array of complete rule objects; each rule may
 set `enabled` to retain it without matching), bounded
 `POST /reload/country/replace` (an atomic country/CIDR selector and map
