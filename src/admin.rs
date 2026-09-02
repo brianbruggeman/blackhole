@@ -985,7 +985,12 @@ impl SendPipe for AdminHandler {
                     }
                 };
                 match self.policy.reload_regex_rules(&rules) {
-                    Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
+                    Ok(crate::snapshot::ReloadState::Published) => {
+                        Ok(Response::ok("{\"status\":\"reloaded\"}"))
+                    }
+                    Ok(crate::snapshot::ReloadState::Unchanged) => {
+                        Ok(Response::ok("{\"status\":\"unchanged\"}"))
+                    }
                     Err(error) => Ok(Response::new(422).with_body(format!(
                         "{{\"status\":\"error\",\"message\":{}}}",
                         serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
@@ -2843,6 +2848,17 @@ mod tests {
             .expect("valid regex request");
         let response = block_on(handler.call(valid)).expect("regex reload response");
         assert_eq!(response.status, 200);
+        let unchanged = Request::builder()
+            .method("POST")
+            .path("/reload/regex")
+            .payload(
+                r#"[{"id":9,"pattern":"^blocked\\.example$","action":"nxdomain","priority":0,"qtype":null,"qclass":null,"client":null}]"#,
+            )
+            .build()
+            .expect("unchanged regex request");
+        let response = block_on(handler.call(unchanged)).expect("unchanged regex response");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.payload.as_ref(), br#"{"status":"unchanged"}"#);
         let mut query_wire = vec![0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0];
         query_wire.extend_from_slice(b"\x07blocked\x07example\0\0\x01\0\x01");
         let query = crate::query::QueryView::parse(&query_wire).expect("query");

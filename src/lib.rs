@@ -4474,6 +4474,10 @@ mod runtime {
             let started = Instant::now();
             let rule_ids = self.reference.rule_ids();
             let compiled = compile_regex_rules(configs, rule_ids)?;
+            if self.regex_rule_configs() == configs {
+                self.observe_reload_latency("regex_unchanged", started);
+                return Ok(ReloadState::Unchanged);
+            }
             self.regex_rules_control.replace(compiled);
             self.rules_configured.store(
                 self.domain_rules_configured.load(Ordering::Acquire) || !configs.is_empty(),
