@@ -58,10 +58,10 @@ fn request(
     query: proxima_dns::DnsQuery,
     tcp: bool,
     peer: Option<PeerInfo>,
-    original_destination: Option<SocketAddr>,
+    payload: CapturedDnsPayload<'_>,
 ) -> proxima_dns::DnsPipeRequest {
     let mut metadata = HeaderList::new();
-    if let Some(destination) = original_destination {
+    if let Some(destination) = payload.original_destination {
         metadata.insert(ORIGINAL_DESTINATION_METADATA, destination.to_string());
     }
     Request {
@@ -87,19 +87,40 @@ struct ListenerLatency<'policy> {
     started: Instant,
 }
 
+/// Adapter-owned DNS payload. The wire bytes and transparent-capture
+/// destination travel together until the request is projected into the
+/// existing Proxima metadata envelope. Keeping the destination here avoids
+/// making it listener state and leaves room for platform receive adapters to
+/// supply a per-datagram or per-connection value.
+#[derive(Debug, Clone, Copy)]
+struct CapturedDnsPayload<'packet> {
+    bytes: &'packet [u8],
+    original_destination: Option<SocketAddr>,
+}
+
+impl<'packet> CapturedDnsPayload<'packet> {
+    const fn new(bytes: &'packet [u8], original_destination: Option<SocketAddr>) -> Self {
+        Self {
+            bytes,
+            original_destination,
+        }
+    }
+}
+
 impl Drop for ListenerLatency<'_> {
     fn drop(&mut self) {
         self.policy.observe_listener_latency(self.started.elapsed());
     }
 }
 
-async fn decide<'a>(
+async fn decide_payload<'a>(
     policy: &Policy,
     mut state: DecisionState<'a>,
-    packet: &'a [u8],
+    payload: CapturedDnsPayload<'a>,
     peer: Option<PeerInfo>,
     tcp: bool,
 ) -> Result<Option<(Vec<u8>, DecisionState<'a>)>, ProximaError> {
+    let packet = payload.bytes;
     let _latency = ListenerLatency {
         policy,
         started: Instant::now(),
@@ -152,12 +173,7 @@ async fn decide<'a>(
         })?;
     }
 
-    let request = request(
-        query.clone(),
-        tcp,
-        peer.clone(),
-        policy.configured_original_destination(),
-    );
+    let request = request(query.clone(), tcp, peer.clone(), payload);
     let answer = policy
         .call_owned(request, action)
         .await
@@ -264,6 +280,24 @@ async fn decide<'a>(
     Ok(Some((output, state)))
 }
 
+#[cfg(test)]
+async fn decide<'a>(
+    policy: &Policy,
+    state: DecisionState<'a>,
+    packet: &'a [u8],
+    peer: Option<PeerInfo>,
+    tcp: bool,
+) -> Result<Option<(Vec<u8>, DecisionState<'a>)>, ProximaError> {
+    decide_payload(
+        policy,
+        state,
+        CapturedDnsPayload::new(packet, policy.configured_original_destination()),
+        peer,
+        tcp,
+    )
+    .await
+}
+
 fn advance_partial_tcp_state(policy: &Policy, input: &[u8]) -> Result<(), ProximaError> {
     let state = DecisionState::received(input)
         .transition(Event::BeginParse)
@@ -344,7 +378,11 @@ impl AnyProtocol for UdpProtocol {
                 return Ok(());
             }
             let state = DecisionState::received(&packet);
-            if let Some((reply, state)) = decide(&self.policy, state, &packet, peer, false).await? {
+            let payload =
+                CapturedDnsPayload::new(&packet, self.policy.configured_original_destination());
+            if let Some((reply, state)) =
+                decide_payload(&self.policy, state, payload, peer, false).await?
+            {
                 stream.write_all(&reply).await.map_err(|error| {
                     self.policy.observe_failure("transport_write");
                     ProximaError::Io(error)
@@ -422,8 +460,10 @@ impl AnyProtocol for TcpProtocol {
                 } else {
                     DecisionState::received(&frame)
                 };
+                let payload =
+                    CapturedDnsPayload::new(&frame, self.policy.configured_original_destination());
                 if let Some((reply, responding)) =
-                    decide(&self.policy, state, &frame, peer.clone(), true).await?
+                    decide_payload(&self.policy, state, payload, peer.clone(), true).await?
                 {
                     let length = u16::try_from(reply.len()).map_err(|_| {
                         self.policy.observe_failure("frame_overflow");
@@ -572,10 +612,6 @@ mod tests {
 
     #[test]
     fn capture_destination_is_carried_as_request_metadata_for_both_transports() {
-        let mut config = Config::default();
-        config.capture.enabled = true;
-        config.capture.original_destination = "192.0.2.53:53".into();
-        let policy = Policy::new(config).expect("valid capture configuration");
         let query = proxima_dns::DnsQuery {
             id: 7,
             recursion_desired: true,
@@ -583,16 +619,16 @@ mod tests {
             qtype: 1,
             qclass: 1,
         };
-        for tcp in [false, true] {
+        for (tcp, destination) in [(false, "192.0.2.53:53"), (true, "192.0.2.54:53")] {
             let request = request(
                 query.clone(),
                 tcp,
                 None,
-                policy.configured_original_destination(),
+                CapturedDnsPayload::new(&[], Some(destination.parse().expect("destination"))),
             );
             assert_eq!(
                 request.metadata.get_str(ORIGINAL_DESTINATION_METADATA),
-                Some("192.0.2.53:53")
+                Some(destination)
             );
         }
         assert_eq!(
