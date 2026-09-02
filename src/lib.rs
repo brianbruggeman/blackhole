@@ -3913,6 +3913,12 @@ mod runtime {
         ) -> Result<ReloadState, policy::PolicyError> {
             let _reload = self.reload_lock.write().expect("reload lock");
             let started = Instant::now();
+            if self.profiles.read(|current| current == profiles)
+                && self.client_groups.read(|current| current == client_groups)
+            {
+                self.observe_reload_latency("profiles_unchanged", started);
+                return Ok(ReloadState::Unchanged);
+            }
             let generated = compile_profiles(profiles, client_groups)?;
             let explicit = self.explicit_rules.snapshot().as_ref().clone();
             let mut combined = explicit.clone();

@@ -672,7 +672,12 @@ impl SendPipe for AdminHandler {
                     .policy
                     .reload_profiles(&update.profiles, &update.client_groups)
                 {
-                    Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
+                    Ok(crate::snapshot::ReloadState::Published) => {
+                        Ok(Response::ok("{\"status\":\"reloaded\"}"))
+                    }
+                    Ok(crate::snapshot::ReloadState::Unchanged) => {
+                        Ok(Response::ok("{\"status\":\"unchanged\"}"))
+                    }
                     Err(error) => Ok(Response::new(422).with_body(format!(
                         "{{\"status\":\"error\",\"message\":{}}}",
                         serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
@@ -2204,6 +2209,24 @@ mod tests {
         let profiles: serde_json::Value =
             serde_json::from_slice(&profiles.payload).expect("profiles JSON");
         assert_eq!(profiles["total"], 0);
+    }
+
+    #[test]
+    fn profile_reload_reports_an_unchanged_snapshot() {
+        let policy = Arc::new(Policy::new(crate::Config::default()).expect("default policy"));
+        let handler = AdminHandler::new(policy);
+        let request = Request::builder()
+            .method("POST")
+            .path("/reload/profiles")
+            .payload(r#"{"profiles":[],"client_groups":[]}"#)
+            .build()
+            .expect("profile replacement request");
+        let response = block_on(handler.call(request)).expect("profile reload response");
+        assert_eq!(response.status, 200);
+        assert_eq!(
+            response.payload,
+            Bytes::from_static(b"{\"status\":\"unchanged\"}")
+        );
     }
 
     #[test]
