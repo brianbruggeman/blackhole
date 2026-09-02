@@ -124,6 +124,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <h2>Policy preview</h2><textarea id="policy-preview" rows="4" cols="80">{"name":"example.","qtype":1,"qclass":1}</textarea><button id="preview-policy">Preview</button><pre id="policy-preview-result"></pre>
 <h2>Blocklists</h2><textarea id="blocklist-sources"></textarea><button id="replace-blocklists">Replace</button><button id="add-blocklists">Add</button><button id="remove-blocklists">Remove</button><button id="reload-blocklists">Reload</button><div id="blocklist-controls"></div><pre id="blocklists"></pre>
 <h2>Allowlist</h2><textarea id="allowlist-editor" rows="5" cols="80"></textarea><button id="replace-allowlist">Replace allowlist</button><pre id="allowlist-status"></pre>
+<h2>Identity allowlists</h2><textarea id="identity-allowlist-editor" rows="5" cols="80"></textarea><button id="replace-identity-allowlist">Replace identity allowlist</button>
 <h2>Blocklist groups</h2><textarea id="blocklist-groups-editor" rows="5" cols="80"></textarea><button id="replace-blocklist-groups">Replace assignments</button>
 <h2>Country</h2><textarea id="country-editor" rows="8" cols="80"></textarea><button id="replace-country">Replace country policy</button><pre id="country-status"></pre>
 <textarea id="country-preview" rows="2" cols="40">{"client":"192.0.2.10"}</textarea><button id="preview-country">Preview client</button><pre id="country-preview-result"></pre>
@@ -195,6 +196,7 @@ const load = (path, target) => fetch(path).then(response => response.json()).the
     document.querySelector('#identity-editor').value = JSON.stringify(value.client_identities || [], null, 2);
     document.querySelector('#country-editor').value = JSON.stringify(value.country_policy || {}, null, 2);
     document.querySelector('#allowlist-editor').value = JSON.stringify(value.domains || [], null, 2);
+    document.querySelector('#identity-allowlist-editor').value = JSON.stringify(value.allowlist_by_identity || {}, null, 2);
     document.querySelector('#blocklist-groups-editor').value = JSON.stringify(value.groups || {}, null, 2);
     document.querySelector('#rewrite-editor').value = JSON.stringify(value.rewrites || [], null, 2);
     document.querySelector('#rule-editor').value = JSON.stringify(value.rules || [], null, 2);
@@ -241,6 +243,14 @@ const replaceRewrites = () => {
   try { return operate('/reload/rewrites', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#rewrite-editor').value}).then(refresh); }
   catch (error) { document.querySelector('#operation-status').textContent = `/reload/rewrites: ${error.message}`; return Promise.reject(error); }
 };
+const replaceIdentityAllowlists = () => {
+  try {
+    const allowlist_by_identity = JSON.parse(document.querySelector('#identity-allowlist-editor').value);
+    return fetch('/policy-bundle').then(response => response.json()).then(bundle =>
+      operate('/reload/policy-bundle', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(Object.assign({}, bundle, {allowlist_by_identity}))})
+    ).then(refresh);
+  } catch (error) { document.querySelector('#operation-status').textContent = `/reload/policy-bundle: ${error.message}`; return Promise.reject(error); }
+};
 const previewPolicy = () => {
   try {
     return operate('/policy/preview', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#policy-preview').value})
@@ -280,6 +290,7 @@ document.querySelector('#upsert-groups').onclick = () => edit('#group-editor', '
 document.querySelector('#upsert-identities').onclick = () => edit('#identity-editor', '/reload/client-identities/upsert', 'client_identities');
 document.querySelector('#replace-country').onclick = replaceCountry;
 document.querySelector('#replace-allowlist').onclick = () => operate('/reload/allowlist', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#allowlist-editor').value}).then(refresh);
+document.querySelector('#replace-identity-allowlist').onclick = replaceIdentityAllowlists;
 document.querySelector('#replace-blocklist-groups').onclick = () => operate('/reload/blocklist-groups', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#blocklist-groups-editor').value}).then(refresh);
 document.querySelector('#replace-rewrites').onclick = replaceRewrites;
 document.querySelector('#upsert-rewrites').onclick = () => edit('#rewrite-editor', '/reload/rewrites/upsert', 'rewrites');
