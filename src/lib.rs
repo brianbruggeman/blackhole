@@ -4091,7 +4091,8 @@ mod runtime {
                     return Err(policy::PolicyError::DuplicateRule { id: profile.id });
                 }
             }
-            let mut profiles = self.profiles.snapshot().as_ref().clone();
+            let current_profiles = self.profiles.snapshot().as_ref().clone();
+            let mut profiles = current_profiles.clone();
             for update in updates {
                 if let Some(existing) = profiles.iter_mut().find(|profile| profile.id == update.id)
                 {
@@ -4105,6 +4106,10 @@ mod runtime {
             let explicit = self.explicit_rules.snapshot().as_ref().clone();
             let mut combined = explicit.clone();
             combined.extend(generated);
+            if profiles == current_profiles {
+                self.observe_reload_latency("profiles_upsert_unchanged", started);
+                return Ok(ReloadState::Unchanged);
+            }
             let published =
                 self.publish_rules_locked(&combined, &explicit, "profiles_upsert", started)?;
             self.profiles_control.replace(profiles);

@@ -719,7 +719,12 @@ impl SendPipe for AdminHandler {
                     }
                 };
                 match self.policy.upsert_profiles(&update.profiles) {
-                    Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
+                    Ok(crate::snapshot::ReloadState::Published) => {
+                        Ok(Response::ok("{\"status\":\"reloaded\"}"))
+                    }
+                    Ok(crate::snapshot::ReloadState::Unchanged) => {
+                        Ok(Response::ok("{\"status\":\"unchanged\"}"))
+                    }
                     Err(error) => Ok(Response::new(422).with_body(format!(
                         "{{\"status\":\"error\",\"message\":{}}}",
                         serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
@@ -2440,6 +2445,17 @@ mod tests {
             .expect("profile upsert request");
         let response = block_on(handler.call(update)).expect("profile upsert response");
         assert_eq!(response.status, 200);
+        let unchanged = Request::builder()
+            .method("POST")
+            .path("/reload/profiles/upsert")
+            .payload(
+                r#"{"profiles":[{"id":800,"name":"family-edited","domains":["new.example"],"action":"reject","client_identity":"family-router"},{"id":801,"name":"guest","domains":["guest.example"],"action":"drop","enabled":false}]}"#,
+            )
+            .build()
+            .expect("unchanged profile upsert request");
+        let response = block_on(handler.call(unchanged)).expect("unchanged profile response");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.payload.as_ref(), br#"{"status":"unchanged"}"#);
         let profiles =
             block_on(handler.call(request("GET", "/profiles"))).expect("profile listing");
         let profiles: serde_json::Value =
