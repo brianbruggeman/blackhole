@@ -3261,6 +3261,8 @@ mod runtime {
         client_groups_control: LiveControl<Vec<ClientGroupConfig>>,
         client_identities: Live<Vec<ClientIdentityConfig>>,
         client_identity_control: LiveControl<Vec<ClientIdentityConfig>>,
+        allowlist: Live<Vec<String>>,
+        allowlist_control: LiveControl<Vec<String>>,
         country_policy: Live<Option<CountryPolicy>>,
         country_policy_control: LiveControl<Option<CountryPolicy>>,
         country_policy_config: Live<CountryPolicyConfig>,
@@ -3656,6 +3658,7 @@ mod runtime {
             let admission = config.admission.clone();
             let country_policy_config = config.country_policy.clone();
             let (client_identities, client_identity_control) = live(client_identities);
+            let (allowlist, allowlist_control) = live(config.policy.allowlist.clone());
             let (country_policy, country_policy_control) = live(country_policy);
             let (country_policy_config, country_policy_config_control) =
                 live(country_policy_config);
@@ -3704,6 +3707,8 @@ mod runtime {
                 client_groups_control,
                 client_identities,
                 client_identity_control,
+                allowlist,
+                allowlist_control,
                 country_policy,
                 country_policy_control,
                 country_policy_config,
@@ -3868,7 +3873,7 @@ mod runtime {
             let _ = filtering_enabled;
             legacy_domains.map(validate_legacy_domains).transpose()?;
             let mut generated = compile_profiles(profiles, client_groups)?;
-            generated.extend(compile_allowlist(&self.config.policy.allowlist)?);
+            generated.extend(compile_allowlist(self.allowlist.snapshot().as_ref())?);
             let _ = validate_client_identities(client_identities)?;
             let _ = compile_rewrites(rewrite_configs)?;
             let _ = load_country_policy(country_config)?;
@@ -4293,11 +4298,38 @@ mod runtime {
             self.publish_rules_locked(&combined, &next, "rules_remove", started)
         }
 
+        /// Atomically replace the first-class allowlist and republish the
+        /// generated pass rules alongside the current explicit and profile
+        /// rules. Invalid input leaves the existing live snapshot intact.
+        pub fn replace_allowlist(
+            &self,
+            domains: &[String],
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
+            let started = Instant::now();
+            if self.allowlist.read(|current| current == domains) {
+                self.observe_reload_latency("allowlist_unchanged", started);
+                return Ok(ReloadState::Unchanged);
+            }
+            let allowlist_rules = compile_allowlist(domains)?;
+            let profiles = self.profiles.snapshot();
+            let groups = self.client_groups.snapshot();
+            let mut generated = compile_profiles(&profiles, &groups)?;
+            generated.extend(allowlist_rules);
+            let explicit = self.explicit_rules.snapshot().as_ref().clone();
+            let mut combined = explicit.clone();
+            combined.extend(generated);
+            let published =
+                self.publish_rules_locked(&combined, &explicit, "allowlist", started)?;
+            self.allowlist_control.replace(domains.to_vec());
+            Ok(published)
+        }
+
         fn current_profile_rules(&self) -> Result<Vec<RuleConfig>, policy::PolicyError> {
             let profiles = self.profiles.snapshot();
             let client_groups = self.client_groups.snapshot();
             let mut rules = compile_profiles(&profiles, &client_groups)?;
-            rules.extend(compile_allowlist(&self.config.policy.allowlist)?);
+            rules.extend(compile_allowlist(self.allowlist.snapshot().as_ref())?);
             Ok(rules)
         }
 
@@ -4794,7 +4826,7 @@ mod runtime {
                 return Ok(ReloadState::Unchanged);
             }
             let mut generated = compile_profiles(profiles, client_groups)?;
-            generated.extend(compile_allowlist(&self.config.policy.allowlist)?);
+            generated.extend(compile_allowlist(self.allowlist.snapshot().as_ref())?);
             let explicit = self.explicit_rules.snapshot().as_ref().clone();
             let mut combined = explicit.clone();
             combined.extend(generated);
@@ -4931,7 +4963,7 @@ mod runtime {
             }
             let profiles = self.profiles.snapshot().as_ref().clone();
             let mut generated = compile_profiles(&profiles, &groups)?;
-            generated.extend(compile_allowlist(&self.config.policy.allowlist)?);
+            generated.extend(compile_allowlist(self.allowlist.snapshot().as_ref())?);
             let explicit = self.explicit_rules.snapshot().as_ref().clone();
             let mut combined = explicit.clone();
             combined.extend(generated);
@@ -4977,7 +5009,7 @@ mod runtime {
             }
             let groups = self.client_groups.snapshot().as_ref().clone();
             let mut generated = compile_profiles(&profiles, &groups)?;
-            generated.extend(compile_allowlist(&self.config.policy.allowlist)?);
+            generated.extend(compile_allowlist(self.allowlist.snapshot().as_ref())?);
             let explicit = self.explicit_rules.snapshot().as_ref().clone();
             let mut combined = explicit.clone();
             combined.extend(generated);
@@ -5014,7 +5046,7 @@ mod runtime {
             }
             let groups = self.client_groups.snapshot().as_ref().clone();
             let mut generated = compile_profiles(&profiles, &groups)?;
-            generated.extend(compile_allowlist(&self.config.policy.allowlist)?);
+            generated.extend(compile_allowlist(self.allowlist.snapshot().as_ref())?);
             let explicit = self.explicit_rules.snapshot().as_ref().clone();
             let mut combined = explicit.clone();
             combined.extend(generated);
@@ -5060,7 +5092,7 @@ mod runtime {
             }
             let profiles = self.profiles.snapshot().as_ref().clone();
             let mut generated = compile_profiles(&profiles, &groups)?;
-            generated.extend(compile_allowlist(&self.config.policy.allowlist)?);
+            generated.extend(compile_allowlist(self.allowlist.snapshot().as_ref())?);
             let explicit = self.explicit_rules.snapshot().as_ref().clone();
             let mut combined = explicit.clone();
             combined.extend(generated);
@@ -5166,7 +5198,7 @@ mod runtime {
             let normalized_legacy_domains =
                 legacy_domains.map(validate_legacy_domains).transpose()?;
             let mut generated = compile_profiles(profiles, client_groups)?;
-            generated.extend(compile_allowlist(&self.config.policy.allowlist)?);
+            generated.extend(compile_allowlist(self.allowlist.snapshot().as_ref())?);
             let client_identities = validate_client_identities(client_identities)?;
             self.validate_identity_upstreams(&client_identities)?;
             let rewrites = compile_rewrites(rewrite_configs)?;
@@ -7595,7 +7627,7 @@ mod runtime {
                 "profiles": profiles.len(),
                 "client_groups": client_groups.len(),
                 "identity_rules": identity_rules,
-                "allowlist_domains": self.config.policy.allowlist.len(),
+                "allowlist_domains": self.allowlist.read(Vec::len),
                 "conditional_forwards": self.config.policy.conditional_forwards.len(),
                 "country_entries": country_policy.as_ref().as_ref().map_or(0, |policy| policy.entries.len()),
                 "country_deny_rules": country_policy.as_ref().as_ref().map_or(0, |policy| policy.deny.len()),
@@ -7729,6 +7761,17 @@ mod runtime {
                 "disabled_source_count": disabled.len(),
                 "rule_count": rules.len(),
                 "reload_interval_secs": self.config.policy.blocklist_reload_interval_secs,
+                "policy_generation": self.policy_generation.load(Ordering::Acquire),
+            })
+            .to_string()
+        }
+
+        /// Return the authenticated operator's bounded live allowlist.
+        pub(crate) fn admin_allowlist(&self) -> String {
+            let domains = self.allowlist.snapshot();
+            serde_json::json!({
+                "domains": domains.as_ref(),
+                "count": domains.len(),
                 "policy_generation": self.policy_generation.load(Ordering::Acquire),
             })
             .to_string()
@@ -9090,6 +9133,38 @@ mod runtime {
                 0
             );
             std::fs::remove_file(path).expect("remove allowlist fixture");
+        }
+
+        #[test]
+        fn allowlist_control_replaces_atomically_and_rejects_invalid_updates() {
+            let mut config = Config::default();
+            config.policy.rules = vec![RuleConfig {
+                enabled: true,
+                id: 10,
+                domain: "blocked.example".into(),
+                action: Action::Nxdomain,
+                priority: 0,
+                qtype: None,
+                qtypes: Vec::new(),
+                qclass: None,
+                qclasses: Vec::new(),
+                client: None,
+                client_cidr: None,
+                client_cidrs: Vec::new(),
+                client_identity: None,
+            }];
+            let policy = Policy::new(config).expect("valid policy");
+            let domains = vec!["blocked.example".into()];
+            assert_eq!(
+                policy.replace_allowlist(&domains),
+                Ok(ReloadState::Published)
+            );
+            assert_eq!(
+                policy.admin_allowlist(),
+                r#"{"count":1,"domains":["blocked.example"],"policy_generation":2}"#
+            );
+            assert!(policy.replace_allowlist(&["bad domain".into()]).is_err());
+            assert_eq!(policy.allowlist.read(|current| current.clone()), domains);
         }
 
         #[test]

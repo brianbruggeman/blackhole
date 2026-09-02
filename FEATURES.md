@@ -63,7 +63,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   modifiers are rejected.
 - A bounded first-class allowlist covers each configured domain and its
   subdomains, takes precedence over ordinary generated blocklist entries, and
-  remains present across atomic policy reloads.
+  remains present across atomic policy reloads. Authenticated operators can
+  inspect it at `GET /allowlist` and atomically replace it with
+  `POST /reload/allowlist`.
 - Blocklist sources can be assigned to named client groups; assigned sources
   are excluded from the unscoped rule set and expand into bounded exact-client
   or CIDR-scoped rules, with disabled groups producing no active rules.

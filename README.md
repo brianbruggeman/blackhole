@@ -108,6 +108,10 @@ The global rate-limit whitelist is visible at authenticated
 `GET /abuse/rate-limit-whitelist` and is similarly manageable through
 authenticated `POST /abuse/rate-limit-whitelist/add` and
 `/abuse/rate-limit-whitelist/remove`
+
+The first-class domain allowlist is available at authenticated `GET /allowlist`
+and can be atomically replaced with a bounded JSON array using
+`POST /reload/allowlist`. Invalid domains leave the active allowlist unchanged.
 with bounded JSON CIDR arrays; it changes only the global ceiling exemption
 and is safe to retry.
 Set `[admission.ddos].persist_incidents = true` to persist temporary-blacklist

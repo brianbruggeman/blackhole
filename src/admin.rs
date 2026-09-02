@@ -115,6 +115,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <h2>Policy bundle</h2><textarea id="policy-bundle" rows="12" cols="80">loading…</textarea><button id="validate-bundle">Validate bundle</button>
 <h2>Policy preview</h2><textarea id="policy-preview" rows="4" cols="80">{"name":"example.","qtype":1,"qclass":1}</textarea><button id="preview-policy">Preview</button><pre id="policy-preview-result"></pre>
 <h2>Blocklists</h2><textarea id="blocklist-sources"></textarea><button id="replace-blocklists">Replace</button><button id="add-blocklists">Add</button><button id="remove-blocklists">Remove</button><button id="reload-blocklists">Reload</button><div id="blocklist-controls"></div><pre id="blocklists"></pre>
+<h2>Allowlist</h2><textarea id="allowlist-editor" rows="5" cols="80"></textarea><button id="replace-allowlist">Replace allowlist</button><pre id="allowlist-status"></pre>
 <h2>Country</h2><textarea id="country-editor" rows="8" cols="80"></textarea><button id="replace-country">Replace country policy</button><pre id="country-status"></pre>
 <textarea id="country-preview" rows="2" cols="40">{"client":"192.0.2.10"}</textarea><button id="preview-country">Preview client</button><pre id="country-preview-result"></pre>
 <h2>Privacy</h2><pre id="privacy-status"></pre><select id="r"><option value="metadata">metadata</option><option value="action_only">action only</option></select><button id="s">Apply</button>
@@ -184,6 +185,7 @@ const load = (path, target) => fetch(path).then(response => response.json()).the
     document.querySelector('#group-editor').value = JSON.stringify(value.client_groups || [], null, 2);
     document.querySelector('#identity-editor').value = JSON.stringify(value.client_identities || [], null, 2);
     document.querySelector('#country-editor').value = JSON.stringify(value.country_policy || {}, null, 2);
+    document.querySelector('#allowlist-editor').value = JSON.stringify(value.domains || [], null, 2);
     document.querySelector('#rewrite-editor').value = JSON.stringify(value.rewrites || [], null, 2);
     document.querySelector('#rule-editor').value = JSON.stringify(value.rules || [], null, 2);
     document.querySelector('#regex-editor').value = JSON.stringify(value.regex_rules || [], null, 2);
@@ -200,6 +202,7 @@ const load = (path, target) => fetch(path).then(response => response.json()).the
     document.querySelector('#rewrite-editor').value = JSON.stringify(value.rewrites || [], null, 2);
   }
   if (path === '/policy-bundle') document.querySelector(target).value = JSON.stringify(value, null, 2);
+  else if (path === '/allowlist') document.querySelector(target).value = JSON.stringify(value.domains || [], null, 2);
   else if (path === '/abuse/denylist' || path === '/abuse/rate-limit-whitelist') document.querySelector(target).value = JSON.stringify(value, null, 2);
   else document.querySelector(target).textContent = JSON.stringify(value, null, 2);
   if (path === '/admission/status') document.querySelector('#admission-config').value = JSON.stringify(value, null, 2);
@@ -239,7 +242,7 @@ const previewCountry = () => {
       .then(value => { document.querySelector('#country-preview-result').textContent = JSON.stringify(value, null, 2); });
   } catch (error) { document.querySelector('#operation-status').textContent = `/country/preview: ${error.message}`; return Promise.reject(error); }
 };
-const refresh = () => Promise.all([load('/status','#status'), load('/stats','#stats'), load('/admission/status','#admission-status'), load('/abuse/status','#abuse-status'), load('/abuse/incidents','#abuse-incidents'), load('/abuse/denylist','#denylist-config'), load('/abuse/rate-limit-whitelist','#rate-limit-whitelist-config'), load('/policy-bundle','#policy-bundle'), load('/blocklists','#blocklists'), load('/country/status','#country-status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/client-identities','#identities'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
+const refresh = () => Promise.all([load('/status','#status'), load('/stats','#stats'), load('/admission/status','#admission-status'), load('/abuse/status','#abuse-status'), load('/abuse/incidents','#abuse-incidents'), load('/abuse/denylist','#denylist-config'), load('/abuse/rate-limit-whitelist','#rate-limit-whitelist-config'), load('/policy-bundle','#policy-bundle'), load('/blocklists','#blocklists'), load('/allowlist','#allowlist-editor'), load('/country/status','#country-status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/client-identities','#identities'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
 document.querySelector('#preview-policy').onclick = previewPolicy;
 document.querySelector('#preview-country').onclick = previewCountry;
 document.querySelector('#clear-logs').onclick = () => operate('/logs/clear', {method:'POST'}).then(refresh);
@@ -265,6 +268,7 @@ document.querySelector('#upsert-profiles').onclick = () => edit('#profile-editor
 document.querySelector('#upsert-groups').onclick = () => edit('#group-editor', '/reload/client-groups/upsert', 'client_groups');
 document.querySelector('#upsert-identities').onclick = () => edit('#identity-editor', '/reload/client-identities/upsert', 'client_identities');
 document.querySelector('#replace-country').onclick = replaceCountry;
+document.querySelector('#replace-allowlist').onclick = () => operate('/reload/allowlist', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#allowlist-editor').value}).then(refresh);
 document.querySelector('#replace-rewrites').onclick = replaceRewrites;
 document.querySelector('#upsert-rewrites').onclick = () => edit('#rewrite-editor', '/reload/rewrites/upsert', 'rewrites');
 document.querySelector('#upsert-rules').onclick = () => editArray('#rule-editor', '/reload/policy/upsert');
@@ -673,6 +677,7 @@ impl SendPipe for AdminHandler {
                 Ok(Response::ok(format!("{{\"status\":\"{status}\"}}")))
             }
             ("GET", "/blocklists") => Ok(Response::ok(self.policy.admin_blocklists())),
+            ("GET", "/allowlist") => Ok(Response::ok(self.policy.admin_allowlist())),
             ("GET", "/policy-bundle") => Ok(Response::ok(self.policy.admin_policy_bundle())),
             ("GET", "/privacy/status") => Ok(Response::ok(self.policy.admin_privacy_status())),
             ("GET", "/rules") => Ok(Response::ok(self.policy.admin_rules())),
@@ -1074,6 +1079,33 @@ impl SendPipe for AdminHandler {
                     serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
                 ))),
             },
+            ("POST", "/reload/allowlist") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let domains = match serde_json::from_slice::<Vec<String>>(&request.payload) {
+                    Ok(domains) => domains,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                match self.policy.replace_allowlist(&domains) {
+                    Ok(crate::snapshot::ReloadState::Published) => {
+                        Ok(Response::ok("{\"status\":\"reloaded\"}"))
+                    }
+                    Ok(crate::snapshot::ReloadState::Unchanged) => {
+                        Ok(Response::ok("{\"status\":\"unchanged\"}"))
+                    }
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
             ("POST", "/reload/blocklists/enable" | "/reload/blocklists/disable") => {
                 if request.payload.len() > MAX_POLICY_BODY_BYTES {
                     return Ok(Response::new(413));
