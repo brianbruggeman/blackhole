@@ -7,10 +7,13 @@ if [ "${BLACKHOLE_SMOKE_TRACE:-}" = 1 ]; then
     set -x
 fi
 
-if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
-    echo "usage: $0 DEB [UPGRADE_DEB]" >&2
-    exit 2
-fi
+case "$#" in
+    1|2) ;;
+    *)
+        echo "usage: $0 DEB [UPGRADE_DEB]" >&2
+        exit 2
+        ;;
+esac
 
 package=$1
 upgrade_package=${2:-$package}
