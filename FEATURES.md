@@ -82,6 +82,11 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   or CIDR-scoped rules, with disabled groups producing no active rules.
   Authenticated operators can inspect assignments at `GET /blocklist-groups`
   and atomically replace them with `POST /reload/blocklist-groups`.
+- Blocklist sources can also be assigned to enabled client identities through
+  `policy.blocklists_by_identity`; assigned sources are excluded from the
+  global rule set and compiled into bounded identity-scoped rules. Authenticated
+  operators can inspect and atomically replace these assignments through
+  `GET /blocklists-by-identity` and `POST /reload/blocklists-by-identity`.
 - Bounded local A/AAAA/CNAME/PTR/TXT rewrites with exact and one-label wildcard
   matching, optional client-identity scope, identity-over-global precedence,
   explicit policy precedence, and fail-closed validation for malformed,
