@@ -103,8 +103,8 @@ mod runtime {
     use proxima_core::ProximaError;
     use proxima_core::live::{Live, LiveControl, live};
     use proxima_dns::{
-        DnsAnswer, DnsAnswerRecord, DnsAnswerWithMetadata, DnsClientUpstream, DnsPipeReply,
-        DnsPipeRequest,
+        DnsAnswer, DnsAnswerRecord, DnsAnswerWithMetadata, DnsClientError, DnsClientUpstream,
+        DnsPipeReply, DnsPipeRequest,
     };
     use proxima_primitives::pipe::AtomicCircuitBreaker as ProximaCircuitBreaker;
     use proxima_primitives::pipe::SendPipe;
@@ -5403,6 +5403,20 @@ mod runtime {
             self.validate_upstream_answer(query, &response.answer)
         }
 
+        fn upstream_failure_cause(error: &DnsClientError) -> &'static str {
+            match error {
+                DnsClientError::Timeout(_) => "upstream_timeout",
+                DnsClientError::Wire(_) => "upstream_wire_error",
+                DnsClientError::IdMismatch { .. } => "upstream_id_mismatch",
+                DnsClientError::Io(error) if error.kind() == std::io::ErrorKind::TimedOut => {
+                    "upstream_io_timeout"
+                }
+                DnsClientError::Io(_) => "upstream_io_error",
+                DnsClientError::Config(_) => "upstream_config_error",
+                _ => "upstream_error",
+            }
+        }
+
         /// Return the authoritative action for a validated borrowed query view.
         /// The wire adapter calls this before materializing the owned Proxima DNS
         /// request, so configured rules remain authoritative at the raw boundary.
@@ -6915,7 +6929,7 @@ mod runtime {
                             self.observe(forwarding_action);
                             return Ok(DnsPipeReply::typed(200, self.cap_answer(&query, answer)));
                         }
-                        self.observe_failure("upstream_error");
+                        self.observe_failure(Self::upstream_failure_cause(&error));
                         self.observe(forwarding_action);
                         return Err(ProximaError::Io(std::io::Error::other(error.to_string())));
                     }
@@ -10483,6 +10497,36 @@ mod runtime {
             policy.observe_latency(Duration::from_nanos(7));
             assert_eq!(telemetry.failures.load(Ordering::Relaxed), 1);
             assert_eq!(telemetry.latencies.load(Ordering::Relaxed), 1);
+        }
+
+        #[test]
+        fn upstream_failure_cause_preserves_typed_proxima_errors() {
+            assert_eq!(
+                Policy::upstream_failure_cause(&DnsClientError::Timeout(250)),
+                "upstream_timeout"
+            );
+            assert_eq!(
+                Policy::upstream_failure_cause(&DnsClientError::Wire("bad dns".into())),
+                "upstream_wire_error"
+            );
+            assert_eq!(
+                Policy::upstream_failure_cause(&DnsClientError::IdMismatch {
+                    expected: 7,
+                    reply: 8,
+                }),
+                "upstream_id_mismatch"
+            );
+            assert_eq!(
+                Policy::upstream_failure_cause(&DnsClientError::Io(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "deadline",
+                ))),
+                "upstream_io_timeout"
+            );
+            assert_eq!(
+                Policy::upstream_failure_cause(&DnsClientError::Config("bad transport".into())),
+                "upstream_config_error"
+            );
         }
 
         #[test]
