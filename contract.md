@@ -109,6 +109,12 @@ requests bypass fresh, negative, and stale response-cache reads and writes;
 upstream forwarding, bounded exchange admission, and fail-closed behavior
 remain active.
 
+An enabled client identity may set
+`max_response_bytes_per_network_per_second` to override the encoded response
+byte budget for its configured client network. An absent value inherits the
+global network budget; zero and values above the bounded identity ceiling fail
+configuration before publication.
+
 The authenticated `POST /country/preview` route performs the same kind of
 non-retaining dry-run for a client address against the live country map. It
 reports the matched country, region, ASN, and deny/observe results; it does
