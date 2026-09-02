@@ -175,7 +175,7 @@ jobs:
       - name: probe Debian package smoke capability
         id: debian-capability
         run: |
-          if sudo -n sh -c 'test "$(id -u)" = 0 && command -v dpkg >/dev/null && command -v dpkg-deb >/dev/null'; then
+          if sudo -n env PATH="$PATH" sh -c 'test "$(id -u)" = 0 && command -v dpkg >/dev/null && command -v dpkg-deb >/dev/null'; then
             echo 'available=true' >> "$GITHUB_OUTPUT"
           else
             echo 'available=false' >> "$GITHUB_OUTPUT"
@@ -190,7 +190,7 @@ jobs:
           new_package=$(find dist -name "blackhole_${package_version}_*.deb" -print -quit)
           test -n "$old_package" && test -n "$new_package"
           set -o pipefail
-          sudo -n sh -c \
+          sudo -n env PATH="$PATH" sh -c \
             'cd "$1" && BLACKHOLE_SMOKE_TRACE=1 deploy/package/smoke-deb.sh "$2" "$3"' \
             sh "$PWD" "$PWD/$old_package" "$PWD/$new_package" \
             2>&1 | tee debian-smoke.log
