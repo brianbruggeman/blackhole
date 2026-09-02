@@ -10717,10 +10717,18 @@ mod runtime {
             let address = server.local_addr().expect("freshness fixture address");
             let thread = std::thread::spawn(move || {
                 let (mut stream, _) = server.accept().expect("accept freshness request");
-                let mut request = [0_u8; 2048];
-                stream
-                    .read_exact(&mut request)
-                    .expect("read freshness request");
+                let mut request = Vec::with_capacity(2048);
+                let mut chunk = [0_u8; 256];
+                while request.len() < 2048 {
+                    let size = stream.read(&mut chunk).expect("read freshness request");
+                    if size == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&chunk[..size]);
+                    if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                        break;
+                    }
+                }
                 let body = b"US 192.0.2.0/24\n";
                 write!(
                     stream,
