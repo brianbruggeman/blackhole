@@ -498,8 +498,19 @@ pub mod native {
                     .filter(|part| !part.is_empty())
                     .collect::<Vec<_>>()
                     .join("\n");
-                Err(message)
+                Err(Self::explain_failure(message))
             }
+        }
+
+        fn explain_failure(message: String) -> String {
+            if message.contains("Could not process rule")
+                && (message.contains("redirect") || message.contains("dnat"))
+            {
+                return format!(
+                    "nftables NAT redirect capability is unavailable on this kernel: {message}"
+                );
+            }
+            message
         }
 
         fn remove_owned_chain(&self, plan: &NftRulePlan) -> Result<(), String> {
@@ -527,6 +538,26 @@ pub mod native {
             // table name is shared namespace; removing the whole table could
             // destroy unrelated operator-managed chains.
             self.remove_owned_chain(plan)
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::NftCommandBackend;
+
+        #[test]
+        fn nft_nat_capability_failures_are_actionable() {
+            let message = NftCommandBackend::explain_failure(
+                "Error: Could not process rule: No such file or directory\nredirect to :5353"
+                    .into(),
+            );
+            assert!(message.starts_with("nftables NAT redirect capability is unavailable"));
+        }
+
+        #[test]
+        fn unrelated_nft_failures_keep_their_original_detail() {
+            let message = "permission denied".to_owned();
+            assert_eq!(NftCommandBackend::explain_failure(message.clone()), message);
         }
     }
 }
