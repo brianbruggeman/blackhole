@@ -38,9 +38,6 @@ below are future capabilities, grouped by the dependency layer they extend.
   per-identity response-budget, and per-identity concurrency controls.
 - Add a separately isolated honeypot terminal with explicit retention and
   access controls.
-- Run the measured policy/codec WASM edge experiment under additional runtimes
-  beyond Node.js while retaining the existing bounded workload cells and
-  scalar fallback.
 
 ## Reference sources
 
