@@ -101,7 +101,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <h2>Blocklists</h2><textarea id="blocklist-sources"></textarea><button id="replace-blocklists">Replace</button><button id="add-blocklists">Add</button><button id="remove-blocklists">Remove</button><button id="reload-blocklists">Reload</button><div id="blocklist-controls"></div><pre id="blocklists"></pre>
 <h2>Country</h2><textarea id="country-editor" rows="8" cols="80"></textarea><button id="replace-country">Replace country policy</button><pre id="country-status"></pre>
 <h2>Privacy</h2><pre id="privacy-status"></pre><select id="r"><option value="metadata">metadata</option><option value="action_only">action only</option></select><button id="s">Apply</button>
-<h2>Rules</h2><textarea id="rule-editor" rows="8" cols="80"></textarea><button id="upsert-rules">Upsert domain rules</button><div id="rule-controls"></div><textarea id="regex-editor" rows="8" cols="80"></textarea><button id="upsert-regex">Upsert regex rules</button><div id="regex-controls"></div><pre id="rules"></pre>
+<h2>Rules</h2><textarea id="rule-editor" rows="8" cols="80"></textarea><button id="validate-rules">Validate domain rules</button><button id="upsert-rules">Upsert domain rules</button><div id="rule-controls"></div><textarea id="regex-editor" rows="8" cols="80"></textarea><button id="upsert-regex">Upsert regex rules</button><div id="regex-controls"></div><pre id="rules"></pre>
 <h2>Profiles</h2><textarea id="profile-editor" rows="8" cols="80"></textarea><button id="upsert-profiles">Upsert profiles</button><div id="profile-controls"></div><pre id="profiles"></pre>
 <h2>Groups</h2><textarea id="group-editor" rows="8" cols="80"></textarea><button id="upsert-groups">Upsert groups</button><div id="group-controls"></div><pre id="groups"></pre>
 <h2>Identities</h2><textarea id="identity-editor" rows="8" cols="80"></textarea><button id="upsert-identities">Upsert identities</button><div id="identity-controls"></div><pre id="identities"></pre>
@@ -205,6 +205,7 @@ document.querySelector('#upsert-identities').onclick = () => edit('#identity-edi
 document.querySelector('#replace-country').onclick = replaceCountry;
 document.querySelector('#replace-rewrites').onclick = replaceRewrites;
 document.querySelector('#upsert-rules').onclick = () => edit('#rule-editor', '/reload/policy/upsert', 'rules');
+document.querySelector('#validate-rules').onclick = () => edit('#rule-editor', '/validate/policy', 'rules');
 document.querySelector('#upsert-regex').onclick = () => edit('#regex-editor', '/reload/regex/upsert', 'regex_rules');
 document.querySelector('#reload-blocklists').onclick = () => operate('/reload/blocklists', {method:'POST'}).then(refresh);
 document.querySelector('#reload-country').onclick = () => operate('/reload/country', {method:'POST'}).then(refresh);
@@ -1474,6 +1475,7 @@ mod tests {
             b"replace-rewrites".as_slice(),
             b"rule-editor".as_slice(),
             b"regex-editor".as_slice(),
+            b"validate-rules".as_slice(),
             b"upsert-rules".as_slice(),
             b"upsert-regex".as_slice(),
             b"rule-controls".as_slice(),
