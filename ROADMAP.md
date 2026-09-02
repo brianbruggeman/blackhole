@@ -32,7 +32,8 @@ below are future capabilities, grouped by the dependency layer they extend.
   configuration by consuming a supported Proxima listener context/raw-socket
   capability; until that upstream seam exists, keep original-destination and
   reply-routing metadata inside the platform adapter and do not synthesize it
-  in policy, telemetry, or recordings.
+  in policy, telemetry, or recordings. The pinned Proxima revision and the
+  current upstream `main` audit expose no such listener seam yet.
 
 ## Incumbent parity and extensions
 

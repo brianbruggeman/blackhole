@@ -343,7 +343,9 @@ sudo BLACKHOLE_BINARY="$PWD/target/release/blackhole" \
 ```
 
 The installer requires root and starts the service, but it does not install
-firewall capture rules.
+firewall capture rules. Linux nftables capture requires a kernel with NAT-table
+and redirect support; unsupported kernels fail closed with an actionable
+capability error and roll back any partial installation.
 
 For an unprivileged macOS deployment, install
 `deploy/launchd/com.brianbruggeman.blackhole.plist` as
