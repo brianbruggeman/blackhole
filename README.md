@@ -111,7 +111,11 @@ authenticated `POST /abuse/rate-limit-whitelist/add` and
 
 The first-class domain allowlist is available at authenticated `GET /allowlist`
 and can be atomically replaced with a bounded JSON array using
-`POST /reload/allowlist`. Invalid domains leave the active allowlist unchanged.
+`POST /reload/allowlist`. Configured client identities can use
+`POST /reload/allowlist/identity` with
+`{"identity":"family-router","domains":["safe.example"]}`; an empty
+domain array removes that scoped entry. Invalid domains or unknown identities
+leave the active allowlists unchanged.
 Client-group blocklist assignments are similarly available at authenticated
 `GET /blocklist-groups` and can be atomically replaced with a bounded JSON
 object using `POST /reload/blocklist-groups`; invalid assignments leave the

@@ -1347,6 +1347,10 @@ mod runtime {
         /// Each entry covers its apex and subdomains.
         #[serde(default)]
         pub allowlist: Vec<String>,
+        /// Optional allowlist domains scoped to an adapter-owned client
+        /// identity. Each entry covers its apex and subdomains.
+        #[serde(default)]
+        pub allowlist_by_identity: BTreeMap<String, Vec<String>>,
         /// Configured sources that remain retained but are excluded from the
         /// active blocklist snapshot.
         #[serde(default)]
@@ -1382,6 +1386,7 @@ mod runtime {
                 regex_rules: Vec::new(),
                 blocklists: Vec::new(),
                 allowlist: Vec::new(),
+                allowlist_by_identity: BTreeMap::new(),
                 disabled_blocklists: Vec::new(),
                 blocklist_groups: BTreeMap::new(),
                 blocklist_reload_interval_secs: 0,
@@ -2113,7 +2118,9 @@ mod runtime {
     const MAX_BLOCKLIST_GROUP_ASSIGNMENTS: usize = 256;
     const MAX_BLOCKLIST_GROUP_RULES: usize = 65_536;
     const MAX_ALLOWLIST_DOMAINS: usize = 4_096;
+    const MAX_SCOPED_ALLOWLIST_IDENTITIES: usize = 256;
     const ALLOWLIST_RULE_BASE: u32 = 0x8000_0000;
+    const SCOPED_ALLOWLIST_RULE_BASE: u32 = 0x9000_0000;
 
     fn compile_allowlist(domains: &[String]) -> Result<Vec<RuleConfig>, policy::PolicyError> {
         if domains.len() > MAX_ALLOWLIST_DOMAINS {
@@ -2161,6 +2168,49 @@ mod runtime {
                 });
             }
         }
+        Ok(rules)
+    }
+
+    fn compile_scoped_allowlists(
+        allowlists: &BTreeMap<String, Vec<String>>,
+    ) -> Result<Vec<RuleConfig>, policy::PolicyError> {
+        if allowlists.len() > MAX_SCOPED_ALLOWLIST_IDENTITIES {
+            return Err(policy::PolicyError::InvalidBlocklist {
+                path: "<allowlist>".into(),
+                reason: format!("identity count exceeds {MAX_SCOPED_ALLOWLIST_IDENTITIES}"),
+            });
+        }
+        let mut rules = Vec::new();
+        for (identity_index, (identity, domains)) in allowlists.iter().enumerate() {
+            if identity.is_empty() || !identity.is_ascii() || identity.len() > 64 {
+                return Err(policy::PolicyError::InvalidBlocklist {
+                    path: "<allowlist>".into(),
+                    reason: format!("invalid client identity {identity:?}"),
+                });
+            }
+            let mut scoped = compile_allowlist(domains)?;
+            let offset = (identity_index * MAX_ALLOWLIST_DOMAINS * 2) as u32;
+            for rule in &mut scoped {
+                rule.id = SCOPED_ALLOWLIST_RULE_BASE
+                    .checked_add(offset)
+                    .and_then(|base| base.checked_add(rule.id - ALLOWLIST_RULE_BASE))
+                    .ok_or_else(|| policy::PolicyError::InvalidBlocklist {
+                        path: "<allowlist>".into(),
+                        reason: "scoped allowlist rule ID range overflows".into(),
+                    })?;
+                rule.client_identity = Some(identity.clone());
+            }
+            rules.extend(scoped);
+        }
+        Ok(rules)
+    }
+
+    fn compile_allowlist_tables(
+        global: &[String],
+        scoped: &BTreeMap<String, Vec<String>>,
+    ) -> Result<Vec<RuleConfig>, policy::PolicyError> {
+        let mut rules = compile_allowlist(global)?;
+        rules.extend(compile_scoped_allowlists(scoped)?);
         Ok(rules)
     }
 
@@ -3428,6 +3478,8 @@ mod runtime {
         client_identity_control: LiveControl<Vec<ClientIdentityConfig>>,
         allowlist: Live<Vec<String>>,
         allowlist_control: LiveControl<Vec<String>>,
+        allowlist_by_identity: Live<BTreeMap<String, Vec<String>>>,
+        allowlist_by_identity_control: LiveControl<BTreeMap<String, Vec<String>>>,
         blocklist_groups: Live<BTreeMap<String, Vec<String>>>,
         blocklist_groups_control: LiveControl<BTreeMap<String, Vec<String>>>,
         country_policy: Live<Option<CountryPolicy>>,
@@ -3757,7 +3809,10 @@ mod runtime {
             }
             let mut profile_rules =
                 compile_profiles(&config.policy.profiles, &config.policy.client_groups)?;
-            profile_rules.extend(compile_allowlist(&config.policy.allowlist)?);
+            profile_rules.extend(compile_allowlist_tables(
+                &config.policy.allowlist,
+                &config.policy.allowlist_by_identity,
+            )?);
             let explicit_rules = config.policy.rules.clone();
             config.policy.rules.extend(profile_rules);
             let base_rules = config.policy.rules.clone();
@@ -3826,6 +3881,8 @@ mod runtime {
             let country_policy_config = config.country_policy.clone();
             let (client_identities, client_identity_control) = live(client_identities);
             let (allowlist, allowlist_control) = live(config.policy.allowlist.clone());
+            let (allowlist_by_identity, allowlist_by_identity_control) =
+                live(config.policy.allowlist_by_identity.clone());
             let (blocklist_groups, blocklist_groups_control) =
                 live(config.policy.blocklist_groups.clone());
             let (country_policy, country_policy_control) = live(country_policy);
@@ -3878,6 +3935,8 @@ mod runtime {
                 client_identity_control,
                 allowlist,
                 allowlist_control,
+                allowlist_by_identity,
+                allowlist_by_identity_control,
                 blocklist_groups,
                 blocklist_groups_control,
                 country_policy,
@@ -4044,7 +4103,10 @@ mod runtime {
             let _ = filtering_enabled;
             legacy_domains.map(validate_legacy_domains).transpose()?;
             let mut generated = compile_profiles(profiles, client_groups)?;
-            generated.extend(compile_allowlist(self.allowlist.snapshot().as_ref())?);
+            generated.extend(compile_allowlist_tables(
+                self.allowlist.snapshot().as_ref(),
+                self.allowlist_by_identity.snapshot().as_ref(),
+            )?);
             let _ = validate_client_identities(client_identities)?;
             let _ = compile_rewrites(rewrite_configs)?;
             let _ = load_country_policy(country_config)?;
@@ -4487,6 +4549,9 @@ mod runtime {
             let groups = self.client_groups.snapshot();
             let mut generated = compile_profiles(&profiles, &groups)?;
             generated.extend(allowlist_rules);
+            generated.extend(compile_scoped_allowlists(
+                self.allowlist_by_identity.snapshot().as_ref(),
+            )?);
             let explicit = self.explicit_rules.snapshot().as_ref().clone();
             let mut combined = explicit.clone();
             combined.extend(generated);
@@ -4496,11 +4561,66 @@ mod runtime {
             Ok(published)
         }
 
+        /// Atomically replace one identity's allowlist and republish all
+        /// generated pass rules. Empty domains remove that identity's entry.
+        pub fn replace_identity_allowlist(
+            &self,
+            identity: &str,
+            domains: &[String],
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
+            let started = Instant::now();
+            let identity = identity.trim();
+            if identity.is_empty() || !identity.is_ascii() || identity.len() > 64 {
+                return Err(policy::PolicyError::InvalidBlocklist {
+                    path: "<allowlist>".into(),
+                    reason: "client identity must be bounded non-empty ASCII".into(),
+                });
+            }
+            if !self.client_identities.read(|identities| {
+                identities
+                    .iter()
+                    .any(|configured| configured.name == identity)
+            }) {
+                return Err(policy::PolicyError::InvalidBlocklist {
+                    path: "<allowlist>".into(),
+                    reason: format!("unknown client identity {identity:?}"),
+                });
+            }
+            let mut next = self.allowlist_by_identity.snapshot().as_ref().clone();
+            if domains.is_empty() {
+                next.remove(identity);
+            } else {
+                next.insert(identity.to_owned(), domains.to_vec());
+            }
+            if self.allowlist_by_identity.read(|current| current == &next) {
+                self.observe_reload_latency("identity_allowlist_unchanged", started);
+                return Ok(ReloadState::Unchanged);
+            }
+            let profiles = self.profiles.snapshot();
+            let groups = self.client_groups.snapshot();
+            let mut generated = compile_profiles(&profiles, &groups)?;
+            generated.extend(compile_allowlist_tables(
+                self.allowlist.snapshot().as_ref(),
+                &next,
+            )?);
+            let explicit = self.explicit_rules.snapshot().as_ref().clone();
+            let mut combined = explicit.clone();
+            combined.extend(generated);
+            let published =
+                self.publish_rules_locked(&combined, &explicit, "identity_allowlist", started)?;
+            self.allowlist_by_identity_control.replace(next);
+            Ok(published)
+        }
+
         fn current_profile_rules(&self) -> Result<Vec<RuleConfig>, policy::PolicyError> {
             let profiles = self.profiles.snapshot();
             let client_groups = self.client_groups.snapshot();
             let mut rules = compile_profiles(&profiles, &client_groups)?;
-            rules.extend(compile_allowlist(self.allowlist.snapshot().as_ref())?);
+            rules.extend(compile_allowlist_tables(
+                self.allowlist.snapshot().as_ref(),
+                self.allowlist_by_identity.snapshot().as_ref(),
+            )?);
             Ok(rules)
         }
 
@@ -5041,7 +5161,10 @@ mod runtime {
                 return Ok(ReloadState::Unchanged);
             }
             let mut generated = compile_profiles(profiles, client_groups)?;
-            generated.extend(compile_allowlist(self.allowlist.snapshot().as_ref())?);
+            generated.extend(compile_allowlist_tables(
+                self.allowlist.snapshot().as_ref(),
+                self.allowlist_by_identity.snapshot().as_ref(),
+            )?);
             let explicit = self.explicit_rules.snapshot().as_ref().clone();
             let mut combined = explicit.clone();
             combined.extend(generated);
@@ -5178,7 +5301,10 @@ mod runtime {
             }
             let profiles = self.profiles.snapshot().as_ref().clone();
             let mut generated = compile_profiles(&profiles, &groups)?;
-            generated.extend(compile_allowlist(self.allowlist.snapshot().as_ref())?);
+            generated.extend(compile_allowlist_tables(
+                self.allowlist.snapshot().as_ref(),
+                self.allowlist_by_identity.snapshot().as_ref(),
+            )?);
             let explicit = self.explicit_rules.snapshot().as_ref().clone();
             let mut combined = explicit.clone();
             combined.extend(generated);
@@ -5224,7 +5350,10 @@ mod runtime {
             }
             let groups = self.client_groups.snapshot().as_ref().clone();
             let mut generated = compile_profiles(&profiles, &groups)?;
-            generated.extend(compile_allowlist(self.allowlist.snapshot().as_ref())?);
+            generated.extend(compile_allowlist_tables(
+                self.allowlist.snapshot().as_ref(),
+                self.allowlist_by_identity.snapshot().as_ref(),
+            )?);
             let explicit = self.explicit_rules.snapshot().as_ref().clone();
             let mut combined = explicit.clone();
             combined.extend(generated);
@@ -5261,7 +5390,10 @@ mod runtime {
             }
             let groups = self.client_groups.snapshot().as_ref().clone();
             let mut generated = compile_profiles(&profiles, &groups)?;
-            generated.extend(compile_allowlist(self.allowlist.snapshot().as_ref())?);
+            generated.extend(compile_allowlist_tables(
+                self.allowlist.snapshot().as_ref(),
+                self.allowlist_by_identity.snapshot().as_ref(),
+            )?);
             let explicit = self.explicit_rules.snapshot().as_ref().clone();
             let mut combined = explicit.clone();
             combined.extend(generated);
@@ -5307,7 +5439,10 @@ mod runtime {
             }
             let profiles = self.profiles.snapshot().as_ref().clone();
             let mut generated = compile_profiles(&profiles, &groups)?;
-            generated.extend(compile_allowlist(self.allowlist.snapshot().as_ref())?);
+            generated.extend(compile_allowlist_tables(
+                self.allowlist.snapshot().as_ref(),
+                self.allowlist_by_identity.snapshot().as_ref(),
+            )?);
             let explicit = self.explicit_rules.snapshot().as_ref().clone();
             let mut combined = explicit.clone();
             combined.extend(generated);
@@ -5413,7 +5548,10 @@ mod runtime {
             let normalized_legacy_domains =
                 legacy_domains.map(validate_legacy_domains).transpose()?;
             let mut generated = compile_profiles(profiles, client_groups)?;
-            generated.extend(compile_allowlist(self.allowlist.snapshot().as_ref())?);
+            generated.extend(compile_allowlist_tables(
+                self.allowlist.snapshot().as_ref(),
+                self.allowlist_by_identity.snapshot().as_ref(),
+            )?);
             let client_identities = validate_client_identities(client_identities)?;
             self.validate_identity_upstreams(&client_identities)?;
             let rewrites = compile_rewrites(rewrite_configs)?;
@@ -7904,6 +8042,9 @@ mod runtime {
                 "client_groups": client_groups.len(),
                 "identity_rules": identity_rules,
                 "allowlist_domains": self.allowlist.read(Vec::len),
+                "scoped_allowlist_identities": self
+                    .allowlist_by_identity
+                    .read(BTreeMap::len),
                 "conditional_forwards": self.config.policy.conditional_forwards.len(),
                 "country_entries": country_policy.as_ref().as_ref().map_or(0, |policy| policy.entries.len()),
                 "country_deny_rules": country_policy.as_ref().as_ref().map_or(0, |policy| policy.deny.len()),
@@ -8045,9 +8186,12 @@ mod runtime {
         /// Return the authenticated operator's bounded live allowlist.
         pub(crate) fn admin_allowlist(&self) -> String {
             let domains = self.allowlist.snapshot();
+            let scoped = self.allowlist_by_identity.snapshot();
             serde_json::json!({
                 "domains": domains.as_ref(),
                 "count": domains.len(),
+                "by_identity": scoped.as_ref(),
+                "scoped_count": scoped.len(),
                 "policy_generation": self.policy_generation.load(Ordering::Acquire),
             })
             .to_string()
@@ -8142,6 +8286,7 @@ mod runtime {
                     "cname": rewrite.cname,
                     "ttl": rewrite.ttl,
                 })).collect::<Vec<_>>(),
+                "allowlist_by_identity": self.allowlist_by_identity.snapshot().as_ref(),
                 "country_policy": self.country_policy_config.snapshot().as_ref().clone(),
                 "blocklists": serde_json::Value::Null,
                 "blocklist_groups": self.blocklist_groups.snapshot().as_ref(),

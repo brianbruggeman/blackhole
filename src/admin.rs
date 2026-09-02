@@ -63,6 +63,12 @@ struct RewriteUpsert {
 }
 
 #[derive(Debug, serde::Deserialize)]
+struct IdentityAllowlistUpdate {
+    identity: String,
+    domains: Vec<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
 struct PolicyBundle {
     /// Optional legacy fallback mode; omitted fields retain their live value.
     #[serde(default)]
@@ -1111,6 +1117,37 @@ impl SendPipe for AdminHandler {
                     ))),
                 }
             }
+            ("POST", "/reload/allowlist/identity") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let update =
+                    match serde_json::from_slice::<IdentityAllowlistUpdate>(&request.payload) {
+                        Ok(update) => update,
+                        Err(error) => {
+                            return Ok(Response::new(400).with_body(format!(
+                                "{{\"status\":\"error\",\"message\":{}}}",
+                                serde_json::to_string(&error.to_string())
+                                    .unwrap_or_else(|_| "null".into())
+                            )));
+                        }
+                    };
+                match self
+                    .policy
+                    .replace_identity_allowlist(&update.identity, &update.domains)
+                {
+                    Ok(crate::snapshot::ReloadState::Published) => {
+                        Ok(Response::ok("{\"status\":\"replaced\"}"))
+                    }
+                    Ok(crate::snapshot::ReloadState::Unchanged) => {
+                        Ok(Response::ok("{\"status\":\"unchanged\"}"))
+                    }
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
             ("POST", "/reload/blocklist-groups") => {
                 if request.payload.len() > MAX_POLICY_BODY_BYTES {
                     return Ok(Response::new(413));
@@ -1538,6 +1575,9 @@ impl SendPipe for AdminHandler {
                 | "/policy/status"
                 | "/policy/preview"
                 | "/blocklists"
+                | "/allowlist"
+                | "/reload/allowlist"
+                | "/reload/allowlist/identity"
                 | "/policy-bundle"
                 | "/privacy/status"
                 | "/rules"

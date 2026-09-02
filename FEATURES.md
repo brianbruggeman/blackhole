@@ -66,6 +66,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   remains present across atomic policy reloads. Authenticated operators can
   inspect it at `GET /allowlist` and atomically replace it with
   `POST /reload/allowlist`.
+- Allowlists can also be scoped to configured client identities through
+  `POST /reload/allowlist/identity`; these bounded pass rules are published
+  atomically while the global allowlist remains independent.
 - Blocklist sources can be assigned to named client groups; assigned sources
   are excluded from the unscoped rule set and expand into bounded exact-client
   or CIDR-scoped rules, with disabled groups producing no active rules.
