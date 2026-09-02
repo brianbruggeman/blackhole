@@ -153,6 +153,7 @@ impl CaptureOwnership {
             && valid_identifier(&self.chain)
             && self.inbound_port != 0
             && self.redirect_port != 0
+            && self.mark != 0
     }
 }
 
@@ -712,6 +713,7 @@ mod tests {
             "blackhole\ncapture\n53\n0\n42\n",
             "blackhole\nthis-chain-name-is-way-too-long-for-recovery\n53\n5353\n42\n",
             "blackhole\ncapture\n53\n5353\n42\ntrailing\n",
+            "blackhole\ncapture\n53\n5353\n0\n",
         ] {
             std::fs::write(&path, record).expect("write invalid journal");
             assert_eq!(store.load().expect("invalid journal is safe"), None);
