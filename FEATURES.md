@@ -173,6 +173,10 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Authenticated bounded `POST /reload/country/replace` atomically replaces the
   country/CIDR map configuration and selectors, retaining the previous live
   map and selectors when validation or loading fails.
+- Authenticated bounded `POST /country/preview` classifies an operator-supplied
+  client address against the live country map and reports country, region,
+  ASN, deny, and observe results without retaining the address or emitting an
+  observation.
 - Country-policy request reads use Proxima's lock-free `Live` snapshot;
   validated reloads replace one complete immutable generation.
 - Runtime policy configuration mirrors for domain rules, profiles, client

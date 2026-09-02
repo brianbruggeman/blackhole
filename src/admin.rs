@@ -48,6 +48,11 @@ struct PolicyPreview {
 }
 
 #[derive(Debug, serde::Deserialize)]
+struct CountryPreview {
+    client: IpAddr,
+}
+
+#[derive(Debug, serde::Deserialize)]
 struct ProfileUpsert {
     profiles: Vec<ServiceProfileConfig>,
 }
@@ -110,6 +115,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <h2>Policy preview</h2><textarea id="policy-preview" rows="4" cols="80">{"name":"example.","qtype":1,"qclass":1}</textarea><button id="preview-policy">Preview</button><pre id="policy-preview-result"></pre>
 <h2>Blocklists</h2><textarea id="blocklist-sources"></textarea><button id="replace-blocklists">Replace</button><button id="add-blocklists">Add</button><button id="remove-blocklists">Remove</button><button id="reload-blocklists">Reload</button><div id="blocklist-controls"></div><pre id="blocklists"></pre>
 <h2>Country</h2><textarea id="country-editor" rows="8" cols="80"></textarea><button id="replace-country">Replace country policy</button><pre id="country-status"></pre>
+<textarea id="country-preview" rows="2" cols="40">{"client":"192.0.2.10"}</textarea><button id="preview-country">Preview client</button><pre id="country-preview-result"></pre>
 <h2>Privacy</h2><pre id="privacy-status"></pre><select id="r"><option value="metadata">metadata</option><option value="action_only">action only</option></select><button id="s">Apply</button>
 <h2>Rules</h2><textarea id="rule-editor" rows="8" cols="80"></textarea><button id="validate-rules">Validate domain rules</button><button id="upsert-rules">Upsert domain rules</button><div id="rule-controls"></div><textarea id="regex-editor" rows="8" cols="80"></textarea><button id="validate-regex">Validate regex rules</button><button id="upsert-regex">Upsert regex rules</button><div id="regex-controls"></div><pre id="rules"></pre>
 <h2>Profiles</h2><textarea id="profile-editor" rows="8" cols="80"></textarea><button id="upsert-profiles">Upsert profiles</button><div id="profile-controls"></div><pre id="profiles"></pre>
@@ -226,8 +232,15 @@ const previewPolicy = () => {
       .then(value => { document.querySelector('#policy-preview-result').textContent = JSON.stringify(value, null, 2); });
   } catch (error) { document.querySelector('#operation-status').textContent = `/policy/preview: ${error.message}`; return Promise.reject(error); }
 };
+const previewCountry = () => {
+  try {
+    return operate('/country/preview', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#country-preview').value})
+      .then(value => { document.querySelector('#country-preview-result').textContent = JSON.stringify(value, null, 2); });
+  } catch (error) { document.querySelector('#operation-status').textContent = `/country/preview: ${error.message}`; return Promise.reject(error); }
+};
 const refresh = () => Promise.all([load('/status','#status'), load('/stats','#stats'), load('/admission/status','#admission-status'), load('/abuse/status','#abuse-status'), load('/abuse/incidents','#abuse-incidents'), load('/abuse/denylist','#denylist-config'), load('/policy-bundle','#policy-bundle'), load('/blocklists','#blocklists'), load('/country/status','#country-status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/client-identities','#identities'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
 document.querySelector('#preview-policy').onclick = previewPolicy;
+document.querySelector('#preview-country').onclick = previewCountry;
 document.querySelector('#clear-logs').onclick = () => operate('/logs/clear', {method:'POST'}).then(refresh);
 document.querySelector('#clear-durable-logs').onclick = () => operate('/logs/clear-durable', {method:'POST'}).then(refresh);
 document.querySelector('#s').onclick = () => send('/reload/privacy/redaction', document.querySelector('#r').value);
@@ -529,6 +542,24 @@ impl SendPipe for AdminHandler {
                 }
             }
             ("GET", "/country/status") => Ok(Response::ok(self.policy.admin_country_status())),
+            ("POST", "/country/preview") => {
+                if request.payload.len() > 256 {
+                    return Ok(Response::new(413));
+                }
+                let preview = match serde_json::from_slice::<CountryPreview>(&request.payload) {
+                    Ok(preview) => preview,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                Ok(Response::ok(
+                    self.policy.admin_country_preview(preview.client),
+                ))
+            }
             ("POST", "/reload/country/replace") => {
                 if request.payload.len() > MAX_POLICY_BODY_BYTES {
                     return Ok(Response::new(413));
@@ -1365,6 +1396,7 @@ impl SendPipe for AdminHandler {
                 | "/reload/admission/denylist"
                 | "/country/status"
                 | "/reload/country/replace"
+                | "/country/preview"
                 | "/policy/status"
                 | "/policy/preview"
                 | "/blocklists"
@@ -1667,7 +1699,7 @@ mod tests {
             );
         }
         assert!(
-            ui.payload.len() < 16 * 1024,
+            ui.payload.len() < 20 * 1024,
             "admin UI payload is {} bytes",
             ui.payload.len()
         );
@@ -2464,6 +2496,25 @@ mod tests {
         assert_eq!(status["entries"], 1);
         assert_eq!(status["deny"], serde_json::json!(["US"]));
         assert_eq!(status["deny_regions"], serde_json::json!(["us-ca"]));
+
+        let preview = block_on(
+            handler.call(
+                Request::builder()
+                    .method("POST")
+                    .path("/country/preview")
+                    .payload(r#"{"client":"192.0.2.10"}"#)
+                    .build()
+                    .expect("country preview request"),
+            ),
+        )
+        .expect("country preview response");
+        assert_eq!(preview.status, 200);
+        let preview: serde_json::Value = serde_json::from_slice(&preview.payload).expect("preview");
+        assert_eq!(preview["country"], "US");
+        assert_eq!(preview["region"], "US-CA");
+        assert_eq!(preview["asn"], 64501);
+        assert_eq!(preview["denied"], true);
+        assert_eq!(preview["observed"], false);
 
         let unchanged = block_on(
             handler.call(

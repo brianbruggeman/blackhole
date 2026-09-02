@@ -66,6 +66,11 @@ qclass, and an optional client address, and returns the selected action and
 matched rule ID. It does not execute rewrites or forwarding, increment
 decision counters, emit recording events, or retain the supplied address.
 
+The authenticated `POST /country/preview` route performs the same kind of
+non-retaining dry-run for a client address against the live country map. It
+reports the matched country, region, ASN, and deny/observe results; it does
+not classify the address as identity, persist it, or emit an observation.
+
 Upstream transport failures are observed before they are returned through the
 existing Proxima telemetry stream. Their bounded causes distinguish timeout,
 wire decoding, response-ID mismatch, I/O, and configuration failures; an

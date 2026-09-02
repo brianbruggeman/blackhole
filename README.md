@@ -226,6 +226,8 @@ disabling, and reloading configured blocklists or
 publishing the complete bundle. The same routes are available as
 authenticated `GET /health`, `GET /status`, bounded `GET /admission/status`,
 `GET /country/status`,
+`POST /country/preview` (an authenticated, non-retaining country/region/ASN
+classification preview for an operator-supplied client address),
 `GET /policy/status`,
 `POST /policy/preview` (an authenticated dry-run for a name, qtype, qclass,
 and optional client address),

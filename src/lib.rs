@@ -6431,6 +6431,34 @@ mod runtime {
             .to_string()
         }
 
+        /// Classify an adapter-supplied client address using the current
+        /// country snapshot without retaining the address or emitting an
+        /// observation. This is an authenticated operator preview only.
+        pub(crate) fn admin_country_preview(&self, client: IpAddr) -> String {
+            let policy = self.country_policy.snapshot();
+            let entry = policy
+                .as_ref()
+                .as_ref()
+                .and_then(|policy| policy.entry_for(client));
+            serde_json::json!({
+                "client": client,
+                "map_configured": policy.is_some(),
+                "matched": entry.is_some(),
+                "country": entry.map(|entry| entry.country.as_str()),
+                "region": entry.and_then(|entry| entry.region.as_deref()),
+                "asn": entry.and_then(|entry| entry.asn),
+                "denied": policy
+                    .as_ref()
+                    .as_ref()
+                    .is_some_and(|policy| policy.denied(client)),
+                "observed": policy
+                    .as_ref()
+                    .as_ref()
+                    .is_some_and(|policy| policy.observed(client)),
+            })
+            .to_string()
+        }
+
         pub(crate) fn clear_query_log(&self) -> usize {
             self.query_log
                 .as_ref()
