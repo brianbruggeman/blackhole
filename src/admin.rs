@@ -3438,6 +3438,48 @@ mod tests {
     }
 
     #[test]
+    fn allowlist_route_replaces_and_reports_the_live_snapshot() {
+        let policy = Arc::new(Policy::new(crate::Config::default()).expect("default policy"));
+        let handler = AdminHandler::new(Arc::clone(&policy));
+        let response = block_on(handler.call(request("GET", "/allowlist")))
+            .expect("allowlist status response");
+        assert_eq!(response.status, 200);
+        let status: serde_json::Value =
+            serde_json::from_slice(&response.payload).expect("allowlist status JSON");
+        assert_eq!(status["domains"], serde_json::json!([]));
+
+        let replacement = Request::builder()
+            .method("POST")
+            .path("/reload/allowlist")
+            .payload(r#"["safe.example"]"#)
+            .build()
+            .expect("allowlist replacement request");
+        let response = block_on(handler.call(replacement)).expect("allowlist replacement");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.payload.as_ref(), br#"{"status":"reloaded"}"#);
+
+        let response = block_on(handler.call(request("GET", "/allowlist")))
+            .expect("updated allowlist status response");
+        let status: serde_json::Value =
+            serde_json::from_slice(&response.payload).expect("updated allowlist JSON");
+        assert_eq!(status["domains"], serde_json::json!(["safe.example"]));
+
+        let invalid = Request::builder()
+            .method("POST")
+            .path("/reload/allowlist")
+            .payload(r#"["bad domain"]"#)
+            .build()
+            .expect("invalid allowlist request");
+        let response = block_on(handler.call(invalid)).expect("invalid allowlist response");
+        assert_eq!(response.status, 422);
+        let response = block_on(handler.call(request("GET", "/allowlist")))
+            .expect("preserved allowlist status response");
+        let status: serde_json::Value =
+            serde_json::from_slice(&response.payload).expect("preserved allowlist JSON");
+        assert_eq!(status["domains"], serde_json::json!(["safe.example"]));
+    }
+
+    #[test]
     fn policy_reload_publishes_valid_rules_and_rejects_bad_json() {
         let policy = Arc::new(Policy::new(crate::Config::default()).expect("default policy"));
         let handler = AdminHandler::new(Arc::clone(&policy));
