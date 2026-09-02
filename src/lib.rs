@@ -3279,6 +3279,17 @@ mod runtime {
             Ok(())
         }
 
+        /// Validate a proposed regex rule table without publishing it. The
+        /// current domain IDs are reserved so cross-table collisions fail in
+        /// the same way as an actual reload.
+        pub fn validate_regex_rules(
+            &self,
+            configs: &[RegexRuleConfig],
+        ) -> Result<(), policy::PolicyError> {
+            let _ = compile_regex_rules(configs, self.reference.rule_ids())?;
+            Ok(())
+        }
+
         fn validate_admission(
             &self,
             admission: &AdmissionConfig,

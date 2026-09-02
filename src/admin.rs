@@ -101,7 +101,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <h2>Blocklists</h2><textarea id="blocklist-sources"></textarea><button id="replace-blocklists">Replace</button><button id="add-blocklists">Add</button><button id="remove-blocklists">Remove</button><button id="reload-blocklists">Reload</button><div id="blocklist-controls"></div><pre id="blocklists"></pre>
 <h2>Country</h2><textarea id="country-editor" rows="8" cols="80"></textarea><button id="replace-country">Replace country policy</button><pre id="country-status"></pre>
 <h2>Privacy</h2><pre id="privacy-status"></pre><select id="r"><option value="metadata">metadata</option><option value="action_only">action only</option></select><button id="s">Apply</button>
-<h2>Rules</h2><textarea id="rule-editor" rows="8" cols="80"></textarea><button id="validate-rules">Validate domain rules</button><button id="upsert-rules">Upsert domain rules</button><div id="rule-controls"></div><textarea id="regex-editor" rows="8" cols="80"></textarea><button id="upsert-regex">Upsert regex rules</button><div id="regex-controls"></div><pre id="rules"></pre>
+<h2>Rules</h2><textarea id="rule-editor" rows="8" cols="80"></textarea><button id="validate-rules">Validate domain rules</button><button id="upsert-rules">Upsert domain rules</button><div id="rule-controls"></div><textarea id="regex-editor" rows="8" cols="80"></textarea><button id="validate-regex">Validate regex rules</button><button id="upsert-regex">Upsert regex rules</button><div id="regex-controls"></div><pre id="rules"></pre>
 <h2>Profiles</h2><textarea id="profile-editor" rows="8" cols="80"></textarea><button id="upsert-profiles">Upsert profiles</button><div id="profile-controls"></div><pre id="profiles"></pre>
 <h2>Groups</h2><textarea id="group-editor" rows="8" cols="80"></textarea><button id="upsert-groups">Upsert groups</button><div id="group-controls"></div><pre id="groups"></pre>
 <h2>Identities</h2><textarea id="identity-editor" rows="8" cols="80"></textarea><button id="upsert-identities">Upsert identities</button><div id="identity-controls"></div><pre id="identities"></pre>
@@ -206,6 +206,7 @@ document.querySelector('#replace-country').onclick = replaceCountry;
 document.querySelector('#replace-rewrites').onclick = replaceRewrites;
 document.querySelector('#upsert-rules').onclick = () => edit('#rule-editor', '/reload/policy/upsert', 'rules');
 document.querySelector('#validate-rules').onclick = () => edit('#rule-editor', '/validate/policy', 'rules');
+document.querySelector('#validate-regex').onclick = () => edit('#regex-editor', '/validate/regex', 'regex_rules');
 document.querySelector('#upsert-regex').onclick = () => edit('#regex-editor', '/reload/regex/upsert', 'regex_rules');
 document.querySelector('#reload-blocklists').onclick = () => operate('/reload/blocklists', {method:'POST'}).then(refresh);
 document.querySelector('#reload-country').onclick = () => operate('/reload/country', {method:'POST'}).then(refresh);
@@ -1081,6 +1082,28 @@ impl SendPipe for AdminHandler {
                     ))),
                 }
             }
+            ("POST", "/validate/regex") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let rules = match serde_json::from_slice::<Vec<RegexRuleConfig>>(&request.payload) {
+                    Ok(rules) => rules,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                match self.policy.validate_regex_rules(&rules) {
+                    Ok(()) => Ok(Response::ok("{\"status\":\"valid\"}")),
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
             ("POST", "/reload/regex/upsert") => {
                 if request.payload.len() > MAX_POLICY_BODY_BYTES {
                     return Ok(Response::new(413));
@@ -1257,6 +1280,7 @@ impl SendPipe for AdminHandler {
                 | "/reload/regex"
                 | "/reload/regex/upsert"
                 | "/reload/regex/remove"
+                | "/validate/regex"
                 | "/reload/rewrites"
                 | "/reload/rewrites/upsert"
                 | "/reload/rewrites/remove",
@@ -1452,6 +1476,8 @@ mod tests {
             b"/reload/client-identities/remove".as_slice(),
             b"/reload/policy/remove".as_slice(),
             b"/reload/regex/remove".as_slice(),
+            b"/validate/policy".as_slice(),
+            b"/validate/regex".as_slice(),
         ] {
             assert!(
                 ui.payload
@@ -2664,6 +2690,15 @@ mod tests {
         let response =
             block_on(handler.call(invalid_validate)).expect("invalid policy validation response");
         assert_eq!(response.status, 422);
+        let regex_validate = Request::builder()
+            .method("POST")
+            .path("/validate/regex")
+            .payload(r#"[{"id":71,"pattern":"^validated\\.","action":"drop"}]"#)
+            .build()
+            .expect("regex validation request");
+        let response = block_on(handler.call(regex_validate)).expect("regex validation response");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.payload.as_ref(), br#"{"status":"valid"}"#);
         let current = block_on(handler.call(request("GET", "/rules"))).expect("current rules");
         let current: serde_json::Value =
             serde_json::from_slice(&current.payload).expect("current rules JSON");
