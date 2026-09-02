@@ -386,6 +386,94 @@ fn shipped_binary_serves_udp_datagrams_and_tcp_frames() {
 }
 
 #[test]
+fn shipped_binary_allows_only_configured_private_upstream_answers() {
+    let upstream = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind upstream");
+    upstream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .expect("set upstream timeout");
+    let upstream_addr = upstream.local_addr().expect("upstream address");
+    let upstream_thread = thread::spawn(move || {
+        let mut packet = [0_u8; 4096];
+        let (length, peer) = upstream
+            .recv_from(&mut packet)
+            .expect("receive upstream query");
+        let message = parse_message(&packet[..length]).expect("parse upstream query");
+        let question = message
+            .questions()
+            .next()
+            .expect("upstream question")
+            .expect("valid upstream question");
+        let address = encode::ipv4_rdata("10.20.30.40".parse().expect("private address"));
+        let answer = encode::AnswerRecord {
+            name: &question.name.to_dotted(),
+            rtype: 1,
+            rclass: question.qclass,
+            ttl: 30,
+            rdata: &address,
+        };
+        let mut response = Vec::new();
+        encode::encode_response(
+            message.header.id,
+            Flags::for_response(true, false, true, 0),
+            encode::EncodeQuestion {
+                name: &question.name.to_dotted(),
+                qtype: question.qtype,
+                qclass: question.qclass,
+            },
+            &[answer],
+            &mut response,
+        )
+        .expect("encode upstream response");
+        upstream
+            .send_to(&response, peer)
+            .expect("send upstream response");
+    });
+
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("reserve listener port");
+    let listener_addr = listener.local_addr().expect("listener address");
+    drop(listener);
+    let mut config = NamedTempFile::new().expect("create config");
+    writeln!(
+        config,
+        "[server]\nlisten = \"{listener_addr}\"\n\n[policy]\ndefault_action = \"forward\"\n\n[upstream]\nresolver_ip = \"127.0.0.1\"\nport = {}\ntransport = \"udp\"\nquery_timeout_ms = 500\nmax_attempts = 1\n\n[security]\nallowed_upstream_cidrs = [\"10.0.0.0/8\"]",
+        upstream_addr.port()
+    )
+    .expect("write config");
+    let _child = ChildGuard(
+        Command::new(env!("CARGO_BIN_EXE_blackhole"))
+            .arg(config.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("start shipped blackhole binary"),
+    );
+    drop(wait_for_tcp(listener_addr));
+    let client = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind UDP client");
+    client
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .expect("set UDP timeout");
+    client
+        .send_to(&query(0x6601, "split-dns.example."), listener_addr)
+        .expect("send split-DNS query");
+    let mut response = [0_u8; 4096];
+    let (length, _) = client
+        .recv_from(&mut response)
+        .expect("receive split-DNS response");
+    let message = parse_message(&response[..length]).expect("parse split-DNS response");
+    let answer = message
+        .answers()
+        .next()
+        .expect("private upstream answer")
+        .expect("valid private upstream answer");
+    assert_eq!(
+        answer.rdata,
+        proxima_protocols::dns::RData::A(Ipv4Addr::new(10, 20, 30, 40))
+    );
+    upstream_thread.join().expect("reap upstream");
+}
+
+#[test]
 fn shipped_binary_serves_hosts_file_rewrites_over_udp_and_tcp() {
     let hosts = NamedTempFile::new().expect("create hosts file");
     std::fs::write(
