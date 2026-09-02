@@ -940,6 +940,7 @@ mod runtime {
             client_identity: Option<&str>,
         ) -> Option<DnsAnswer> {
             let name = normalize(&query.name);
+            let suffix = name.split_once('.').map(|(_, suffix)| suffix);
             for identity in [client_identity, None] {
                 let identity = identity.map(str::to_owned);
                 if let Some(answer) =
@@ -948,14 +949,11 @@ mod runtime {
                 {
                     return Some(answer.clone());
                 }
-            }
-            let suffix = name.split_once('.').map(|(_, suffix)| suffix)?;
-            for identity in [client_identity, None] {
-                let identity = identity.map(str::to_owned);
-                if let Some(answer) = self
-                    .wildcard_entries
-                    .get(&(identity, query.qtype))
-                    .and_then(|entries| entries.get(suffix))
+                if let Some(suffix) = suffix
+                    && let Some(answer) = self
+                        .wildcard_entries
+                        .get(&(identity, query.qtype))
+                        .and_then(|entries| entries.get(suffix))
                 {
                     let answer = answer.clone();
                     let query_name = query.name.clone();
