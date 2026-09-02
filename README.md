@@ -250,6 +250,7 @@ configuration replacement), bounded
 `POST /reload/policy/remove` (a JSON array of stable rule IDs removed atomically), and bounded
 `POST /validate/policy` (a JSON array validated against the current profile-generated rules without publishing), and bounded
 `POST /reload/regex` (a JSON array of regex rule objects),
+`POST /validate/regex` (a JSON array validated against the current domain rule IDs without publishing),
 `POST /reload/regex/upsert` (a JSON array that replaces or adds regex rules by
 stable ID), and `POST /reload/regex/remove` (a JSON array of regex rule IDs).
 It also provides bounded `GET /profiles`, `GET /client-groups`, and

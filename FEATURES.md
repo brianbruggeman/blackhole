@@ -233,6 +233,8 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - The authenticated control plane can also remove domain rules by stable ID;
 - The authenticated control plane can validate a proposed domain-rule table
   against current generated profile rules without publishing it;
+- The authenticated control plane can validate a proposed regex-rule table
+  against current domain-rule IDs without publishing it;
   unknown IDs fail without changing the published snapshot.
 - The authenticated control plane can atomically upsert domain rules by stable
   ID, preserving unspecified rules and rejecting duplicate update IDs without
