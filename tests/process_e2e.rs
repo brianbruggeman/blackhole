@@ -304,3 +304,121 @@ fn shipped_binary_serves_udp_datagrams_and_tcp_frames() {
 
     upstream_thread.join().expect("reap upstream");
 }
+
+#[test]
+fn shipped_binary_retries_truncated_upstream_over_tcp() {
+    let upstream_tcp = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind upstream TCP");
+    let upstream_addr = upstream_tcp.local_addr().expect("upstream address");
+    let upstream_udp = UdpSocket::bind(upstream_addr).expect("bind upstream UDP");
+    let upstream_thread = thread::spawn(move || {
+        let mut packet = [0u8; 4096];
+        let (length, peer) = upstream_udp
+            .recv_from(&mut packet)
+            .expect("receive UDP query");
+        let message = parse_message(&packet[..length]).expect("parse UDP query");
+        let question = message
+            .questions()
+            .next()
+            .expect("upstream question")
+            .expect("valid upstream question");
+        let name = question.name.to_dotted();
+        let mut truncated = Vec::new();
+        encode::encode_response(
+            message.header.id,
+            Flags(Flags::for_response(true, false, true, 0).0 | 0x0200),
+            encode::EncodeQuestion {
+                name: &name,
+                qtype: question.qtype,
+                qclass: question.qclass,
+            },
+            &[],
+            &mut truncated,
+        )
+        .expect("encode truncated response");
+        upstream_udp
+            .send_to(&truncated, peer)
+            .expect("send truncated response");
+
+        let (mut stream, _) = upstream_tcp.accept().expect("accept TCP fallback");
+        let mut frame_length = [0u8; 2];
+        stream
+            .read_exact(&mut frame_length)
+            .expect("read TCP query length");
+        let tcp_length = usize::from(u16::from_be_bytes(frame_length));
+        let mut tcp_query = vec![0u8; tcp_length];
+        stream.read_exact(&mut tcp_query).expect("read TCP query");
+        let tcp_message = parse_message(&tcp_query).expect("parse TCP query");
+        let tcp_question = tcp_message
+            .questions()
+            .next()
+            .expect("TCP question")
+            .expect("valid TCP question");
+        let tcp_name = tcp_question.name.to_dotted();
+        let rdata = encode::ipv4_rdata(Ipv4Addr::new(192, 0, 2, 99));
+        let answer = encode::AnswerRecord {
+            name: &tcp_name,
+            rtype: 1,
+            rclass: tcp_question.qclass,
+            ttl: 30,
+            rdata: &rdata,
+        };
+        let mut complete = Vec::new();
+        encode::encode_response(
+            tcp_message.header.id,
+            Flags::for_response(true, false, true, 0),
+            encode::EncodeQuestion {
+                name: &tcp_name,
+                qtype: tcp_question.qtype,
+                qclass: tcp_question.qclass,
+            },
+            &[answer],
+            &mut complete,
+        )
+        .expect("encode TCP response");
+        stream
+            .write_all(
+                &(u16::try_from(complete.len())
+                    .expect("TCP response fits")
+                    .to_be_bytes()),
+            )
+            .expect("write TCP response length");
+        stream.write_all(&complete).expect("write TCP response");
+    });
+
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("reserve listener port");
+    let listener_addr = listener.local_addr().expect("listener address");
+    drop(listener);
+    let mut config = NamedTempFile::new().expect("create config");
+    writeln!(
+        config,
+        "[server]\nlisten = \"{listener_addr}\"\n\n[policy]\ndefault_action = \"forward\"\n\n[upstream]\nresolver_ip = \"127.0.0.1\"\nport = {}\ntransport = \"udp\"\nquery_timeout_ms = 500\nmax_attempts = 1",
+        upstream_addr.port()
+    )
+    .expect("write config");
+
+    let _child = ChildGuard(
+        Command::new(env!("CARGO_BIN_EXE_blackhole"))
+            .arg(config.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("start shipped blackhole binary"),
+    );
+    drop(wait_for_tcp(listener_addr));
+    let udp = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind UDP client");
+    udp.set_read_timeout(Some(Duration::from_secs(3)))
+        .expect("set UDP timeout");
+    let query = query(0x2001, "fallback.example.");
+    udp.send_to(&query, listener_addr)
+        .expect("send fallback query");
+    let mut response = [0u8; 4096];
+    let (length, _) = udp
+        .recv_from(&mut response)
+        .expect("receive fallback response");
+    let message = parse_message(&response[..length]).expect("parse fallback response");
+    assert_eq!(message.header.id, 0x2001);
+    assert_eq!(message.answers().count(), 1);
+
+    upstream_thread.join().expect("reap upstream");
+}
