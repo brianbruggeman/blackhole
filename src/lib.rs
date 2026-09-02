@@ -1862,42 +1862,41 @@ mod runtime {
         let path = path.to_owned();
         let (result_sender, result_receiver) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let result = (|| {
+            let result = proxima::runtime::run_prime(async move {
                 let client = Client::from_value(serde_json::json!({
                     "http": base,
                     "timeout": format!("{}ms", timeout.as_millis()),
                 }))
                 .map_err(|error| format!("create Proxima HTTP client: {error}"))?;
-                futures::executor::block_on(async move {
-                    let response = client
-                        .get(path)
-                        .send()
-                        .await
-                        .map_err(|error| format!("fetch through Proxima: {error}"))?;
-                    if !response.ok() {
-                        return Err(format!("remote source returned HTTP {}", response.status()));
+                let response = client
+                    .get(path)
+                    .send()
+                    .await
+                    .map_err(|error| format!("fetch through Proxima: {error}"))?;
+                if !response.ok() {
+                    return Err(format!("remote source returned HTTP {}", response.status()));
+                }
+                let max_age_secs = response
+                    .headers()
+                    .get_str("cache-control")
+                    .and_then(parse_cache_control_max_age);
+                let mut stream = response.into_body().into_chunk_stream();
+                let mut contents = Vec::new();
+                while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
+                    let chunk = chunk.map_err(|error| format!("read through Proxima: {error}"))?;
+                    let next_len = contents
+                        .len()
+                        .checked_add(chunk.len())
+                        .ok_or_else(|| "remote source size overflow".to_owned())?;
+                    if next_len > max_bytes as usize {
+                        return Err(format!("remote source exceeds {max_bytes} bytes"));
                     }
-                    let max_age_secs = response
-                        .headers()
-                        .get_str("cache-control")
-                        .and_then(parse_cache_control_max_age);
-                    let mut stream = response.into_body().into_chunk_stream();
-                    let mut contents = Vec::new();
-                    while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
-                        let chunk =
-                            chunk.map_err(|error| format!("read through Proxima: {error}"))?;
-                        let next_len = contents
-                            .len()
-                            .checked_add(chunk.len())
-                            .ok_or_else(|| "remote source size overflow".to_owned())?;
-                        if next_len > max_bytes as usize {
-                            return Err(format!("remote source exceeds {max_bytes} bytes"));
-                        }
-                        contents.extend_from_slice(&chunk);
-                    }
-                    Ok((contents, max_age_secs))
-                })
-            })();
+                    contents.extend_from_slice(&chunk);
+                }
+                Ok((contents, max_age_secs))
+            })
+            .map_err(|error| format!("run Proxima HTTP client: {error}"))
+            .and_then(|result| result);
             let _ = result_sender.send(result);
         });
         match result_receiver.recv_timeout(timeout) {
