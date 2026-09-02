@@ -974,17 +974,12 @@ mod runtime {
         pub query_recording_redaction: QueryRecordingRedaction,
     }
 
-    #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+    #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
     #[serde(rename_all = "snake_case")]
     pub enum QueryRecordingRedaction {
+        #[default]
         Metadata,
         ActionOnly,
-    }
-
-    impl Default for QueryRecordingRedaction {
-        fn default() -> Self {
-            Self::Metadata
-        }
     }
 
     impl Default for PrivacyConfig {
@@ -10490,7 +10485,7 @@ mod runtime {
             assert!(payload.get("qtype").is_none());
             assert!(payload.get("qclass").is_none());
             assert_eq!(policy.query_log().expect("query log").snapshot().len(), 1);
-            assert_eq!(policy.admin_privacy_status().contains("action_only"), true);
+            assert!(policy.admin_privacy_status().contains("action_only"));
         }
 
         #[test]
