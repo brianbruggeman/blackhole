@@ -2679,8 +2679,10 @@ mod runtime {
 
     pub struct Policy {
         config: Config,
-        base_rules: Mutex<Vec<RuleConfig>>,
-        explicit_rules: Mutex<Vec<RuleConfig>>,
+        base_rules: Live<Vec<RuleConfig>>,
+        base_rules_control: LiveControl<Vec<RuleConfig>>,
+        explicit_rules: Live<Vec<RuleConfig>>,
+        explicit_rules_control: LiveControl<Vec<RuleConfig>>,
         blocklist_rules: Mutex<Vec<RuleConfig>>,
         blocklist_paths: Mutex<Vec<String>>,
         disabled_blocklist_paths: Mutex<BTreeSet<String>>,
@@ -3051,6 +3053,8 @@ mod runtime {
             let (rewrite_configs, rewrite_configs_control) = live(rewrite_configs);
             let (profiles, profiles_control) = live(profiles);
             let (client_groups, client_groups_control) = live(client_groups);
+            let (base_rules, base_rules_control) = live(base_rules);
+            let (explicit_rules, explicit_rules_control) = live(explicit_rules);
             let (legacy_domains, legacy_domains_control) = live(legacy_domains);
             let (legacy_mode, legacy_mode_control) = live(legacy_mode);
             let (default_action, default_action_control) = live(default_action);
@@ -3058,8 +3062,10 @@ mod runtime {
             let (regex_rules, regex_rules_control) = live(regex_rules);
             let policy = Self {
                 config,
-                base_rules: Mutex::new(base_rules),
-                explicit_rules: Mutex::new(explicit_rules),
+                base_rules,
+                base_rules_control,
+                explicit_rules,
+                explicit_rules_control,
                 blocklist_rules: Mutex::new(retained_blocklist_rules),
                 blocklist_paths: Mutex::new(blocklist_paths),
                 disabled_blocklist_paths: Mutex::new(disabled_blocklist_paths),
@@ -3162,11 +3168,10 @@ mod runtime {
         ) -> Result<ReloadState, policy::PolicyError> {
             let _reload = self.reload_lock.write().expect("reload lock");
             let started = Instant::now();
-            let mut base_rules = self.base_rules.lock().expect("base rules lock");
             let generated = self.current_profile_rules()?;
             let mut combined = rules.to_vec();
             combined.extend(generated);
-            self.publish_rules_locked(&combined, rules, &mut base_rules, "rules", started)
+            self.publish_rules_locked(&combined, rules, "rules", started)
         }
 
         fn validate_admission(
@@ -3373,22 +3378,11 @@ mod runtime {
         ) -> Result<ReloadState, policy::PolicyError> {
             let _reload = self.reload_lock.write().expect("reload lock");
             let started = Instant::now();
-            let mut base_rules = self.base_rules.lock().expect("base rules lock");
-            let mut explicit = self
-                .explicit_rules
-                .lock()
-                .expect("explicit rules lock")
-                .clone();
+            let mut explicit = self.explicit_rules.snapshot().as_ref().clone();
             explicit.extend_from_slice(additions);
             let mut combined = explicit.clone();
             combined.extend(self.current_profile_rules()?);
-            self.publish_rules_locked(
-                &combined,
-                &explicit,
-                &mut base_rules,
-                "rules_append",
-                started,
-            )
+            self.publish_rules_locked(&combined, &explicit, "rules_append", started)
         }
 
         /// Atomically replace or add explicit rules by stable ID. Existing
@@ -3412,11 +3406,7 @@ mod runtime {
                     return Err(policy::PolicyError::DuplicateRule { id: rule.id });
                 }
             }
-            let mut explicit = self
-                .explicit_rules
-                .lock()
-                .expect("explicit rules lock")
-                .clone();
+            let mut explicit = self.explicit_rules.snapshot().as_ref().clone();
             for update in updates {
                 if let Some(existing) = explicit.iter_mut().find(|rule| rule.id == update.id) {
                     *existing = update.clone();
@@ -3424,16 +3414,9 @@ mod runtime {
                     explicit.push(update.clone());
                 }
             }
-            let mut base_rules = self.base_rules.lock().expect("base rules lock");
             let mut combined = explicit.clone();
             combined.extend(self.current_profile_rules()?);
-            self.publish_rules_locked(
-                &combined,
-                &explicit,
-                &mut base_rules,
-                "rules_upsert",
-                started,
-            )
+            self.publish_rules_locked(&combined, &explicit, "rules_upsert", started)
         }
 
         /// Remove every cached answer and return the number of entries
@@ -3477,12 +3460,7 @@ mod runtime {
                     reason: "at least one rule ID is required".into(),
                 });
             }
-            let mut base_rules = self.base_rules.lock().expect("base rules lock");
-            let explicit = self
-                .explicit_rules
-                .lock()
-                .expect("explicit rules lock")
-                .clone();
+            let explicit = self.explicit_rules.snapshot().as_ref().clone();
             let original_len = explicit.len();
             let mut next = explicit.clone();
             next.retain(|rule| !requested.contains(&rule.id));
@@ -3494,7 +3472,7 @@ mod runtime {
             }
             let mut combined = next.clone();
             combined.extend(self.current_profile_rules()?);
-            self.publish_rules_locked(&combined, &next, &mut base_rules, "rules_remove", started)
+            self.publish_rules_locked(&combined, &next, "rules_remove", started)
         }
 
         fn current_profile_rules(&self) -> Result<Vec<RuleConfig>, policy::PolicyError> {
@@ -3507,7 +3485,6 @@ mod runtime {
             &self,
             rules: &[RuleConfig],
             explicit_rules: &[RuleConfig],
-            base_rules: &mut Vec<RuleConfig>,
             reload_kind: &'static str,
             started: Instant,
         ) -> Result<ReloadState, policy::PolicyError> {
@@ -3529,8 +3506,8 @@ mod runtime {
                 return Err(policy::PolicyError::DuplicateRule { id: rule.id });
             }
             let published = self.reference.reload(&published_rules)?;
-            *base_rules = rules.to_vec();
-            *self.explicit_rules.lock().expect("explicit rules lock") = explicit_rules.to_vec();
+            self.base_rules_control.replace(rules.to_vec());
+            self.explicit_rules_control.replace(explicit_rules.to_vec());
             self.domain_rules_configured
                 .store(!published_rules.is_empty(), Ordering::Release);
             self.rules_configured.store(
@@ -3784,8 +3761,8 @@ mod runtime {
             reload_kind: &'static str,
         ) -> Result<ReloadState, policy::PolicyError> {
             let replacement = load_blocklists(paths)?;
-            let base_rules = self.base_rules.lock().expect("base rules lock");
-            let mut rules = base_rules.clone();
+            let base_rules = self.base_rules.snapshot();
+            let mut rules = base_rules.as_ref().clone();
             rules.extend(replacement.iter().cloned());
             let regex_ids = self
                 .regex_rules
@@ -3837,8 +3814,8 @@ mod runtime {
                 self.observe_reload_latency("blocklists_unchanged", started);
                 return Ok(ReloadState::Unchanged);
             }
-            let base_rules = self.base_rules.lock().expect("base rules lock");
-            let mut rules = base_rules.clone();
+            let base_rules = self.base_rules.snapshot();
+            let mut rules = base_rules.as_ref().clone();
             rules.extend(replacement.iter().cloned());
             let regex_ids = self
                 .regex_rules
@@ -3983,21 +3960,10 @@ mod runtime {
             let _reload = self.reload_lock.write().expect("reload lock");
             let started = Instant::now();
             let generated = compile_profiles(profiles, client_groups)?;
-            let mut base_rules = self.base_rules.lock().expect("base rules lock");
-            let explicit = self
-                .explicit_rules
-                .lock()
-                .expect("explicit rules lock")
-                .clone();
+            let explicit = self.explicit_rules.snapshot().as_ref().clone();
             let mut combined = explicit.clone();
             combined.extend(generated);
-            let published = self.publish_rules_locked(
-                &combined,
-                &explicit,
-                &mut base_rules,
-                "profiles",
-                started,
-            )?;
+            let published = self.publish_rules_locked(&combined, &explicit, "profiles", started)?;
             self.profiles_control.replace(profiles.to_vec());
             self.client_groups_control.replace(client_groups.to_vec());
             Ok(published)
@@ -4123,21 +4089,11 @@ mod runtime {
             }
             let profiles = self.profiles.snapshot().as_ref().clone();
             let generated = compile_profiles(&profiles, &groups)?;
-            let explicit = self
-                .explicit_rules
-                .lock()
-                .expect("explicit rules lock")
-                .clone();
+            let explicit = self.explicit_rules.snapshot().as_ref().clone();
             let mut combined = explicit.clone();
             combined.extend(generated);
-            let mut base_rules = self.base_rules.lock().expect("base rules lock");
-            let published = self.publish_rules_locked(
-                &combined,
-                &explicit,
-                &mut base_rules,
-                "client_groups_upsert",
-                started,
-            )?;
+            let published =
+                self.publish_rules_locked(&combined, &explicit, "client_groups_upsert", started)?;
             self.client_groups_control.replace(groups);
             Ok(published)
         }
@@ -4173,21 +4129,11 @@ mod runtime {
             }
             let groups = self.client_groups.snapshot().as_ref().clone();
             let generated = compile_profiles(&profiles, &groups)?;
-            let explicit = self
-                .explicit_rules
-                .lock()
-                .expect("explicit rules lock")
-                .clone();
+            let explicit = self.explicit_rules.snapshot().as_ref().clone();
             let mut combined = explicit.clone();
             combined.extend(generated);
-            let mut base_rules = self.base_rules.lock().expect("base rules lock");
-            let published = self.publish_rules_locked(
-                &combined,
-                &explicit,
-                &mut base_rules,
-                "profiles_upsert",
-                started,
-            )?;
+            let published =
+                self.publish_rules_locked(&combined, &explicit, "profiles_upsert", started)?;
             self.profiles_control.replace(profiles);
             Ok(published)
         }
@@ -4215,21 +4161,11 @@ mod runtime {
             }
             let groups = self.client_groups.snapshot().as_ref().clone();
             let generated = compile_profiles(&profiles, &groups)?;
-            let explicit = self
-                .explicit_rules
-                .lock()
-                .expect("explicit rules lock")
-                .clone();
+            let explicit = self.explicit_rules.snapshot().as_ref().clone();
             let mut combined = explicit.clone();
             combined.extend(generated);
-            let mut base_rules = self.base_rules.lock().expect("base rules lock");
-            let published = self.publish_rules_locked(
-                &combined,
-                &explicit,
-                &mut base_rules,
-                "profiles_remove",
-                started,
-            )?;
+            let published =
+                self.publish_rules_locked(&combined, &explicit, "profiles_remove", started)?;
             self.profiles_control.replace(profiles);
             Ok(published)
         }
@@ -4270,21 +4206,11 @@ mod runtime {
             }
             let profiles = self.profiles.snapshot().as_ref().clone();
             let generated = compile_profiles(&profiles, &groups)?;
-            let explicit = self
-                .explicit_rules
-                .lock()
-                .expect("explicit rules lock")
-                .clone();
+            let explicit = self.explicit_rules.snapshot().as_ref().clone();
             let mut combined = explicit.clone();
             combined.extend(generated);
-            let mut base_rules = self.base_rules.lock().expect("base rules lock");
-            let published = self.publish_rules_locked(
-                &combined,
-                &explicit,
-                &mut base_rules,
-                "client_groups_remove",
-                started,
-            )?;
+            let published =
+                self.publish_rules_locked(&combined, &explicit, "client_groups_remove", started)?;
             self.client_groups_control.replace(groups);
             Ok(published)
         }
@@ -4420,8 +4346,8 @@ mod runtime {
                 .collect::<BTreeSet<_>>();
             let compiled_regex = compile_regex_rules(regex_configs, rule_ids)?;
             self.reference.reload(&published)?;
-            *self.base_rules.lock().expect("base rules lock") = base;
-            *self.explicit_rules.lock().expect("explicit rules lock") = rules.to_vec();
+            self.base_rules_control.replace(base);
+            self.explicit_rules_control.replace(rules.to_vec());
             self.regex_rules_control.replace(compiled_regex);
             self.profiles_control.replace(profiles.to_vec());
             self.client_groups_control.replace(client_groups.to_vec());
@@ -6109,7 +6035,7 @@ mod runtime {
         /// paths, query names, client identities, credentials, or payloads.
         pub(crate) fn admin_policy_status(&self) -> String {
             let _reload = self.reload_lock.read().expect("reload lock");
-            let base_rules = self.base_rules.lock().expect("base rules lock");
+            let base_rules = self.base_rules.snapshot();
             let regex_rules = self.regex_rules.snapshot();
             let blocklist_rules = self.blocklist_rules.lock().expect("blocklist rules lock");
             let blocklist_paths = self.blocklist_paths.lock().expect("blocklist paths lock");
@@ -6231,7 +6157,7 @@ mod runtime {
         /// bundle reload contract treats null as retaining the loaded map.
         pub(crate) fn admin_policy_bundle(&self) -> String {
             let _reload = self.reload_lock.read().expect("reload lock");
-            let rules = self.explicit_rules.lock().expect("explicit rules lock");
+            let rules = self.explicit_rules.snapshot();
             let regex_rules = self.regex_rules.snapshot();
             let profiles = self.profiles.snapshot();
             let client_groups = self.client_groups.snapshot();
@@ -6321,11 +6247,11 @@ mod runtime {
 
         pub(crate) fn admin_rules(&self) -> String {
             let _reload = self.reload_lock.read().expect("reload lock");
-            let base_rules = self.base_rules.lock().expect("base rules lock").clone();
+            let base_rules = self.base_rules.snapshot();
             let regex_rules = self.regex_rules.snapshot();
             let total = base_rules.len().saturating_add(regex_rules.len());
             let mut rules = Vec::with_capacity(total.min(256));
-            for rule in &base_rules {
+            for rule in base_rules.as_ref() {
                 rules.push(serde_json::json!({
                     "kind": "domain",
                     "id": rule.id,
