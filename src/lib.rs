@@ -4434,6 +4434,10 @@ mod runtime {
         ) -> Result<ReloadState, policy::PolicyError> {
             let _reload = self.reload_lock.write().expect("reload lock");
             let started = Instant::now();
+            if self.rewrite_configs.read(|current| current == configs) {
+                self.observe_reload_latency("rewrites_unchanged", started);
+                return Ok(ReloadState::Unchanged);
+            }
             self.publish_rewrites_locked(configs, "rewrites", started)
         }
 

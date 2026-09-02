@@ -1069,7 +1069,12 @@ impl SendPipe for AdminHandler {
                     }
                 };
                 match self.policy.reload_rewrites(&rewrites) {
-                    Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
+                    Ok(crate::snapshot::ReloadState::Published) => {
+                        Ok(Response::ok("{\"status\":\"reloaded\"}"))
+                    }
+                    Ok(crate::snapshot::ReloadState::Unchanged) => {
+                        Ok(Response::ok("{\"status\":\"unchanged\"}"))
+                    }
                     Err(error) => Ok(Response::new(422).with_body(format!(
                         "{{\"status\":\"error\",\"message\":{}}}",
                         serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
@@ -2970,6 +2975,15 @@ mod tests {
                 .status,
             200
         );
+        let unchanged_reload = Request::builder()
+            .method("POST")
+            .path("/reload/rewrites")
+            .payload(r#"[{"name":"router.example","ipv4":"192.0.2.1","ttl":30}]"#)
+            .build()
+            .expect("unchanged rewrite reload request");
+        let response = block_on(handler.call(unchanged_reload)).expect("unchanged reload response");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.payload.as_ref(), br#"{"status":"unchanged"}"#);
         let invalid_reload = Request::builder()
             .method("POST")
             .path("/reload/rewrites")
