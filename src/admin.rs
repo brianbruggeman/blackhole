@@ -1733,6 +1733,14 @@ mod tests {
             clear_abuse.payload,
             Bytes::from_static(b"{\"status\":\"cleared\",\"entries\":0}")
         );
+        let revoke_global =
+            block_on(handler.call(request("POST", "/abuse/global/revoke")))
+                .expect("global abuse revoke");
+        assert_eq!(revoke_global.status, 200);
+        assert_eq!(
+            revoke_global.payload,
+            Bytes::from_static(b"{\"status\":\"global_revoked\"}")
+        );
         let country_status =
             block_on(handler.call(request("GET", "/country/status"))).expect("country status");
         assert_eq!(country_status.status, 200);
