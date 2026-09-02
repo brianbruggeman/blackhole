@@ -2684,8 +2684,10 @@ mod runtime {
         blocklist_rules: Mutex<Vec<RuleConfig>>,
         blocklist_paths: Mutex<Vec<String>>,
         disabled_blocklist_paths: Mutex<BTreeSet<String>>,
-        profiles: RwLock<Vec<ServiceProfileConfig>>,
-        client_groups: RwLock<Vec<ClientGroupConfig>>,
+        profiles: Live<Vec<ServiceProfileConfig>>,
+        profiles_control: LiveControl<Vec<ServiceProfileConfig>>,
+        client_groups: Live<Vec<ClientGroupConfig>>,
+        client_groups_control: LiveControl<Vec<ClientGroupConfig>>,
         client_identities: Live<Vec<ClientIdentityConfig>>,
         client_identity_control: LiveControl<Vec<ClientIdentityConfig>>,
         country_policy: Live<Option<CountryPolicy>>,
@@ -3047,6 +3049,8 @@ mod runtime {
             let (admission, admission_control) = live(admission);
             let (rewrites, rewrite_control) = live(rewrites);
             let (rewrite_configs, rewrite_configs_control) = live(rewrite_configs);
+            let (profiles, profiles_control) = live(profiles);
+            let (client_groups, client_groups_control) = live(client_groups);
             let (legacy_domains, legacy_domains_control) = live(legacy_domains);
             let (legacy_mode, legacy_mode_control) = live(legacy_mode);
             let (default_action, default_action_control) = live(default_action);
@@ -3059,8 +3063,10 @@ mod runtime {
                 blocklist_rules: Mutex::new(retained_blocklist_rules),
                 blocklist_paths: Mutex::new(blocklist_paths),
                 disabled_blocklist_paths: Mutex::new(disabled_blocklist_paths),
-                profiles: RwLock::new(profiles),
-                client_groups: RwLock::new(client_groups),
+                profiles,
+                profiles_control,
+                client_groups,
+                client_groups_control,
                 client_identities,
                 client_identity_control,
                 country_policy,
@@ -3492,10 +3498,9 @@ mod runtime {
         }
 
         fn current_profile_rules(&self) -> Result<Vec<RuleConfig>, policy::PolicyError> {
-            compile_profiles(
-                &self.profiles.read().expect("profiles lock"),
-                &self.client_groups.read().expect("client groups lock"),
-            )
+            let profiles = self.profiles.snapshot();
+            let client_groups = self.client_groups.snapshot();
+            compile_profiles(&profiles, &client_groups)
         }
 
         fn publish_rules_locked(
@@ -3993,8 +3998,8 @@ mod runtime {
                 "profiles",
                 started,
             )?;
-            *self.profiles.write().expect("profiles lock") = profiles.to_vec();
-            *self.client_groups.write().expect("client groups lock") = client_groups.to_vec();
+            self.profiles_control.replace(profiles.to_vec());
+            self.client_groups_control.replace(client_groups.to_vec());
             Ok(published)
         }
 
@@ -4105,11 +4110,7 @@ mod runtime {
                     });
                 }
             }
-            let mut groups = self
-                .client_groups
-                .read()
-                .expect("client groups lock")
-                .clone();
+            let mut groups = self.client_groups.snapshot().as_ref().clone();
             for update in updates {
                 if let Some(existing) = groups
                     .iter_mut()
@@ -4120,7 +4121,7 @@ mod runtime {
                     groups.push(update.clone());
                 }
             }
-            let profiles = self.profiles.read().expect("profiles lock").clone();
+            let profiles = self.profiles.snapshot().as_ref().clone();
             let generated = compile_profiles(&profiles, &groups)?;
             let explicit = self
                 .explicit_rules
@@ -4137,7 +4138,7 @@ mod runtime {
                 "client_groups_upsert",
                 started,
             )?;
-            *self.client_groups.write().expect("client groups lock") = groups;
+            self.client_groups_control.replace(groups);
             Ok(published)
         }
 
@@ -4161,7 +4162,7 @@ mod runtime {
                     return Err(policy::PolicyError::DuplicateRule { id: profile.id });
                 }
             }
-            let mut profiles = self.profiles.read().expect("profiles lock").clone();
+            let mut profiles = self.profiles.snapshot().as_ref().clone();
             for update in updates {
                 if let Some(existing) = profiles.iter_mut().find(|profile| profile.id == update.id)
                 {
@@ -4170,11 +4171,7 @@ mod runtime {
                     profiles.push(update.clone());
                 }
             }
-            let groups = self
-                .client_groups
-                .read()
-                .expect("client groups lock")
-                .clone();
+            let groups = self.client_groups.snapshot().as_ref().clone();
             let generated = compile_profiles(&profiles, &groups)?;
             let explicit = self
                 .explicit_rules
@@ -4191,7 +4188,7 @@ mod runtime {
                 "profiles_upsert",
                 started,
             )?;
-            *self.profiles.write().expect("profiles lock") = profiles;
+            self.profiles_control.replace(profiles);
             Ok(published)
         }
 
@@ -4207,7 +4204,7 @@ mod runtime {
                 });
             }
             let requested = ids.iter().copied().collect::<BTreeSet<_>>();
-            let current = self.profiles.read().expect("profiles lock").clone();
+            let current = self.profiles.snapshot().as_ref().clone();
             let mut profiles = current.clone();
             profiles.retain(|profile| !requested.contains(&profile.id));
             if profiles.len() == current.len() {
@@ -4216,11 +4213,7 @@ mod runtime {
                     reason: "no requested profile ID exists".into(),
                 });
             }
-            let groups = self
-                .client_groups
-                .read()
-                .expect("client groups lock")
-                .clone();
+            let groups = self.client_groups.snapshot().as_ref().clone();
             let generated = compile_profiles(&profiles, &groups)?;
             let explicit = self
                 .explicit_rules
@@ -4237,7 +4230,7 @@ mod runtime {
                 "profiles_remove",
                 started,
             )?;
-            *self.profiles.write().expect("profiles lock") = profiles;
+            self.profiles_control.replace(profiles);
             Ok(published)
         }
 
@@ -4265,11 +4258,7 @@ mod runtime {
                     reason: "group names must be non-empty".into(),
                 });
             }
-            let current = self
-                .client_groups
-                .read()
-                .expect("client groups lock")
-                .clone();
+            let current = self.client_groups.snapshot().as_ref().clone();
             let mut groups = current.clone();
             let original_len = groups.len();
             groups.retain(|group| !requested.contains(&group.name.trim().to_ascii_lowercase()));
@@ -4279,7 +4268,7 @@ mod runtime {
                     reason: "no requested group exists".into(),
                 });
             }
-            let profiles = self.profiles.read().expect("profiles lock").clone();
+            let profiles = self.profiles.snapshot().as_ref().clone();
             let generated = compile_profiles(&profiles, &groups)?;
             let explicit = self
                 .explicit_rules
@@ -4296,7 +4285,7 @@ mod runtime {
                 "client_groups_remove",
                 started,
             )?;
-            *self.client_groups.write().expect("client groups lock") = groups;
+            self.client_groups_control.replace(groups);
             Ok(published)
         }
 
@@ -4434,8 +4423,8 @@ mod runtime {
             *self.base_rules.lock().expect("base rules lock") = base;
             *self.explicit_rules.lock().expect("explicit rules lock") = rules.to_vec();
             self.regex_rules_control.replace(compiled_regex);
-            *self.profiles.write().expect("profiles lock") = profiles.to_vec();
-            *self.client_groups.write().expect("client groups lock") = client_groups.to_vec();
+            self.profiles_control.replace(profiles.to_vec());
+            self.client_groups_control.replace(client_groups.to_vec());
             self.client_identity_control.replace(client_identities);
             self.rewrite_control.replace(rewrites);
             self.rewrite_configs_control
@@ -6105,8 +6094,8 @@ mod runtime {
                 "status": "ok",
                 "rules_configured": self.rules_configured.load(Ordering::Acquire),
                 "policy_generation": self.policy_generation.load(Ordering::Acquire),
-                "profiles_configured": self.profiles.read().expect("profiles lock").len(),
-                "client_groups_configured": self.client_groups.read().expect("client groups lock").len(),
+                "profiles_configured": self.profiles.read(Vec::len),
+                "client_groups_configured": self.client_groups.read(Vec::len),
                 "upstream_configured": self.upstream.is_some(),
                 "country_policy_configured": self.country_policy.snapshot().is_some(),
                 "country_reload_interval_secs": self.config.country_policy.reload_interval_secs,
@@ -6128,8 +6117,8 @@ mod runtime {
                 .disabled_blocklist_paths
                 .lock()
                 .expect("disabled blocklist paths lock");
-            let profiles = self.profiles.read().expect("profiles lock");
-            let client_groups = self.client_groups.read().expect("client groups lock");
+            let profiles = self.profiles.snapshot();
+            let client_groups = self.client_groups.snapshot();
             let identity_rules = base_rules
                 .iter()
                 .filter(|rule| rule.client_identity.is_some())
@@ -6244,8 +6233,8 @@ mod runtime {
             let _reload = self.reload_lock.read().expect("reload lock");
             let rules = self.explicit_rules.lock().expect("explicit rules lock");
             let regex_rules = self.regex_rules.snapshot();
-            let profiles = self.profiles.read().expect("profiles lock");
-            let client_groups = self.client_groups.read().expect("client groups lock");
+            let profiles = self.profiles.snapshot();
+            let client_groups = self.client_groups.snapshot();
             let client_identities = self.client_identities.snapshot();
             let rewrites = self.rewrite_configs.snapshot();
             let value = serde_json::json!({
@@ -6381,8 +6370,8 @@ mod runtime {
 
         pub(crate) fn admin_profiles(&self) -> String {
             let _reload = self.reload_lock.read().expect("reload lock");
-            let profiles = self.profiles.read().expect("profiles lock");
-            let groups = self.client_groups.read().expect("client groups lock");
+            let profiles = self.profiles.snapshot();
+            let groups = self.client_groups.snapshot();
             let visible = profiles
                 .iter()
                 .take(MAX_ADMIN_LOG_ENTRIES)
@@ -6438,7 +6427,7 @@ mod runtime {
 
         pub(crate) fn admin_client_groups(&self) -> String {
             let _reload = self.reload_lock.read().expect("reload lock");
-            let groups = self.client_groups.read().expect("client groups lock");
+            let groups = self.client_groups.snapshot();
             let visible = groups
                 .iter()
                 .take(MAX_ADMIN_LOG_ENTRIES)
