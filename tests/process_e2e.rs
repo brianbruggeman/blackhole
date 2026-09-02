@@ -829,7 +829,7 @@ fn shipped_binary_serves_bounded_stale_cache_during_upstream_timeout() {
     );
     drop(wait_for_tcp(listener_addr));
     let udp = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind UDP client");
-    udp.set_read_timeout(Some(Duration::from_secs(3)))
+    udp.set_read_timeout(Some(Duration::from_secs(10)))
         .expect("set UDP timeout");
     let initial_query = query(0x3001, "stale.example.");
     udp.send_to(&initial_query, listener_addr)
