@@ -33,6 +33,7 @@ enum ReplyMode {
     CnameChain,
     CnameChainAllowed,
     CnameChainDrop,
+    DnameChain,
 }
 
 struct FakeState {
@@ -78,6 +79,7 @@ impl FakeSocket {
             | ReplyMode::CnameChain
             | ReplyMode::CnameChainAllowed
             | ReplyMode::CnameChainDrop
+            | ReplyMode::DnameChain
             | ReplyMode::WrongQuestion
             | ReplyMode::NotResponse => {
                 let message = parse_message(query).expect("fake query");
@@ -95,6 +97,8 @@ impl FakeSocket {
                 let rdata = encode::ipv4_rdata(Ipv4Addr::new(93, 184, 216, 34));
                 let mut cname_rdata = Vec::new();
                 encode::encode_name("blocked.example.", &mut cname_rdata).expect("fake CNAME");
+                let mut dname_rdata = Vec::new();
+                encode::encode_name("target.example.", &mut dname_rdata).expect("fake DNAME");
                 let record = encode::AnswerRecord {
                     name: &response_name,
                     rtype: 1,
@@ -110,6 +114,14 @@ impl FakeSocket {
                 };
                 let records = if matches!(mode, ReplyMode::Negative | ReplyMode::Servfail) {
                     Vec::new()
+                } else if matches!(mode, ReplyMode::DnameChain) {
+                    vec![encode::AnswerRecord {
+                        name: "example.com.",
+                        rtype: 39,
+                        rclass: question.qclass,
+                        ttl: 30,
+                        rdata: &dname_rdata,
+                    }]
                 } else if matches!(
                     mode,
                     ReplyMode::CnameChain
@@ -238,7 +250,10 @@ fn policy_with_action(mode: ReplyMode, action: Action) -> (Policy, FakeSocket) {
     let mut config = Config::default();
     config.admission.max_response_records = if matches!(
         mode,
-        ReplyMode::CnameChain | ReplyMode::CnameChainAllowed | ReplyMode::CnameChainDrop
+        ReplyMode::CnameChain
+            | ReplyMode::CnameChainAllowed
+            | ReplyMode::CnameChainDrop
+            | ReplyMode::DnameChain
     ) {
         2
     } else {
@@ -259,11 +274,18 @@ fn policy_with_action(mode: ReplyMode, action: Action) -> (Policy, FakeSocket) {
         client_cidrs: Vec::new(),
         client_identity: None,
     }];
-    if matches!(mode, ReplyMode::CnameChain | ReplyMode::CnameChainDrop) {
+    if matches!(
+        mode,
+        ReplyMode::CnameChain | ReplyMode::CnameChainDrop | ReplyMode::DnameChain
+    ) {
         config.policy.rules.push(RuleConfig {
             enabled: true,
             id: 2,
-            domain: "blocked.example".into(),
+            domain: if matches!(mode, ReplyMode::DnameChain) {
+                "www.target.example".into()
+            } else {
+                "blocked.example".into()
+            },
             action: if matches!(mode, ReplyMode::CnameChainDrop) {
                 Action::Drop
             } else {
@@ -441,6 +463,27 @@ async fn fake_upstream_cname_drop_target_emits_no_dns_response() {
     let client = "192.0.2.10".parse().expect("client address");
     assert!(policy.call(request_from_client(client)).await.is_err());
     assert_eq!(socket.state.lock().expect("fake state").sent.len(), 1);
+}
+
+#[proxima::test]
+async fn fake_upstream_blocked_dname_target_applies_policy_before_cache() {
+    let (policy, socket) = policy(ReplyMode::DnameChain);
+    let client = "192.0.2.10".parse().expect("client address");
+    let mut request = request_from_client(client);
+    request.payload.name = "www.example.com.".into();
+    let first = policy
+        .call(request.clone())
+        .await
+        .expect("DNAME policy response");
+    assert_eq!(first.payload.rcode, 3);
+    assert!(first.payload.records.is_empty());
+    let second = policy.call(request).await.expect("second DNAME response");
+    assert_eq!(second.payload.rcode, 3);
+    assert_eq!(
+        socket.state.lock().expect("fake state").sent.len(),
+        2,
+        "a policy-replaced DNAME chain must not enter the upstream cache"
+    );
 }
 
 #[proxima::test]

@@ -7591,7 +7591,7 @@ mod runtime {
                         && query_name.ends_with(&format!(".{owner}"))
                     {
                         let prefix = &query_name[..query_name.len() - owner.len() - 1];
-                        let synthesized = format!("{prefix}.{}.", target.to_dotted());
+                        let synthesized = format!("{prefix}.{}", target.to_dotted());
                         if let Some(action) = self.alias_target_action(query, synthesized, client)
                             && !matches!(action, Action::Pass | Action::Observe | Action::Forward)
                         {
