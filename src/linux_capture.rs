@@ -302,7 +302,10 @@ impl OwnershipStore for FileOwnershipStore {
             let _ = std::fs::remove_file(&temporary);
             return Err(error.to_string());
         }
-        std::fs::rename(&temporary, &self.path).map_err(|error| error.to_string())?;
+        if let Err(error) = std::fs::rename(&temporary, &self.path) {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(error.to_string());
+        }
         if let Some(parent) = self.path.parent() {
             std::fs::File::open(parent)
                 .map_err(|error| error.to_string())?
@@ -789,6 +792,28 @@ mod tests {
         std::fs::write(&path, "partial\nrecord\n").expect("corrupt journal");
         assert_eq!(store.load().expect("corrupt journal is safe"), None);
         store.clear().expect("journal cleanup");
+    }
+
+    #[test]
+    fn ownership_store_does_not_overwrite_or_retain_a_colliding_temp_file() {
+        let path = std::env::temp_dir().join(format!(
+            "blackhole-capture-collision-{}.state",
+            std::process::id()
+        ));
+        let temporary = path.with_extension(format!("tmp.{}", std::process::id()));
+        std::fs::write(&temporary, "operator-owned").expect("create collision file");
+        let ownership = NftRulePlan::new("capture", 5353, 42).unwrap().ownership();
+        let mut store = FileOwnershipStore::new(&path);
+        let error = store
+            .save(&ownership)
+            .expect_err("collision must fail closed");
+        assert!(!error.is_empty());
+        assert_eq!(
+            std::fs::read_to_string(&temporary).expect("read collision file"),
+            "operator-owned"
+        );
+        std::fs::remove_file(temporary).expect("remove collision file");
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
