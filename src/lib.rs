@@ -8534,6 +8534,11 @@ mod runtime {
                 serde_json::from_str(&policy.admin_policy_status()).expect("status");
             let unchanged_country_status: serde_json::Value =
                 serde_json::from_str(&policy.admin_country_status()).expect("country status");
+            let initial_map = "US 192.0.2.0/24 US-CA AS64500\nCA 198.51.100.0/24 CA-ON 64501\n";
+            assert_eq!(
+                unchanged_country_status["source_sha256"],
+                source_sha256(initial_map.as_bytes())
+            );
             let unchanged_fingerprint = unchanged_country_status["source_fingerprint"]
                 .as_str()
                 .expect("country source fingerprint")
