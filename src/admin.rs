@@ -1557,6 +1557,11 @@ mod tests {
         );
         assert!(
             ui.payload
+                .windows(b"revoke-global-abuse".len())
+                .any(|window| window == b"revoke-global-abuse")
+        );
+        assert!(
+            ui.payload
                 .windows(b"window.setInterval(refresh, 5000)".len())
                 .any(|window| window == b"window.setInterval(refresh, 5000)")
         );
