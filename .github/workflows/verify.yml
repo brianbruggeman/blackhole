@@ -190,9 +190,8 @@ jobs:
           new_package=$(find dist -name "blackhole_${package_version}_*.deb" -print -quit)
           test -n "$old_package" && test -n "$new_package"
           set -o pipefail
-          sudo -n env PATH="$PATH" sh -c \
-            'cd "$1" && BLACKHOLE_SMOKE_TRACE=1 deploy/package/smoke-deb.sh "$2" "$3"' \
-            sh "$PWD" "$PWD/$old_package" "$PWD/$new_package" \
+          sudo -n env PATH="$PATH" BLACKHOLE_SMOKE_TRACE=1 \
+            deploy/package/smoke-deb.sh "$PWD/$old_package" "$PWD/$new_package" \
             2>&1 | tee debian-smoke.log
       - if: always()
         uses: actions/upload-artifact@v4
