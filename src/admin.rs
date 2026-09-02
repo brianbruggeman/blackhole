@@ -3819,6 +3819,7 @@ mod tests {
         let mut config = crate::Config::default();
         config.policy.rewrites = vec![RewriteConfig {
             name: "router.example".into(),
+            client_identity: None,
             ipv4: Some("192.0.2.1".parse().expect("address")),
             ipv6: None,
             cname: None,

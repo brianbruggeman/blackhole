@@ -65,6 +65,9 @@ blocklist_reload_interval_secs = 0
 name = "router.home.arpa"
 ipv4 = "192.0.2.1"
 ipv6 = "2001:db8::1"
+# Optional transient identity scope; identity-scoped rewrites override global
+# rewrites for that client while remaining bounded and non-retained.
+# client_identity = "family-router"
 ttl = 30
 
 # Optional named service profile. Each domain becomes a policy rule; explicit

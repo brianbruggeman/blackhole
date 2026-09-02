@@ -925,8 +925,8 @@ mod runtime {
 
     #[derive(Debug, Clone, Default)]
     struct RewriteTable {
-        entries: HashMap<(String, u16), DnsAnswer>,
-        wildcard_entries: HashMap<u16, HashMap<String, DnsAnswer>>,
+        entries: HashMap<(Option<String>, String, u16), DnsAnswer>,
+        wildcard_entries: HashMap<(Option<String>, u16), HashMap<String, DnsAnswer>>,
     }
 
     impl RewriteTable {
@@ -934,17 +934,27 @@ mod runtime {
             self.entries.len()
         }
 
-        fn answer(&self, query: &proxima_dns::DnsQuery) -> Option<DnsAnswer> {
+        fn answer(
+            &self,
+            query: &proxima_dns::DnsQuery,
+            client_identity: Option<&str>,
+        ) -> Option<DnsAnswer> {
             let name = normalize(&query.name);
-            if let Some(answer) = self.entries.get(&(name.clone(), query.qtype)) {
-                return Some(answer.clone());
+            for identity in [client_identity, None] {
+                if let Some(answer) =
+                    self.entries
+                        .get(&(identity.map(str::to_owned), name.clone(), query.qtype))
+                {
+                    return Some(answer.clone());
+                }
             }
             let suffix = name.split_once('.').map(|(_, suffix)| suffix)?;
-            let answer = self
-                .wildcard_entries
-                .get(&query.qtype)?
-                .get(suffix)?
-                .clone();
+            let answer = [client_identity, None].into_iter().find_map(|identity| {
+                self.wildcard_entries
+                    .get(&(identity.map(str::to_owned), query.qtype))?
+                    .get(suffix)
+                    .cloned()
+            })?;
             let query_name = query.name.clone();
             Some(DnsAnswer {
                 records: answer
@@ -1457,6 +1467,9 @@ mod runtime {
     #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
     pub struct RewriteConfig {
         pub name: String,
+        /// Optional transient client identity targeted by this rewrite.
+        #[serde(default)]
+        pub client_identity: Option<String>,
         #[serde(default)]
         pub ipv4: Option<Ipv4Addr>,
         #[serde(default)]
@@ -2833,6 +2846,14 @@ mod runtime {
         let mut entries = HashMap::new();
         for config in configs {
             let name = normalize(&config.name);
+            if let Some(identity) = config.client_identity.as_deref()
+                && (identity.is_empty() || !identity.is_ascii() || identity.len() > 64)
+            {
+                return Err(policy::PolicyError::InvalidRewrite {
+                    name: config.name.clone(),
+                    reason: "client_identity must be bounded non-empty ASCII".into(),
+                });
+            }
             let wildcard_suffix = name.strip_prefix("*.");
             if name.is_empty()
                 || wildcard_suffix.is_some_and(|suffix| {
@@ -2867,7 +2888,7 @@ mod runtime {
             }
             let record_name = format!("{name}.");
             if let Some(address) = config.ipv4 {
-                let key = (name.clone(), 1);
+                let key = (config.client_identity.clone(), name.clone(), 1);
                 if entries.contains_key(&key) {
                     return Err(policy::PolicyError::InvalidRewrite {
                         name: config.name.clone(),
@@ -2886,7 +2907,7 @@ mod runtime {
                 );
             }
             if let Some(address) = config.ipv6 {
-                let key = (name.clone(), 28);
+                let key = (config.client_identity.clone(), name.clone(), 28);
                 if entries.contains_key(&key) {
                     return Err(policy::PolicyError::InvalidRewrite {
                         name: config.name.clone(),
@@ -2919,7 +2940,7 @@ mod runtime {
                         reason: "cname exceeds DNS wire limits".into(),
                     }
                 })?;
-                let key = (name.clone(), 5);
+                let key = (config.client_identity.clone(), name.clone(), 5);
                 entries.insert(
                     key,
                     DnsAnswer::ok(vec![DnsAnswerRecord {
@@ -2956,7 +2977,7 @@ mod runtime {
                         reason: "ptr exceeds DNS wire limits".into(),
                     }
                 })?;
-                let key = (name.clone(), 12);
+                let key = (config.client_identity.clone(), name.clone(), 12);
                 if entries.contains_key(&key) {
                     return Err(policy::PolicyError::InvalidRewrite {
                         name: config.name.clone(),
@@ -2991,7 +3012,7 @@ mod runtime {
                         reason: "txt must be non-empty ASCII of at most 255 bytes".into(),
                     });
                 }
-                let key = (name, 16);
+                let key = (config.client_identity.clone(), name, 16);
                 if entries.contains_key(&key) {
                     return Err(policy::PolicyError::InvalidRewrite {
                         name: config.name.clone(),
@@ -3014,15 +3035,16 @@ mod runtime {
             }
         }
         let mut exact_entries = HashMap::new();
-        let mut wildcard_entries = HashMap::<u16, HashMap<String, DnsAnswer>>::new();
-        for ((name, qtype), answer) in entries {
+        let mut wildcard_entries =
+            HashMap::<(Option<String>, u16), HashMap<String, DnsAnswer>>::new();
+        for ((identity, name, qtype), answer) in entries {
             if let Some(suffix) = name.strip_prefix("*.") {
                 wildcard_entries
-                    .entry(qtype)
+                    .entry((identity.clone(), qtype))
                     .or_default()
                     .insert(suffix.to_owned(), answer);
             } else {
-                exact_entries.insert((name, qtype), answer);
+                exact_entries.insert((identity, name, qtype), answer);
             }
         }
         Ok(RewriteTable {
@@ -6752,7 +6774,7 @@ mod runtime {
             if !*self.filtering_enabled.snapshot() {
                 return self
                     .rewrites
-                    .read(|rewrites| rewrites.answer(query))
+                    .read(|rewrites| rewrites.answer(query, None))
                     .or_else(|| Some(DnsAnswer::ok(Vec::new())))
                     .map(|answer| self.cap_answer(query, answer));
             }
@@ -6764,7 +6786,7 @@ mod runtime {
                 }
                 return self
                     .rewrites
-                    .read(|rewrites| rewrites.answer(query))
+                    .read(|rewrites| rewrites.answer(query, None))
                     .or_else(|| Some(DnsAnswer::ok(Vec::new())))
                     .map(|answer| self.cap_answer(query, answer));
             }
@@ -6784,7 +6806,7 @@ mod runtime {
                 )),
                 Some(Action::Pass | Action::Observe) => self
                     .rewrites
-                    .read(|rewrites| rewrites.answer(query))
+                    .read(|rewrites| rewrites.answer(query, None))
                     .or_else(|| Some(DnsAnswer::ok(Vec::new()))),
                 None => Some(DnsAnswer::ok(Vec::new())),
             };
@@ -8404,6 +8426,7 @@ mod runtime {
                 }
             }
             let query = request.payload;
+            let client_identity = self.client_identity_for(client);
             if !self.admission_allows(&query) {
                 self.observe_failure("admission_rejected");
                 self.observe_for_client(Action::Reject, client);
@@ -8451,7 +8474,9 @@ mod runtime {
                 }
             }
             if matches!(action, Some(Action::Pass | Action::Observe) | None)
-                && let Some(answer) = self.rewrites.read(|rewrites| rewrites.answer(&query))
+                && let Some(answer) = self
+                    .rewrites
+                    .read(|rewrites| rewrites.answer(&query, client_identity.as_deref()))
             {
                 self.observe_for_client(action.unwrap_or(Action::Pass), client);
                 return Ok(DnsPipeReply::typed(200, self.cap_answer(&query, answer)));
@@ -11282,6 +11307,7 @@ mod runtime {
             config.policy.rewrites = vec![
                 RewriteConfig {
                     name: "router.home.arpa".into(),
+                    client_identity: None,
                     ipv4: Some(Ipv4Addr::new(192, 0, 2, 1)),
                     ipv6: Some(Ipv6Addr::LOCALHOST),
                     cname: None,
@@ -11291,6 +11317,7 @@ mod runtime {
                 },
                 RewriteConfig {
                     name: "blocked.home.arpa".into(),
+                    client_identity: None,
                     ipv4: Some(Ipv4Addr::new(192, 0, 2, 2)),
                     ipv6: None,
                     cname: None,
@@ -11344,10 +11371,86 @@ mod runtime {
         }
 
         #[test]
+        fn client_identity_rewrite_overrides_global_rewrite() {
+            let mut config = Config::default();
+            config.policy.rewrites = vec![
+                RewriteConfig {
+                    name: "router.example".into(),
+                    client_identity: None,
+                    ipv4: Some(Ipv4Addr::new(192, 0, 2, 1)),
+                    ipv6: None,
+                    cname: None,
+                    ptr: None,
+                    txt: None,
+                    ttl: 30,
+                },
+                RewriteConfig {
+                    name: "router.example".into(),
+                    client_identity: Some("family".into()),
+                    ipv4: Some(Ipv4Addr::new(192, 0, 2, 42)),
+                    ipv6: None,
+                    cname: None,
+                    ptr: None,
+                    txt: None,
+                    ttl: 30,
+                },
+            ];
+            config.policy.client_identities = vec![ClientIdentityConfig {
+                name: "family".into(),
+                enabled: true,
+                query_log_enabled: true,
+                statistics_enabled: true,
+                cache_enabled: true,
+                filtering_enabled: true,
+                default_action: None,
+                upstream: None,
+                clients: vec![Ipv4Addr::new(192, 0, 2, 10).into()],
+                max_queries_per_second: None,
+                max_response_bytes_per_second: None,
+                max_inflight_requests: None,
+                client_cidrs: Vec::new(),
+            }];
+            let policy = Policy::new(config).expect("valid scoped rewrites");
+            let request = |client| DnsPipeRequest {
+                method: proxima_primitives::pipe::method::Method::from_wire(
+                    bytes::Bytes::from_static(b"DNS"),
+                ),
+                path: bytes::Bytes::from_static(b"/"),
+                query: proxima_primitives::pipe::header_list::HeaderList::new(),
+                metadata: proxima_primitives::pipe::header_list::HeaderList::new(),
+                payload: proxima_dns::DnsQuery {
+                    id: 1,
+                    recursion_desired: true,
+                    name: "router.example.".into(),
+                    qtype: 1,
+                    qclass: 1,
+                },
+                stream: None,
+                context: RequestContext {
+                    peer: Some(PeerInfo::Tcp(std::net::SocketAddr::new(client, 1234))),
+                    ..RequestContext::default()
+                },
+            };
+            let family = futures::executor::block_on(
+                policy.call(request(Ipv4Addr::new(192, 0, 2, 10).into())),
+            )
+            .expect("family rewrite response")
+            .payload;
+            assert_eq!(family.records[0].rdata, vec![192, 0, 2, 42]);
+            let other = futures::executor::block_on(
+                policy.call(request(Ipv4Addr::new(192, 0, 2, 11).into())),
+            )
+            .expect("global rewrite response")
+            .payload;
+            assert_eq!(other.records[0].rdata, vec![192, 0, 2, 1]);
+        }
+
+        #[test]
         fn local_cname_rewrite_encodes_target_and_rejects_mixed_records() {
             let mut config = Config::default();
             config.policy.rewrites = vec![RewriteConfig {
                 name: "alias.home.arpa".into(),
+                client_identity: None,
                 ipv4: None,
                 ipv6: None,
                 cname: Some("router.home.arpa".into()),
@@ -11384,6 +11487,7 @@ mod runtime {
             let mut mixed = Config::default();
             mixed.policy.rewrites = vec![RewriteConfig {
                 name: "mixed.home.arpa".into(),
+                client_identity: None,
                 ipv4: Some(Ipv4Addr::new(192, 0, 2, 1)),
                 ipv6: None,
                 cname: Some("router.home.arpa".into()),
@@ -11402,6 +11506,7 @@ mod runtime {
             let mut config = Config::default();
             config.policy.rewrites = vec![RewriteConfig {
                 name: "1.2.0.192.in-addr.arpa".into(),
+                client_identity: None,
                 ipv4: None,
                 ipv6: None,
                 cname: None,
@@ -11438,6 +11543,7 @@ mod runtime {
             let mut mixed = Config::default();
             mixed.policy.rewrites = vec![RewriteConfig {
                 name: "mixed.in-addr.arpa".into(),
+                client_identity: None,
                 ipv4: Some(Ipv4Addr::new(192, 0, 2, 1)),
                 ipv6: None,
                 cname: None,
@@ -11456,6 +11562,7 @@ mod runtime {
             let mut config = Config::default();
             config.policy.rewrites = vec![RewriteConfig {
                 name: "service.home.arpa".into(),
+                client_identity: None,
                 ipv4: None,
                 ipv6: None,
                 cname: None,
@@ -11484,6 +11591,7 @@ mod runtime {
             let mut oversized = Config::default();
             oversized.policy.rewrites = vec![RewriteConfig {
                 name: "oversized.home.arpa".into(),
+                client_identity: None,
                 ipv4: None,
                 ipv6: None,
                 cname: None,
@@ -11503,6 +11611,7 @@ mod runtime {
             config.policy.rewrites = vec![
                 RewriteConfig {
                     name: "*.home.arpa".into(),
+                    client_identity: None,
                     ipv4: Some(Ipv4Addr::new(192, 0, 2, 10)),
                     ipv6: None,
                     cname: None,
@@ -11512,6 +11621,7 @@ mod runtime {
                 },
                 RewriteConfig {
                     name: "router.home.arpa".into(),
+                    client_identity: None,
                     ipv4: Some(Ipv4Addr::new(192, 0, 2, 20)),
                     ipv6: None,
                     cname: None,
@@ -11549,6 +11659,7 @@ mod runtime {
             let mut invalid = Config::default();
             invalid.policy.rewrites = vec![RewriteConfig {
                 name: "not a dns name".into(),
+                client_identity: None,
                 ipv4: None,
                 ipv6: None,
                 cname: None,
@@ -11565,6 +11676,7 @@ mod runtime {
                 let mut invalid = Config::default();
                 invalid.policy.rewrites = vec![RewriteConfig {
                     name: name.into(),
+                    client_identity: None,
                     ipv4: Some(Ipv4Addr::new(192, 0, 2, 1)),
                     ipv6: None,
                     cname: None,
@@ -11590,6 +11702,7 @@ mod runtime {
                 let mut invalid = Config::default();
                 invalid.policy.rewrites = vec![RewriteConfig {
                     name: name.into(),
+                    client_identity: None,
                     ipv4: Some(Ipv4Addr::new(192, 0, 2, 1)),
                     ipv6: None,
                     cname: None,
@@ -11610,6 +11723,7 @@ mod runtime {
             oversized.policy.rewrites = (0..=MAX_REWRITES)
                 .map(|index| RewriteConfig {
                     name: format!("host{index}.home.arpa"),
+                    client_identity: None,
                     ipv4: Some(Ipv4Addr::new(192, 0, 2, 1)),
                     ipv6: None,
                     cname: None,

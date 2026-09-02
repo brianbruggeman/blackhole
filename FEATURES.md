@@ -72,8 +72,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   Authenticated operators can inspect assignments at `GET /blocklist-groups`
   and atomically replace them with `POST /reload/blocklist-groups`.
 - Bounded local A/AAAA/CNAME/PTR/TXT rewrites with exact and one-label wildcard
-  matching, explicit policy precedence, and fail-closed validation for
-  malformed, duplicate, mixed-record, or oversized configuration.
+  matching, optional client-identity scope, identity-over-global precedence,
+  explicit policy precedence, and fail-closed validation for malformed,
+  duplicate, mixed-record, or oversized configuration.
 - Named service-blocking profiles compile into the authoritative rule table,
   with bounded domains, optional IPv4/IPv6 client-network scopes, stable
   generated IDs, independent qtype/qclass filters, optional adapter-owned

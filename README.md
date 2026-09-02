@@ -167,8 +167,9 @@ available for operator-owned domain exceptions; each entry covers its apex and
 subdomains and takes precedence over ordinary generated blocklist rules.
 Invalid or duplicate entries fail closed. Local
 A/AAAA/CNAME/PTR/TXT rewrites are bounded and apply to `pass`/`observe` queries;
-exact names win over one-label wildcard names, and explicit policy actions
-take precedence. A rewrite contains exactly one record family: `ipv4`, `ipv6`,
+exact names win over one-label wildcard names, identity-scoped rewrites win over
+global rewrites, and explicit policy actions take precedence. A rewrite contains
+exactly one record family: `ipv4`, `ipv6`,
 `cname`, `ptr`, or `txt`. The `[capture]` section is disabled
 by default; when enabled, it installs and recovers only the platform-native,
 journal-owned DNS redirect rules.

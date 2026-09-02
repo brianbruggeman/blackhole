@@ -820,6 +820,7 @@ async fn listener_serves_local_rewrite_on_the_real_udp_path() {
     config.policy.rewrites = vec![
         RewriteConfig {
             name: "router.home.arpa".into(),
+            client_identity: None,
             ipv4: Some(Ipv4Addr::new(192, 0, 2, 53)),
             ipv6: None,
             cname: None,
@@ -829,6 +830,7 @@ async fn listener_serves_local_rewrite_on_the_real_udp_path() {
         },
         RewriteConfig {
             name: "1.2.0.192.in-addr.arpa".into(),
+            client_identity: None,
             ipv4: None,
             ipv6: None,
             cname: None,
@@ -838,6 +840,7 @@ async fn listener_serves_local_rewrite_on_the_real_udp_path() {
         },
         RewriteConfig {
             name: "service.home.arpa".into(),
+            client_identity: None,
             ipv4: None,
             ipv6: None,
             cname: None,

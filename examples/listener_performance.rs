@@ -63,6 +63,7 @@ async fn main() -> Result<(), ProximaError> {
     config.admission.max_queries_per_client_per_second = 20_000;
     config.policy.rewrites = vec![RewriteConfig {
         name: "benchmark.example".into(),
+        client_identity: None,
         ipv4: Some(Ipv4Addr::new(192, 0, 2, 42)),
         ipv6: None,
         cname: None,
