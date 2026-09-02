@@ -118,6 +118,7 @@ mod runtime {
     use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
     use std::fs::Metadata;
     use std::hash::Hash;
+    use std::io::Read;
     use std::net::SocketAddr;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
     use std::path::{Path, PathBuf};
@@ -3561,17 +3562,29 @@ mod runtime {
                 reason: "hosts_path is empty or exceeds the path bound".into(),
             });
         }
-        let contents =
-            std::fs::read_to_string(path).map_err(|error| policy::PolicyError::InvalidRewrite {
+        let file =
+            std::fs::File::open(path).map_err(|error| policy::PolicyError::InvalidRewrite {
                 name: path.to_owned(),
                 reason: format!("cannot read hosts file: {error}"),
             })?;
-        if contents.len() as u64 > MAX_HOSTS_BYTES {
+        let mut bytes = Vec::new();
+        file.take(MAX_HOSTS_BYTES.saturating_add(1))
+            .read_to_end(&mut bytes)
+            .map_err(|error| policy::PolicyError::InvalidRewrite {
+                name: path.to_owned(),
+                reason: format!("cannot read hosts file: {error}"),
+            })?;
+        if bytes.len() as u64 > MAX_HOSTS_BYTES {
             return Err(policy::PolicyError::InvalidRewrite {
                 name: path.to_owned(),
                 reason: format!("hosts file exceeds {MAX_HOSTS_BYTES} bytes"),
             });
         }
+        let contents =
+            String::from_utf8(bytes).map_err(|_| policy::PolicyError::InvalidRewrite {
+                name: path.to_owned(),
+                reason: "hosts file must be UTF-8".into(),
+            })?;
         let mut records = BTreeMap::<String, (Option<Ipv4Addr>, Option<Ipv6Addr>)>::new();
         for (line_number, raw_line) in contents.lines().enumerate() {
             if raw_line.len() > MAX_HOSTS_LINE_BYTES {
@@ -3588,9 +3601,16 @@ mod runtime {
             let Some(address) = fields.next() else {
                 continue;
             };
-            let Ok(address) = address.parse::<IpAddr>() else {
-                continue;
-            };
+            let address =
+                address
+                    .parse::<IpAddr>()
+                    .map_err(|_| policy::PolicyError::InvalidRewrite {
+                        name: path.to_owned(),
+                        reason: format!(
+                            "hosts file line {} has an invalid IP address",
+                            line_number + 1
+                        ),
+                    })?;
             for hostname in fields {
                 let name = normalize(hostname);
                 if name.is_empty() || !valid_dns_name(&name) {
@@ -3604,8 +3624,20 @@ mod runtime {
                 }
                 let entry = records.entry(name).or_default();
                 match address {
-                    IpAddr::V4(address) => entry.0 = Some(address),
-                    IpAddr::V6(address) => entry.1 = Some(address),
+                    IpAddr::V4(address) if entry.0.is_none() => entry.0 = Some(address),
+                    IpAddr::V6(address) if entry.1.is_none() => entry.1 = Some(address),
+                    IpAddr::V4(_) => {
+                        return Err(policy::PolicyError::InvalidRewrite {
+                            name: hostname.to_owned(),
+                            reason: "hosts file contains conflicting IPv4 records".into(),
+                        });
+                    }
+                    IpAddr::V6(_) => {
+                        return Err(policy::PolicyError::InvalidRewrite {
+                            name: hostname.to_owned(),
+                            reason: "hosts file contains conflicting IPv6 records".into(),
+                        });
+                    }
                 }
             }
             if records.len() > MAX_REWRITES {
