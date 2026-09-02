@@ -418,3 +418,33 @@ Both transports completed without measured errors. The longer run made
 process CPU accounting measurable, but it remains process-wide rather than a
 separated server measurement; TCP tail variance is high in this sample and is
 retained as observed evidence rather than a performance claim.
+
+## Row 17 — current scalar policy and codec reference
+
+`MEASURED` on 2026-09-02, Linux `x86_64`, rustc `1.98.0`, release build with
+`perf-instrument`, source commit `c56e2c8`, and GitHub Proxima revision
+`03ea2c7d`. The executable used `N=25` samples per workload and was run with
+load average `3.72`:
+
+```text
+build_ns p50=60965459 p95=62313845 p99=63305051 cov=0.010783 allocs=250025 alloc_bytes=33722250
+match_ns p50=45584 p95=47525 p99=51151 cov=0.028272 allocs=2500 alloc_bytes=57500
+edge_parse_match_ns p50=47223 p95=69836 p99=79330 cov=0.174242 allocs=100 alloc_bytes=1375
+parse_short_ns p50=52 p95=56 p99=145 cov=0.324357 allocs=0 alloc_bytes=0
+parse_long_ns p50=229 p95=270 p99=305 cov=0.071489 allocs=0 alloc_bytes=0
+parse_adversarial_ns p50=81 p95=95 p99=132 cov=0.121392 allocs=0 alloc_bytes=0
+parse_mixed_ns p50=82 p95=236 p99=247 cov=0.603831 allocs=0 alloc_bytes=0
+name_scan_scalar_ns p50=43 p95=58 p99=74 cov=0.161139 allocs=0 alloc_bytes=0
+name_scan_chunked_ns p50=85 p95=94 p99=155 cov=0.162070 allocs=0 alloc_bytes=0
+name_scan_memchr_ns p50=20 p95=34 p99=1142 cov=3.298557 allocs=0 alloc_bytes=0
+owned_ns p50=121 p95=143 p99=283 cov=0.247238 allocs=50 alloc_bytes=400
+encode_response_ns p50=108 p95=298 p99=321 cov=0.432492 allocs=50 alloc_bytes=1450
+boundary_bytes=MEASURED policy_canonicalize=60600 borrowed_to_owned=300 tcp_frame_buffer=0 encode_output=0 transport_write=0 rss_kib=7332
+```
+
+Throughput is `DERIVED` from measured duration and operation counts. The
+borrowed parser and scan arms measured zero allocations; owned conversion and
+response encoding allocated as shown. Scalar remains the production arm:
+chunked scanning is slower and memchr retains a materially higher tail and
+coefficient of variation. This is a current reference row, not a
+zero-copy, high-performance, or production-grade claim.
