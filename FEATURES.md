@@ -51,8 +51,8 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   explicit domain, regex, and rewrite precedence remains unchanged.
 - Existing named service profiles can be assigned to adapter-owned identities
   through a bounded `[policy].service_profiles_by_identity` map; the profile's
-  action, domains, selectors, and existing scopes remain intact and the
-  identity is added as an additional match constraint.
+  action, domains, selectors, and existing scopes remain intact while the
+  profile is removed from the unscoped rule set.
 - Each identity may set an optional bounded per-client query-rate ceiling;
   identities without an override use the admission default.
 - Each identity may set an optional bounded encoded response-byte budget per

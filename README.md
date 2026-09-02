@@ -238,9 +238,9 @@ Set `cache_enabled = false` to bypass bounded positive, negative, and stale
 response caching for that client while retaining upstream forwarding.
 To assign an existing named service profile to an adapter-owned identity, add
 `service_profiles_by_identity = { family-router = ["family-blocks"] }` under
-`[policy]`. The assignment reuses the profile's bounded domains, action, and
-query selectors, adds the identity match, and is validated as a startup-only
-configuration change.
+`[policy]`. Assigned profiles apply only to those identities (while retaining
+their bounded domains, action, query selectors, and existing network/group
+scopes) and are validated as a startup-only configuration change.
 Direct `client_cidrs` and named groups are mutually exclusive.
 Rules may use `client_cidrs` for a bounded set of IPv4/IPv6 networks; the
 most-specific matching network wins while `client_cidr` remains supported.
