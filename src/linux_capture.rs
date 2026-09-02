@@ -115,6 +115,9 @@ impl NftRulePlan {
         redirect_port: u16,
         mark: u32,
     ) -> Result<Self, CaptureError> {
+        if destination.ip().is_unspecified() || destination.port() == 0 {
+            return Err(CaptureError::InvalidContext("original destination"));
+        }
         let mut plan = Self::for_table("blackhole", chain, inbound_port, redirect_port, mark)?;
         plan.original_destination = Some(destination);
         Ok(plan)
@@ -653,6 +656,16 @@ mod tests {
         let rendered = plan.render();
         assert!(rendered.contains("ip6 daddr 2001:db8::53 tcp dport 5353"));
         assert!(rendered.contains("ip6 daddr 2001:db8::53 udp dport 5353"));
+    }
+
+    #[test]
+    fn destination_capture_rejects_unspecified_or_zero_port_targets() {
+        for destination in ["0.0.0.0:53", "192.0.2.53:0"] {
+            assert_eq!(
+                NftRulePlan::for_destination("capture", destination.parse().unwrap(), 53, 5353, 42,),
+                Err(CaptureError::InvalidContext("original destination"))
+            );
+        }
     }
 
     #[test]

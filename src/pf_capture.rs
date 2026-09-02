@@ -24,6 +24,9 @@ impl PfRulePlan {
         original_destination: SocketAddr,
         redirect_port: u16,
     ) -> Result<Self, PfError> {
+        if original_destination.ip().is_unspecified() || original_destination.port() == 0 {
+            return Err(PfError::InvalidPlan);
+        }
         let plan = Self {
             anchor: anchor.into(),
             original_destination,
@@ -244,6 +247,16 @@ mod tests {
         assert!(rendered.contains("rdr pass inet6 proto tcp to 2001:db8::10 port 443"));
         assert!(rendered.contains("rdr pass inet6 proto udp to 2001:db8::10 port 443"));
         assert!(!rendered.contains("2001:db8::10:443"));
+    }
+
+    #[test]
+    fn pf_rejects_unspecified_or_zero_port_destinations() {
+        for destination in ["0.0.0.0:53", "192.0.2.53:0"] {
+            assert_eq!(
+                PfRulePlan::new("blackhole_capture", destination.parse().unwrap(), 5353),
+                Err(PfError::InvalidPlan)
+            );
+        }
     }
 
     #[test]
