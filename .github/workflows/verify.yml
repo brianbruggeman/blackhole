@@ -97,6 +97,15 @@ jobs:
             sudo -n id
             sudo -n systemctl --version | head -n 1
             sudo -n nft --version || true
+            echo 'nft_nat_redirect_check:'
+            sudo -n nft -c -f - <<'EOF' || true
+            table inet blackhole_capability_probe {
+              chain capture {
+                type nat hook prerouting priority dstnat; policy accept;
+                tcp dport 53 redirect to :5353
+              }
+            }
+            EOF
             sudo -n systemctl is-system-running || true
           } 2>&1 | tee systemd-capabilities.log
       - if: always()
