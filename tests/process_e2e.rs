@@ -1,6 +1,8 @@
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -483,4 +485,104 @@ fn shipped_binary_retries_truncated_upstream_over_tcp() {
     assert_eq!(message.answers().count(), 1);
 
     upstream_thread.join().expect("reap upstream");
+}
+
+#[test]
+fn shipped_binary_serves_bounded_stale_cache_during_upstream_timeout() {
+    let upstream = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind upstream");
+    let upstream_addr = upstream.local_addr().expect("upstream address");
+    let exchanges = Arc::new(AtomicUsize::new(0));
+    let observed_exchanges = Arc::clone(&exchanges);
+    let upstream_thread = thread::spawn(move || {
+        let mut packet = [0u8; 4096];
+        let (length, peer) = upstream
+            .recv_from(&mut packet)
+            .expect("receive initial query");
+        observed_exchanges.fetch_add(1, Ordering::Release);
+        let message = parse_message(&packet[..length]).expect("parse initial query");
+        let question = message
+            .questions()
+            .next()
+            .expect("initial question")
+            .expect("valid initial question");
+        let name = question.name.to_dotted();
+        let address = encode::ipv4_rdata(Ipv4Addr::new(192, 0, 2, 77));
+        let answer = encode::AnswerRecord {
+            name: &name,
+            rtype: 1,
+            rclass: question.qclass,
+            ttl: 30,
+            rdata: &address,
+        };
+        let mut response = Vec::new();
+        encode::encode_response(
+            message.header.id,
+            Flags::for_response(true, false, true, 0),
+            encode::EncodeQuestion {
+                name: &name,
+                qtype: question.qtype,
+                qclass: question.qclass,
+            },
+            &[answer],
+            &mut response,
+        )
+        .expect("encode initial response");
+        upstream
+            .send_to(&response, peer)
+            .expect("send initial response");
+        upstream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .expect("set stale exchange timeout");
+        if upstream.recv_from(&mut packet).is_ok() {
+            observed_exchanges.fetch_add(1, Ordering::Release);
+        }
+    });
+
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("reserve listener port");
+    let listener_addr = listener.local_addr().expect("listener address");
+    drop(listener);
+    let mut config = NamedTempFile::new().expect("create config");
+    writeln!(
+        config,
+        "[server]\nlisten = \"{listener_addr}\"\n\n[policy]\ndefault_action = \"forward\"\n\n[upstream]\nresolver_ip = \"127.0.0.1\"\nport = {}\ntransport = \"udp\"\nquery_timeout_ms = 200\nmax_attempts = 1\n\n[cache]\nmax_ttl_secs = 1\nstale_ttl_secs = 5",
+        upstream_addr.port()
+    )
+    .expect("write config");
+
+    let _child = ChildGuard(
+        Command::new(env!("CARGO_BIN_EXE_blackhole"))
+            .arg(config.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("start shipped blackhole binary"),
+    );
+    drop(wait_for_tcp(listener_addr));
+    let udp = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind UDP client");
+    udp.set_read_timeout(Some(Duration::from_secs(3)))
+        .expect("set UDP timeout");
+    let initial_query = query(0x3001, "stale.example.");
+    udp.send_to(&initial_query, listener_addr)
+        .expect("send initial stale query");
+    let mut response = [0u8; 4096];
+    let (length, _) = udp
+        .recv_from(&mut response)
+        .expect("receive initial stale response");
+    let message = parse_message(&response[..length]).expect("parse initial stale response");
+    assert_eq!(message.header.id, 0x3001);
+    assert_eq!(message.answers().count(), 1);
+
+    thread::sleep(Duration::from_millis(1_100));
+    let stale_query = query(0x3002, "stale.example.");
+    udp.send_to(&stale_query, listener_addr)
+        .expect("send stale query");
+    let (stale_length, _) = udp
+        .recv_from(&mut response)
+        .expect("receive stale response");
+    let stale_message = parse_message(&response[..stale_length]).expect("parse stale response");
+    assert_eq!(stale_message.header.id, 0x3002);
+    assert_eq!(stale_message.answers().count(), 1);
+    upstream_thread.join().expect("reap upstream");
+    assert_eq!(exchanges.load(Ordering::Acquire), 2);
 }
