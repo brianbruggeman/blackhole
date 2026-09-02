@@ -10487,7 +10487,7 @@ mod runtime {
             assert_eq!(review["incidents"].as_array().unwrap().len(), 1);
             assert_eq!(review["incidents"][0]["scope"], "global");
             assert_eq!(review["client_addresses"], "redacted");
-            assert!(!policy.admin_abuse_incidents().contains("client"));
+            assert!(review["incidents"][0].get("client").is_none());
         }
 
         #[test]
