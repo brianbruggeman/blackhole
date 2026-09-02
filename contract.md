@@ -89,6 +89,11 @@ An enabled client identity may set `statistics_enabled = false` independently.
 Its action is omitted from aggregate decision counts, while policy matching,
 failure causes, and optional query-decision recording remain active.
 
+An enabled client identity may set `cache_enabled = false` independently. Its
+requests bypass fresh, negative, and stale response-cache reads and writes;
+upstream forwarding, bounded exchange admission, and fail-closed behavior
+remain active.
+
 The authenticated `POST /country/preview` route performs the same kind of
 non-retaining dry-run for a client address against the live country map. It
 reports the matched country, region, ASN, and deny/observe results; it does

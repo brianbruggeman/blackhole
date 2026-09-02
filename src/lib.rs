@@ -1364,6 +1364,9 @@ mod runtime {
         /// without disabling policy matching or failure telemetry.
         #[serde(default = "default_identity_statistics_enabled")]
         pub statistics_enabled: bool,
+        /// Bypass the bounded response cache for this client's requests.
+        #[serde(default = "default_identity_cache_enabled")]
+        pub cache_enabled: bool,
         /// Disable policy filtering for this client while retaining its
         /// identity mapping and all configured policy rules.
         #[serde(default = "default_identity_filtering_enabled")]
@@ -1396,6 +1399,10 @@ mod runtime {
     }
 
     fn default_identity_statistics_enabled() -> bool {
+        true
+    }
+
+    fn default_identity_cache_enabled() -> bool {
         true
     }
 
@@ -5606,6 +5613,15 @@ mod runtime {
             })
         }
 
+        fn client_cache_enabled(&self, client: Option<std::net::IpAddr>) -> bool {
+            self.client_identities.read(|identities| {
+                client
+                    .and_then(|client| Self::client_identity_index(identities, client))
+                    .and_then(|index| identities.get(index))
+                    .is_none_or(|identity| identity.cache_enabled)
+            })
+        }
+
         fn client_identity_index(
             identities: &[ClientIdentityConfig],
             client: std::net::IpAddr,
@@ -7959,14 +7975,17 @@ mod runtime {
                     return Ok(DnsPipeReply::typed(204, DnsAnswer::ok(Vec::new())));
                 };
                 let key = CacheKey::from_query(&query, route_name.as_deref());
-                if let Some(answer) = self.cache_fresh(&key) {
+                let cache_enabled = self.client_cache_enabled(client);
+                if cache_enabled && let Some(answer) = self.cache_fresh(&key) {
                     self.observe_cache("fresh_hit");
                     self.observe_for_client(forwarding_action, client);
                     return Ok(DnsPipeReply::typed(200, self.cap_answer(&query, answer)));
                 }
-                self.observe_cache("miss");
+                if cache_enabled {
+                    self.observe_cache("miss");
+                }
                 if !breaker.allow(self.breaker_now_nanos()) {
-                    if let Some(answer) = self.cache_stale(&key) {
+                    if cache_enabled && let Some(answer) = self.cache_stale(&key) {
                         self.observe_cache("stale_hit");
                         self.observe_for_client(forwarding_action, client);
                         return Ok(DnsPipeReply::typed(200, self.cap_answer(&query, answer)));
@@ -7991,7 +8010,7 @@ mod runtime {
                         }
                         breaker.on_success();
                         let answer = response.answer;
-                        if matches!(answer.rcode, 0 | 3) {
+                        if cache_enabled && matches!(answer.rcode, 0 | 3) {
                             self.observe_cache_ttl(&answer);
                             self.cache_insert(key.clone(), answer.clone(), Instant::now());
                         }
@@ -7999,7 +8018,7 @@ mod runtime {
                     }
                     Err(error) => {
                         breaker.on_failure(self.breaker_now_nanos());
-                        if let Some(answer) = self.cache_stale(&key) {
+                        if cache_enabled && let Some(answer) = self.cache_stale(&key) {
                             self.observe_cache("stale_hit");
                             self.observe_for_client(forwarding_action, client);
                             return Ok(DnsPipeReply::typed(200, self.cap_answer(&query, answer)));
@@ -9306,6 +9325,7 @@ mod runtime {
                 enabled: true,
                 query_log_enabled: true,
                 statistics_enabled: true,
+                cache_enabled: true,
                 filtering_enabled: true,
                 default_action: None,
                 upstream: Some("missing".into()),
@@ -9468,6 +9488,7 @@ mod runtime {
                 enabled: true,
                 query_log_enabled: true,
                 statistics_enabled: true,
+                cache_enabled: true,
                 filtering_enabled: true,
                 default_action: Some(Action::Reject),
                 upstream: None,
@@ -9526,6 +9547,7 @@ mod runtime {
                 enabled: true,
                 query_log_enabled: false,
                 statistics_enabled: true,
+                cache_enabled: true,
                 filtering_enabled: false,
                 default_action: None,
                 upstream: None,
@@ -9595,6 +9617,7 @@ mod runtime {
                 enabled: false,
                 query_log_enabled: true,
                 statistics_enabled: true,
+                cache_enabled: true,
                 filtering_enabled: true,
                 default_action: None,
                 upstream: None,
@@ -9639,6 +9662,7 @@ mod runtime {
                 enabled: true,
                 query_log_enabled: true,
                 statistics_enabled: true,
+                cache_enabled: true,
                 filtering_enabled: true,
                 default_action: None,
                 upstream: None,
@@ -9690,6 +9714,7 @@ mod runtime {
                 enabled: true,
                 query_log_enabled: true,
                 statistics_enabled: true,
+                cache_enabled: true,
                 filtering_enabled: true,
                 default_action: None,
                 upstream: None,
@@ -9741,6 +9766,7 @@ mod runtime {
                 enabled: true,
                 query_log_enabled: true,
                 statistics_enabled: true,
+                cache_enabled: true,
                 filtering_enabled: true,
                 default_action: None,
                 upstream: None,
@@ -9787,6 +9813,7 @@ mod runtime {
                     enabled: true,
                     query_log_enabled: true,
                     statistics_enabled: true,
+                    cache_enabled: true,
                     filtering_enabled: true,
                     default_action: None,
                     upstream: None,
@@ -9798,6 +9825,7 @@ mod runtime {
                     enabled: true,
                     query_log_enabled: true,
                     statistics_enabled: true,
+                    cache_enabled: true,
                     filtering_enabled: true,
                     default_action: None,
                     upstream: None,
@@ -9847,6 +9875,7 @@ mod runtime {
                     enabled: true,
                     query_log_enabled: true,
                     statistics_enabled: true,
+                    cache_enabled: true,
                     filtering_enabled: true,
                     default_action: None,
                     upstream: None,
@@ -9869,6 +9898,7 @@ mod runtime {
                     enabled: true,
                     query_log_enabled: true,
                     statistics_enabled: true,
+                    cache_enabled: true,
                     filtering_enabled: true,
                     default_action: None,
                     upstream: None,
@@ -12412,6 +12442,7 @@ mod runtime {
                 enabled: true,
                 query_log_enabled: true,
                 statistics_enabled: false,
+                cache_enabled: true,
                 filtering_enabled: true,
                 default_action: None,
                 upstream: None,

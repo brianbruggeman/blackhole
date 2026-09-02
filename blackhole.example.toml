@@ -80,6 +80,7 @@ ttl = 30
 # [[policy.client_identities]]
 # name = "family-router"
 # statistics_enabled = true
+# cache_enabled = true
 # clients = ["192.0.2.10"]
 # upstream = "family"  # selects a named upstream declared below
 [[policy.profiles]]
@@ -206,6 +207,8 @@ reject_private_upstream_addresses = true
 query_log_enabled = false
 # Set statistics_enabled = false on an identity to omit its actions from
 # aggregate statistics without disabling policy or failure telemetry.
+# Set cache_enabled = false on an identity to bypass bounded response caching
+# for that client's requests.
 query_log_max_entries = 1024
 query_log_retention_secs = 86400
 # Optional Proxima JSONL destination for the same metadata-only events.

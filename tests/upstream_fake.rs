@@ -344,7 +344,7 @@ async fn fake_upstream_success_flows_through_policy() {
 }
 
 #[proxima::test]
-async fn named_client_upstream_route_uses_its_proxima_exchange() {
+async fn named_client_upstream_route_and_cache_bypass_use_proxima_exchange() {
     let socket = FakeSocket::new(ReplyMode::Valid);
     let mut config = Config::default();
     config.policy.rules = vec![RuleConfig {
@@ -377,6 +377,7 @@ async fn named_client_upstream_route_uses_its_proxima_exchange() {
         enabled: true,
         query_log_enabled: true,
         statistics_enabled: true,
+        cache_enabled: false,
         filtering_enabled: true,
         default_action: None,
         upstream: Some("family".into()),
@@ -407,7 +408,13 @@ async fn named_client_upstream_route_uses_its_proxima_exchange() {
         .await
         .expect("named upstream exchange");
     assert_eq!(answer.payload.records.len(), 1);
-    assert_eq!(socket.state.lock().expect("fake state").sent.len(), 1);
+    policy
+        .call(request_from_client(
+            "192.0.2.10".parse().expect("client address"),
+        ))
+        .await
+        .expect("uncached named upstream exchange");
+    assert_eq!(socket.state.lock().expect("fake state").sent.len(), 2);
 }
 
 #[proxima::test]
