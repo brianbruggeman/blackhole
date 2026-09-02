@@ -215,7 +215,7 @@ fn launchd_smoke_covers_host_install_and_upgrade() {
 #[test]
 fn workflow_reports_platform_smoke_failures() {
     let workflow = fs::read_to_string(VERIFY_WORKFLOW).expect("read verification workflow");
-    assert!(workflow.contains("cancel-in-progress: ${{ github.event_name == 'pull_request' }}"));
+    assert!(workflow.contains("cancel-in-progress: true"));
     assert!(workflow.contains("report launchd smoke failure"));
     assert!(workflow.contains("tail -n 80 launchd-smoke.log"));
     assert!(workflow.contains("tail -n 80 systemd-smoke.log"));
