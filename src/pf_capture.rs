@@ -75,6 +75,7 @@ impl CapturePlan for PfRulePlan {
             inbound_port: self.original_destination.port(),
             redirect_port: self.redirect_port,
             mark: 0,
+            original_destination: Some(self.original_destination),
         }
     }
 }

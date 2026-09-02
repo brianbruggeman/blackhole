@@ -152,6 +152,7 @@ pub struct CaptureOwnership {
     pub inbound_port: u16,
     pub redirect_port: u16,
     pub mark: u32,
+    pub original_destination: Option<SocketAddr>,
 }
 
 impl CaptureOwnership {
@@ -160,7 +161,7 @@ impl CaptureOwnership {
             && valid_identifier(&self.chain)
             && self.inbound_port != 0
             && self.redirect_port != 0
-            && self.mark != 0
+            && (self.mark != 0 || self.table == "pf")
     }
 }
 
@@ -227,12 +228,15 @@ impl FileOwnershipStore {
 
     fn encode(ownership: &CaptureOwnership) -> String {
         format!(
-            "{}\n{}\n{}\n{}\n{}\n",
+            "{}\n{}\n{}\n{}\n{}\n{}\n",
             ownership.table,
             ownership.chain,
             ownership.inbound_port,
             ownership.redirect_port,
-            ownership.mark
+            ownership.mark,
+            ownership
+                .original_destination
+                .map_or_else(|| "-".to_owned(), |destination| destination.to_string())
         )
     }
 
@@ -244,6 +248,10 @@ impl FileOwnershipStore {
             inbound_port: lines.next()?.parse().ok()?,
             redirect_port: lines.next()?.parse().ok()?,
             mark: lines.next()?.parse().ok()?,
+            original_destination: match lines.next()? {
+                "-" => None,
+                value => Some(value.parse().ok()?),
+            },
         };
         if lines.next().is_some() || !ownership.is_valid() {
             return None;
@@ -400,6 +408,7 @@ impl CapturePlan for NftRulePlan {
             inbound_port: self.inbound_port,
             redirect_port: self.redirect_port,
             mark: self.mark,
+            original_destination: self.original_destination,
         }
     }
 }
@@ -792,6 +801,44 @@ mod tests {
         assert_eq!(recovered.recover(&plan).unwrap(), InstallState::Installed);
         recovered.cleanup(&plan).expect("owned cleanup");
         assert_eq!(recovered.status(), InstallState::Uninstalled);
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn recovery_rejects_a_different_original_destination() {
+        let path = std::env::temp_dir().join(format!(
+            "blackhole-capture-destination-{}.state",
+            std::process::id()
+        ));
+        let first_plan =
+            NftRulePlan::for_destination("capture", "192.0.2.53:53".parse().unwrap(), 53, 5353, 42)
+                .unwrap();
+        let second_plan = NftRulePlan::for_destination(
+            "capture",
+            "198.51.100.53:53".parse().unwrap(),
+            53,
+            5353,
+            42,
+        )
+        .unwrap();
+        let mut first =
+            CaptureController::with_store(FakeBackend::default(), FileOwnershipStore::new(&path));
+        first.install(&first_plan).expect("install first plan");
+        let mut recovered =
+            CaptureController::with_store(FakeBackend::default(), FileOwnershipStore::new(&path));
+        assert_eq!(
+            recovered.recover(&second_plan).unwrap(),
+            InstallState::Uninstalled
+        );
+        assert_eq!(
+            recovered.recover(&first_plan).unwrap(),
+            InstallState::Installed
+        );
+        assert_eq!(
+            recovered.cleanup(&second_plan),
+            Err(CaptureError::OwnershipMismatch)
+        );
+        recovered.cleanup(&first_plan).expect("cleanup owned plan");
         assert!(!path.exists());
     }
 }
