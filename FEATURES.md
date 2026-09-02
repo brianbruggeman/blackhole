@@ -115,8 +115,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Optional conflaguration-backed DDoS incident persistence records the
   threshold crossing through the existing bounded Proxima JSONL sink so the
   incident survives process death; the event includes a bounded expiry, and
-  startup restores only active incidents to both the exact-client and
-  configured-network breakers. DNS names and wire payloads remain absent.
+  startup restores only active incidents to the exact-client, configured-
+  network, or global breaker that opened. Global events contain no client key;
+  DNS names and wire payloads remain absent.
 - Authenticated bounded incident revocation accepts exact client IPs, clears
   the matching client and network breakers through Proxima's lock-free keyed
   state, and persists the revocation before applying it when durability is

@@ -461,6 +461,18 @@ async fn restore_persisted_abuse(
             }
             continue;
         }
+        if payload.get("scope").and_then(serde_json::Value::as_str) == Some("global") {
+            let Some(expires_at_ms) = payload
+                .get("expires_at_ms")
+                .and_then(serde_json::Value::as_u64)
+            else {
+                continue;
+            };
+            if policy.restore_global_abuse_incident(expires_at_ms, now_ms) {
+                restored = restored.saturating_add(1);
+            }
+            continue;
+        }
         let client = clients[0];
         let Some(expires_at_ms) = payload
             .get("expires_at_ms")

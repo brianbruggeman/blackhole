@@ -5192,6 +5192,65 @@ mod runtime {
             opened
         }
 
+        /// Persist a global breaker opening without attaching a client key.
+        /// The durable event is still bounded and uses the same Proxima
+        /// recording path as exact-client incidents.
+        pub(crate) async fn record_global_abuse_incident(&self, cause: &'static str) {
+            if !self.config.admission.ddos.persist_incidents && self.query_log.is_none() {
+                return;
+            }
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |duration| {
+                    duration.as_millis().min(u128::from(u64::MAX)) as u64
+                });
+            let expires_at_ms = now_ms.saturating_add(
+                self.admission_config()
+                    .ddos
+                    .global_abuse_cooldown_secs
+                    .saturating_mul(1_000),
+            );
+            let payload = serde_json::json!({
+                "scope": "global",
+                "cause": cause,
+                "response": "temporary_global_blacklist",
+                "expires_at_ms": expires_at_ms,
+            });
+            let review_event = RecordingEvent {
+                id: InteractionId::new(),
+                ts_ms: now_ms,
+                parent: None,
+                event: ProtocolEvent::Custom {
+                    kind: "blackhole.ddos_incident".into(),
+                    payload: payload.clone(),
+                },
+            };
+            if let Some(query_log) = self.query_log.as_ref()
+                && query_log.append(review_event).await.is_err()
+            {
+                self.observe_failure("query_log_global_incident_append");
+            }
+            if !self.config.admission.ddos.persist_incidents {
+                return;
+            }
+            let Some(recording) = self.recording.as_ref() else {
+                self.observe_failure("ddos_global_incident_recording_unconfigured");
+                return;
+            };
+            let event = RecordingEvent {
+                id: InteractionId::new(),
+                ts_ms: now_ms,
+                parent: None,
+                event: ProtocolEvent::Custom {
+                    kind: "blackhole.ddos_incident".into(),
+                    payload,
+                },
+            };
+            if recording.append(event).await.is_err() || recording.sync().await.is_err() {
+                self.observe_failure("ddos_global_incident_recording");
+            }
+        }
+
         /// Bound encoded DNS egress per identified client over a one-second
         /// window. This is deliberately enforced at the listener after
         /// encoding, so the budget measures actual wire bytes rather than an
@@ -5373,6 +5432,19 @@ mod runtime {
                 self.breaker_epoch,
                 remaining,
             );
+            true
+        }
+
+        /// Restore an active global incident after a restart.
+        pub fn restore_global_abuse_incident(&self, expires_at_ms: u64, now_ms: u64) -> bool {
+            let Some(remaining_ms) = expires_at_ms.checked_sub(now_ms) else {
+                return false;
+            };
+            if remaining_ms == 0 {
+                return false;
+            }
+            self.global_abuse
+                .restore_blocked(self.breaker_epoch, Duration::from_millis(remaining_ms));
             true
         }
 
@@ -6996,7 +7068,10 @@ mod runtime {
             }
             if !self.allow_global_rate() {
                 self.observe_failure("global_rate_overflow");
-                self.record_global_abuse("global_rate_overflow");
+                if self.record_global_abuse("global_rate_overflow") {
+                    self.record_global_abuse_incident("global_rate_overflow")
+                        .await;
+                }
                 self.observe(Action::Reject);
                 return Ok(DnsPipeReply::typed(200, server_failure_answer()));
             }
@@ -10367,6 +10442,20 @@ mod runtime {
             assert!(policy.record_global_abuse("global_response_budget"));
             assert!(!policy.allow_global_abuse());
             assert!(!policy.allow_global_abuse());
+        }
+
+        #[test]
+        fn persisted_global_abuse_incident_restores_until_expiry() {
+            let mut config = Config::default();
+            config.admission.ddos.max_global_abuse_violations = 2;
+            config.admission.ddos.global_abuse_cooldown_secs = 60;
+            let policy = Policy::new(config).expect("valid global abuse config");
+            assert!(policy.restore_global_abuse_incident(61_000, 1_000));
+            assert!(!policy.allow_global_abuse());
+
+            let fresh = Policy::new(Config::default()).expect("valid default policy");
+            assert!(!fresh.restore_global_abuse_incident(1_000, 1_000));
+            assert!(fresh.allow_global_abuse());
         }
 
         #[test]
