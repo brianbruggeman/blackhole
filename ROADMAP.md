@@ -19,8 +19,9 @@ below are future capabilities, grouped by the dependency layer they extend.
   client/group workflows beyond the bounded source, rule, profile, identity,
   and network-scope operations in the current baseline.
 - Add a managed GeoIP/region/ASN data lifecycle and richer country policy
-  beyond the explicit operator-supplied map labels and bounded refresh in the
-  current baseline; uncertainty must remain explicit.
+  beyond the explicit operator-supplied map labels, fingerprint-pinned
+  bounded refresh, and last-good snapshot in the current baseline; uncertainty
+  must remain explicit.
 - Add incremental background updates for deployment-managed configuration
   sources beyond the bounded TOML policy-file reload. Listener, transport,
   capture, storage, and service changes still require a controlled restart.

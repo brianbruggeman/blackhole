@@ -2134,6 +2134,7 @@ mod tests {
         let handler = AdminHandler::new(Arc::clone(&policy));
         let config = CountryPolicyConfig {
             map_path: Some(path.to_string_lossy().into_owned()),
+            expected_fingerprint: None,
             deny: vec!["US".into()],
             deny_regions: vec!["us-ca".into()],
             ..CountryPolicyConfig::default()

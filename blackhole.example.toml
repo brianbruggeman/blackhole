@@ -200,6 +200,7 @@ query_log_retention_secs = 86400
 # This may be a local file or an http(s) URL. No GeoIP database is bundled;
 # hosted sources are bounded and file-age freshness applies only to local files.
 # map_path = "/etc/blackhole/country-cidrs.txt"
+# expected_fingerprint = "0123456789abcdef"
 # max_age_secs = 86400
 # reload_interval_secs = 3600
 # deny_regions = ["US-CA"]

@@ -814,6 +814,11 @@ mod runtime {
         /// Operator-supplied lines of `COUNTRY CIDR`; no database is bundled.
         #[serde(default)]
         pub map_path: Option<String>,
+        /// Optional lowercase or uppercase 16-digit FNV-1a fingerprint pin
+        /// for the complete map contents. A mismatch rejects the refresh and
+        /// retains the last good snapshot.
+        #[serde(default)]
+        pub expected_fingerprint: Option<String>,
         /// Optional maximum age of the map file. Stale maps fail closed.
         #[serde(default)]
         pub max_age_secs: Option<u64>,
@@ -1944,6 +1949,12 @@ mod runtime {
         })
     }
 
+    fn parse_fingerprint(value: &str) -> Option<u64> {
+        (value.len() == 16 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .then(|| u64::from_str_radix(value, 16).ok())
+            .flatten()
+    }
+
     fn load_country_policy(
         config: &CountryPolicyConfig,
     ) -> Result<Option<CountryPolicy>, policy::PolicyError> {
@@ -2113,6 +2124,23 @@ mod runtime {
             }
             contents
         };
+        if let Some(expected) = config.expected_fingerprint.as_deref() {
+            let expected = parse_fingerprint(expected).ok_or_else(|| {
+                policy::PolicyError::InvalidCountryMap {
+                    path: path.into(),
+                    reason: "expected_fingerprint must be exactly 16 hexadecimal digits".into(),
+                }
+            })?;
+            let actual = source_fingerprint(contents.as_bytes());
+            if actual != expected {
+                return Err(policy::PolicyError::InvalidCountryMap {
+                    path: path.into(),
+                    reason: format!(
+                        "map fingerprint mismatch: expected {expected:016x}, got {actual:016x}"
+                    ),
+                });
+            }
+        }
         let mut entries = Vec::new();
         for (line_number, raw_line) in contents.lines().enumerate() {
             if raw_line.len() > MAX_COUNTRY_MAP_LINE_BYTES {
@@ -7470,6 +7498,39 @@ mod runtime {
         }
 
         #[test]
+        fn country_map_fingerprint_pin_is_case_insensitive_and_fail_closed() {
+            let path = std::env::temp_dir().join(format!(
+                "blackhole-country-fingerprint-{}-{}.txt",
+                std::process::id(),
+                1
+            ));
+            let contents = "US 192.0.2.0/24 US-CA AS64500\n";
+            std::fs::write(&path, contents).expect("write country map");
+            let fingerprint = source_fingerprint(contents.as_bytes());
+            let mut config = CountryPolicyConfig {
+                map_path: Some(path.to_string_lossy().into_owned()),
+                expected_fingerprint: Some(format!("{fingerprint:016X}")),
+                deny: vec!["US".into()],
+                ..Default::default()
+            };
+            assert!(load_country_policy(&config).is_ok());
+
+            config.expected_fingerprint = Some("0000000000000000".into());
+            assert!(matches!(
+                load_country_policy(&config),
+                Err(policy::PolicyError::InvalidCountryMap { reason, .. })
+                    if reason.contains("fingerprint mismatch")
+            ));
+            config.expected_fingerprint = Some("not-a-fingerprint".into());
+            assert!(matches!(
+                load_country_policy(&config),
+                Err(policy::PolicyError::InvalidCountryMap { reason, .. })
+                    if reason.contains("exactly 16 hexadecimal digits")
+            ));
+            let _ = std::fs::remove_file(path);
+        }
+
+        #[test]
         fn background_blocklist_reload_interval_is_bounded() {
             let config = Config {
                 policy: PolicyConfig {
@@ -8422,6 +8483,7 @@ mod runtime {
             let config = Config {
                 country_policy: CountryPolicyConfig {
                     map_path: Some(path.to_string_lossy().into_owned()),
+                    expected_fingerprint: None,
                     max_age_secs: None,
                     reload_interval_secs: 0,
                     deny: vec!["us".into()],
@@ -8579,6 +8641,7 @@ mod runtime {
             let config = Config {
                 country_policy: CountryPolicyConfig {
                     map_path: Some(path.to_string_lossy().into_owned()),
+                    expected_fingerprint: None,
                     max_age_secs: None,
                     reload_interval_secs: 0,
                     deny: vec!["US".into()],
