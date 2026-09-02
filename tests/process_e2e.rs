@@ -171,14 +171,73 @@ fn shipped_binary_serves_udp_datagrams_and_tcp_frames() {
     assert_eq!(udp_message.header.id, 0x1001);
     assert_eq!(udp_message.answers().count(), 1);
 
+    let tcp_reject_query = query(0x1005, "blocked.example.");
+    tcp.write_all(
+        &(u16::try_from(tcp_reject_query.len())
+            .expect("TCP reject query fits")
+            .to_be_bytes()),
+    )
+    .expect("write TCP reject length");
+    tcp.write_all(&tcp_reject_query)
+        .expect("write TCP reject query");
+    let mut tcp_frame_length = [0u8; 2];
+    tcp.read_exact(&mut tcp_frame_length)
+        .expect("read TCP reject length");
+    let tcp_response_length = usize::from(u16::from_be_bytes(tcp_frame_length));
+    let mut tcp_response = vec![0u8; tcp_response_length];
+    tcp.read_exact(&mut tcp_response)
+        .expect("read TCP reject response");
+    let tcp_message = parse_message(&tcp_response).expect("parse TCP reject response");
+    assert_eq!(tcp_message.header.id, 0x1005);
+    assert_eq!(tcp_message.header.flags.rcode(), 5);
+
+    let tcp_nxdomain_query = query(0x1006, "nxdomain.example.");
+    tcp.write_all(
+        &(u16::try_from(tcp_nxdomain_query.len())
+            .expect("TCP NXDOMAIN query fits")
+            .to_be_bytes()),
+    )
+    .expect("write TCP NXDOMAIN length");
+    tcp.write_all(&tcp_nxdomain_query)
+        .expect("write TCP NXDOMAIN query");
+    tcp.read_exact(&mut tcp_frame_length)
+        .expect("read TCP NXDOMAIN length");
+    let tcp_response_length = usize::from(u16::from_be_bytes(tcp_frame_length));
+    tcp_response.resize(tcp_response_length, 0);
+    tcp.read_exact(&mut tcp_response)
+        .expect("read TCP NXDOMAIN response");
+    let tcp_message = parse_message(&tcp_response).expect("parse TCP NXDOMAIN response");
+    assert_eq!(tcp_message.header.id, 0x1006);
+    assert_eq!(tcp_message.header.flags.rcode(), 3);
+
+    let tcp_drop_query = query(0x1007, "drop.example.");
+    tcp.write_all(
+        &(u16::try_from(tcp_drop_query.len())
+            .expect("TCP drop query fits")
+            .to_be_bytes()),
+    )
+    .expect("write TCP drop length");
+    tcp.write_all(&tcp_drop_query)
+        .expect("write TCP drop query");
+    tcp.set_read_timeout(Some(Duration::from_millis(200)))
+        .expect("set TCP drop timeout");
+    let mut drop_probe = [0u8; 2];
+    let drop_result = tcp.read(&mut drop_probe);
+    assert!(matches!(
+        drop_result,
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+    ));
+    tcp.set_read_timeout(Some(Duration::from_secs(3)))
+        .expect("restore TCP timeout");
+
     let tcp_query = query(0x1002, "tcp.example.");
     tcp.write_all(&(u16::try_from(tcp_query.len()).expect("TCP query fits")).to_be_bytes())
         .expect("write TCP length");
     tcp.write_all(&tcp_query).expect("write TCP query");
-    let mut tcp_length = [0u8; 2];
-    tcp.read_exact(&mut tcp_length).expect("read TCP length");
-    let tcp_length = usize::from(u16::from_be_bytes(tcp_length));
-    let mut tcp_response = vec![0u8; tcp_length];
+    tcp.read_exact(&mut tcp_frame_length)
+        .expect("read TCP length");
+    let tcp_response_length = usize::from(u16::from_be_bytes(tcp_frame_length));
+    tcp_response.resize(tcp_response_length, 0);
     tcp.read_exact(&mut tcp_response)
         .expect("read TCP response");
     let tcp_message = parse_message(&tcp_response).expect("parse TCP response");
