@@ -114,6 +114,30 @@ fn shipped_binary_serves_udp_datagrams_and_tcp_frames() {
             .expect("start shipped blackhole binary"),
     );
 
+    let mut malformed_tcp = wait_for_tcp(listener_addr);
+    malformed_tcp
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .expect("set malformed TCP timeout");
+    malformed_tcp
+        .write_all(&3u16.to_be_bytes())
+        .expect("write malformed TCP length");
+    malformed_tcp
+        .write_all(&[0, 1, 0])
+        .expect("write malformed TCP frame");
+    let mut malformed_tcp_response = [0u8; 2];
+    let malformed_tcp_result = malformed_tcp.read(&mut malformed_tcp_response);
+    assert!(match malformed_tcp_result {
+        Ok(0) => true,
+        Err(error) => matches!(
+            error.kind(),
+            std::io::ErrorKind::WouldBlock
+                | std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::UnexpectedEof
+        ),
+        Ok(_) => false,
+    });
+    drop(malformed_tcp);
+
     let mut tcp = wait_for_tcp(listener_addr);
     tcp.set_read_timeout(Some(Duration::from_secs(3)))
         .expect("set TCP timeout");
