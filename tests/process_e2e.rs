@@ -907,3 +907,46 @@ fn shipped_binary_fails_closed_on_malformed_upstream_reply() {
     ));
     upstream_thread.join().expect("reap upstream");
 }
+
+#[test]
+fn shipped_binary_applies_country_policy_to_real_udp_peers() {
+    let map = NamedTempFile::new().expect("create country map");
+    std::fs::write(map.path(), "US 127.0.0.0/8 US-LOCAL AS64500\n").expect("write country map");
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("reserve listener port");
+    let listener_addr = listener.local_addr().expect("listener address");
+    drop(listener);
+    let mut config = NamedTempFile::new().expect("create config");
+    writeln!(
+        config,
+        "[server]\nlisten = \"{listener_addr}\"\n\n[policy]\ndefault_action = \"reject\"\n\n[country_policy]\nmap_path = \"{}\"\ndeny = [\"US\"]",
+        map.path().to_string_lossy()
+    )
+    .expect("write config");
+
+    let _child = ChildGuard(
+        Command::new(env!("CARGO_BIN_EXE_blackhole"))
+            .arg(config.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("start shipped blackhole binary"),
+    );
+    drop(wait_for_tcp(listener_addr));
+
+    let client = UdpSocket::bind((Ipv4Addr::new(127, 0, 0, 2), 0)).expect("bind UDP client");
+    client
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("set UDP timeout");
+    client
+        .send_to(&query(0x4040, "country-denied.example."), listener_addr)
+        .expect("send country-denied query");
+    let mut response = [0u8; 4096];
+    let (length, _) = client
+        .recv_from(&mut response)
+        .expect("receive country denial");
+    let message = parse_message(&response[..length]).expect("parse country denial");
+    assert_eq!(message.header.id, 0x4040);
+    assert_eq!(message.header.flags.rcode(), 5);
+    assert!(message.answers().next().is_none());
+}
