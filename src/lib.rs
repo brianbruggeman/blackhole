@@ -7725,6 +7725,8 @@ mod runtime {
                     .map(|value| format!("{:016x}", value.source_fingerprint)),
                 "source_sha256": policy.as_ref().map(|value| value.source_sha256.clone()),
                 "sha256_pin_configured": config.expected_sha256.is_some(),
+                "last_good_path": config.last_good_path,
+                "unmapped_action": config.unmapped_action,
                 "deny": config.deny,
                 "observe": config.observe,
                 "deny_regions": config.deny_regions,
@@ -7761,6 +7763,10 @@ mod runtime {
                     .as_ref()
                     .as_ref()
                     .is_some_and(|policy| policy.observed(client)),
+                "unmapped_action": policy
+                    .as_ref()
+                    .as_ref()
+                    .map(|policy| policy.unmapped_action),
             })
             .to_string()
         }
