@@ -90,8 +90,9 @@ entries with `POST /abuse/denylist/add`, and revoke entries with
 `POST /abuse/denylist/remove`; these operations publish through the same
 atomic admission snapshot and are safe to retry.
 Set `[admission.ddos].persist_incidents = true` to persist temporary-blacklist
-events through the bounded Proxima recording sink; active markers are restored
-after restart until their configured expiry and expired markers are ignored.
+events through the bounded Proxima recording sink; client, network, and global
+breaker markers are restored after restart until their configured expiry, and
+expired markers are ignored. Global markers contain no client key.
 Authenticated operators can revoke temporary blocks with bounded
 `POST /abuse/revoke` using an array of exact client IPs; when persistence is
 enabled, the revocation is recorded before the live breaker state is cleared
