@@ -477,7 +477,7 @@ fn deb_smoke_exercises_a_disposable_root_transaction() {
     assert!(script.contains("usage: $0 DEB [UPGRADE_DEB]"));
     assert!(script.contains("upgrade_package=${2:-$package}"));
     assert!(script.contains("export DPKG_ROOT=\"$root\""));
-    assert!(script.contains("dpkg_args=\"--root=$root\""));
+    assert!(script.contains("dpkg_args=\"--admindir=$root/var/lib/dpkg --instdir=$root\""));
     assert!(script.contains("dpkg $dpkg_args --unpack"));
     assert!(script.contains("export DEBIAN_FRONTEND=noninteractive"));
     assert!(script.contains("dpkg $dpkg_args --force-confold --configure blackhole"));
