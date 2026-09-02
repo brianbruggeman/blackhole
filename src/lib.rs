@@ -10474,11 +10474,38 @@ mod runtime {
 
         #[test]
         fn global_abuse_incident_review_contains_no_client_key() {
+            use proxima::{RecordingEvent, RecordingSink};
+            use std::sync::{Arc, Mutex};
+
+            struct Collector(Arc<Mutex<Vec<RecordingEvent>>>);
+
+            impl RecordingSink for Collector {
+                fn append<'lifetime>(
+                    &'lifetime self,
+                    event: RecordingEvent,
+                ) -> proxima::RecordingAppendFuture<'lifetime> {
+                    let events = Arc::clone(&self.0);
+                    Box::pin(async move {
+                        events.lock().expect("recording lock").push(event);
+                        Ok(())
+                    })
+                }
+
+                fn flush<'lifetime>(&'lifetime self) -> proxima::RecordingAppendFuture<'lifetime> {
+                    Box::pin(async { Ok(()) })
+                }
+            }
+
+            let events = Arc::new(Mutex::new(Vec::new()));
             let mut config = Config::default();
             config.admission.ddos.global_abuse_cooldown_secs = 60;
+            config.admission.ddos.persist_incidents = true;
+            config.privacy.query_recording_path = Some("global-incidents.jsonl".into());
             config.privacy.query_log_enabled = true;
             config.privacy.query_log_max_entries = 4;
-            let policy = Policy::new(config).expect("valid global abuse config");
+            let policy = Policy::new(config)
+                .expect("valid global abuse config")
+                .with_recording_sink(Arc::new(Collector(Arc::clone(&events))));
             futures::executor::block_on(
                 policy.record_global_abuse_incident("global_rate_overflow"),
             );
@@ -10488,6 +10515,12 @@ mod runtime {
             assert_eq!(review["incidents"][0]["scope"], "global");
             assert_eq!(review["client_addresses"], "redacted");
             assert!(review["incidents"][0].get("client").is_none());
+            let events = events.lock().expect("recording lock");
+            let proxima::ProtocolEvent::Custom { payload, .. } = &events[0].event else {
+                panic!("expected global incident event");
+            };
+            assert_eq!(payload["scope"], "global");
+            assert!(payload.get("client").is_none());
         }
 
         #[test]
