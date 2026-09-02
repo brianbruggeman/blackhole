@@ -1815,6 +1815,17 @@ mod tests {
             block_on(handler.call(request("GET", "/logs/clear-durable")))
                 .expect("405 durable log deletion response");
         assert_eq!(wrong_durable_delete_method.status, 405);
+
+        let mut config = crate::Config::default();
+        config.admission.ddos.max_global_abuse_violations = 1;
+        let policy = Arc::new(Policy::new(config).expect("global breaker policy"));
+        assert!(policy.record_global_abuse("test_global_abuse"));
+        let handler = AdminHandler::new(policy);
+        let abuse_status =
+            block_on(handler.call(request("GET", "/abuse/status"))).expect("open abuse status");
+        let abuse_status: serde_json::Value =
+            serde_json::from_slice(&abuse_status.payload).expect("open abuse status JSON");
+        assert_eq!(abuse_status["global_breaker_open"], true);
     }
 
     #[test]
