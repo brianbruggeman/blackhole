@@ -530,6 +530,94 @@ fn shipped_binary_reloads_a_blocklist_while_serving_queries() {
 }
 
 #[test]
+fn shipped_binary_applies_a_client_filtering_override() {
+    let upstream = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind upstream");
+    upstream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .expect("set upstream timeout");
+    let upstream_addr = upstream.local_addr().expect("upstream address");
+    let upstream_thread = thread::spawn(move || {
+        let mut packet = [0u8; 4096];
+        let (length, peer) = upstream
+            .recv_from(&mut packet)
+            .expect("receive filtering-override query");
+        let message = parse_message(&packet[..length]).expect("parse upstream query");
+        let question = message
+            .questions()
+            .next()
+            .expect("upstream question")
+            .expect("valid upstream question");
+        let name = question.name.to_dotted();
+        let address = encode::ipv4_rdata(Ipv4Addr::new(192, 0, 2, 88));
+        let answer = encode::AnswerRecord {
+            name: &name,
+            rtype: 1,
+            rclass: question.qclass,
+            ttl: 30,
+            rdata: &address,
+        };
+        let mut response = Vec::new();
+        encode::encode_response(
+            message.header.id,
+            Flags::for_response(true, false, true, 0),
+            encode::EncodeQuestion {
+                name: &name,
+                qtype: question.qtype,
+                qclass: question.qclass,
+            },
+            &[answer],
+            &mut response,
+        )
+        .expect("encode upstream response");
+        upstream
+            .send_to(&response, peer)
+            .expect("send upstream response");
+    });
+
+    let blocklist = NamedTempFile::new().expect("create blocklist");
+    std::fs::write(blocklist.path(), "||filtered.example^\n").expect("write blocklist");
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("reserve listener port");
+    let listener_addr = listener.local_addr().expect("listener address");
+    drop(listener);
+    let mut config = NamedTempFile::new().expect("create config");
+    writeln!(
+        config,
+        "[server]\nlisten = \"{listener_addr}\"\n\n[policy]\ndefault_action = \"forward\"\nblocklists = [\"{}\"]\n\n[[policy.client_identities]]\nname = \"unfiltered\"\nfiltering_enabled = false\nclients = [\"127.0.0.2\"]\n\n[upstream]\nresolver_ip = \"127.0.0.1\"\nport = {}\ntransport = \"udp\"\nquery_timeout_ms = 500\nmax_attempts = 1",
+        blocklist.path().display(),
+        upstream_addr.port()
+    )
+    .expect("write config");
+
+    let _child = ChildGuard(
+        Command::new(env!("CARGO_BIN_EXE_blackhole"))
+            .arg(config.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("start shipped blackhole binary"),
+    );
+    drop(wait_for_tcp(listener_addr));
+
+    let client = UdpSocket::bind((Ipv4Addr::new(127, 0, 0, 2), 0)).expect("bind UDP client");
+    client
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .expect("set UDP timeout");
+    client
+        .send_to(&query(0x5400, "filtered.example."), listener_addr)
+        .expect("send filtering-override query");
+    let mut response = [0u8; 4096];
+    let (length, _) = client
+        .recv_from(&mut response)
+        .expect("receive filtering-override response");
+    let message = parse_message(&response[..length]).expect("parse filtering-override response");
+    assert_eq!(message.header.id, 0x5400);
+    assert_eq!(message.header.flags.rcode(), 0);
+    assert!(message.answers().next().is_some());
+    upstream_thread.join().expect("reap upstream");
+}
+
+#[test]
 fn shipped_binary_serves_ipv6_udp_datagrams_and_tcp_frames() {
     let listener = TcpListener::bind((Ipv6Addr::LOCALHOST, 0)).expect("reserve IPv6 listener port");
     let listener_addr = listener.local_addr().expect("IPv6 listener address");
