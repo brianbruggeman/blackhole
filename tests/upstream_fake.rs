@@ -376,6 +376,7 @@ async fn named_client_upstream_route_uses_its_proxima_exchange() {
         name: "family-router".into(),
         enabled: true,
         query_log_enabled: true,
+        statistics_enabled: true,
         filtering_enabled: true,
         default_action: None,
         upstream: Some("family".into()),

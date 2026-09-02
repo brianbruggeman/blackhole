@@ -1360,6 +1360,10 @@ mod runtime {
         /// durable query-recording sinks without disabling policy matching.
         #[serde(default = "default_identity_query_log_enabled")]
         pub query_log_enabled: bool,
+        /// Exclude this client's actions from aggregate decision statistics
+        /// without disabling policy matching or failure telemetry.
+        #[serde(default = "default_identity_statistics_enabled")]
+        pub statistics_enabled: bool,
         /// Disable policy filtering for this client while retaining its
         /// identity mapping and all configured policy rules.
         #[serde(default = "default_identity_filtering_enabled")]
@@ -1388,6 +1392,10 @@ mod runtime {
     }
 
     fn default_identity_query_log_enabled() -> bool {
+        true
+    }
+
+    fn default_identity_statistics_enabled() -> bool {
         true
     }
 
@@ -5589,6 +5597,15 @@ mod runtime {
             })
         }
 
+        fn client_statistics_enabled(&self, client: Option<std::net::IpAddr>) -> bool {
+            self.client_identities.read(|identities| {
+                client
+                    .and_then(|client| Self::client_identity_index(identities, client))
+                    .and_then(|index| identities.get(index))
+                    .is_none_or(|identity| identity.statistics_enabled)
+            })
+        }
+
         fn client_identity_index(
             identities: &[ClientIdentityConfig],
             client: std::net::IpAddr,
@@ -6333,7 +6350,10 @@ mod runtime {
             }
         }
 
-        pub(crate) fn observe(&self, action: Action) {
+        pub(crate) fn observe_for_client(&self, action: Action, client: Option<IpAddr>) {
+            if !self.client_statistics_enabled(client) {
+                return;
+            }
             self.decision_counts[action_index(action)].fetch_add(1, Ordering::Relaxed);
             let Some(telemetry) = self.telemetry.as_ref() else {
                 return;
@@ -7577,6 +7597,7 @@ mod runtime {
                             "name": identity.name,
                             "enabled": identity.enabled,
                             "query_log_enabled": identity.query_log_enabled,
+                            "statistics_enabled": identity.statistics_enabled,
                             "filtering_enabled": identity.filtering_enabled,
                             "default_action": identity.default_action.map(action_label),
                             "upstream": identity.upstream,
@@ -7795,24 +7816,24 @@ mod runtime {
         ) -> Result<DnsPipeReply, ProximaError> {
             let Some(_request_slot) = self.request_slots.try_acquire() else {
                 self.observe_failure("admission_overflow");
-                self.observe(Action::Reject);
+                self.observe_for_client(Action::Reject, None);
                 return Ok(DnsPipeReply::typed(200, server_failure_answer()));
             };
             let client = Policy::client_ip(request.context.peer.as_ref());
             if self.deny_client(client) {
                 self.observe_failure("client_denylist");
-                self.observe(Action::Reject);
+                self.observe_for_client(Action::Reject, client);
                 return Ok(DnsPipeReply::typed(200, refused_answer()));
             }
             let _client_slot = self.try_client_admission(client);
             if client.is_some() && _client_slot.is_none() {
                 self.observe_failure("client_admission_overflow");
-                self.observe(Action::Reject);
+                self.observe_for_client(Action::Reject, client);
                 return Ok(DnsPipeReply::typed(200, server_failure_answer()));
             }
             if !self.allow_client_abuse(client) {
                 self.observe_failure("client_abuse_breaker_open");
-                self.observe(Action::Reject);
+                self.observe_for_client(Action::Reject, client);
                 return Ok(DnsPipeReply::typed(200, server_failure_answer()));
             }
             if !self.allow_client_rate(client) {
@@ -7824,12 +7845,12 @@ mod runtime {
                             .await;
                     }
                 }
-                self.observe(Action::Reject);
+                self.observe_for_client(Action::Reject, client);
                 return Ok(DnsPipeReply::typed(200, server_failure_answer()));
             }
             if !self.allow_global_abuse() {
                 self.observe_failure("global_abuse_breaker_open");
-                self.observe(Action::Reject);
+                self.observe_for_client(Action::Reject, client);
                 return Ok(DnsPipeReply::typed(200, server_failure_answer()));
             }
             if !self.allow_global_rate() {
@@ -7838,7 +7859,7 @@ mod runtime {
                     self.record_global_abuse_incident("global_rate_overflow")
                         .await;
                 }
-                self.observe(Action::Reject);
+                self.observe_for_client(Action::Reject, client);
                 return Ok(DnsPipeReply::typed(200, server_failure_answer()));
             }
             if let (Some(country_policy), Some(client)) =
@@ -7846,7 +7867,7 @@ mod runtime {
             {
                 if country_policy.denied(client) {
                     self.observe_failure("country_policy_denied");
-                    self.observe(Action::Reject);
+                    self.observe_for_client(Action::Reject, Some(client));
                     return Ok(DnsPipeReply::typed(200, refused_answer()));
                 }
                 if let Some(country) = country_policy.country_for(client)
@@ -7858,7 +7879,7 @@ mod runtime {
             let query = request.payload;
             if !self.admission_allows(&query) {
                 self.observe_failure("admission_rejected");
-                self.observe(Action::Reject);
+                self.observe_for_client(Action::Reject, client);
                 return Ok(DnsPipeReply::typed(200, refused_answer()));
             }
             // The raw listener supplies its borrowed decision here. The owned
@@ -7905,7 +7926,7 @@ mod runtime {
             if matches!(action, Some(Action::Pass | Action::Observe) | None)
                 && let Some(answer) = self.rewrites.read(|rewrites| rewrites.answer(&query))
             {
-                self.observe(action.unwrap_or(Action::Pass));
+                self.observe_for_client(action.unwrap_or(Action::Pass), client);
                 return Ok(DnsPipeReply::typed(200, self.cap_answer(&query, answer)));
             }
             let forwarding_action = match action {
@@ -7929,29 +7950,29 @@ mod runtime {
                     if forwarding_action == Action::Forward {
                         self.observe_failure("upstream_unconfigured");
                     }
-                    self.observe(forwarding_action);
+                    self.observe_for_client(forwarding_action, client);
                     return Ok(DnsPipeReply::typed(204, DnsAnswer::ok(Vec::new())));
                 };
                 let Some(_slot) = slots.try_acquire() else {
                     self.observe_failure("upstream_overflow");
-                    self.observe(forwarding_action);
+                    self.observe_for_client(forwarding_action, client);
                     return Ok(DnsPipeReply::typed(204, DnsAnswer::ok(Vec::new())));
                 };
                 let key = CacheKey::from_query(&query, route_name.as_deref());
                 if let Some(answer) = self.cache_fresh(&key) {
                     self.observe_cache("fresh_hit");
-                    self.observe(forwarding_action);
+                    self.observe_for_client(forwarding_action, client);
                     return Ok(DnsPipeReply::typed(200, self.cap_answer(&query, answer)));
                 }
                 self.observe_cache("miss");
                 if !breaker.allow(self.breaker_now_nanos()) {
                     if let Some(answer) = self.cache_stale(&key) {
                         self.observe_cache("stale_hit");
-                        self.observe(forwarding_action);
+                        self.observe_for_client(forwarding_action, client);
                         return Ok(DnsPipeReply::typed(200, self.cap_answer(&query, answer)));
                     }
                     self.observe_failure("upstream_circuit_open");
-                    self.observe(forwarding_action);
+                    self.observe_for_client(forwarding_action, client);
                     return Err(ProximaError::Io(std::io::Error::new(
                         std::io::ErrorKind::TimedOut,
                         "upstream circuit breaker is open",
@@ -7965,7 +7986,7 @@ mod runtime {
                         if let Err(cause) = self.validate_upstream_response(&query, &response) {
                             breaker.on_failure(self.breaker_now_nanos());
                             self.observe_failure(cause);
-                            self.observe(forwarding_action);
+                            self.observe_for_client(forwarding_action, client);
                             return Ok(DnsPipeReply::typed(200, server_failure_answer()));
                         }
                         breaker.on_success();
@@ -7980,15 +8001,15 @@ mod runtime {
                         breaker.on_failure(self.breaker_now_nanos());
                         if let Some(answer) = self.cache_stale(&key) {
                             self.observe_cache("stale_hit");
-                            self.observe(forwarding_action);
+                            self.observe_for_client(forwarding_action, client);
                             return Ok(DnsPipeReply::typed(200, self.cap_answer(&query, answer)));
                         }
                         self.observe_failure(Self::upstream_failure_cause(&error));
-                        self.observe(forwarding_action);
+                        self.observe_for_client(forwarding_action, client);
                         return Err(ProximaError::Io(std::io::Error::other(error.to_string())));
                     }
                 };
-                self.observe(forwarding_action);
+                self.observe_for_client(forwarding_action, client);
                 return Ok(DnsPipeReply::typed(200, self.cap_answer(&query, answer)));
             }
             let outcome = if !self.rules_configured.load(Ordering::Acquire) {
@@ -8008,7 +8029,7 @@ mod runtime {
                     Some(Action::Forward) => unreachable!("forwarding handled above"),
                 }
             };
-            self.observe(action.unwrap_or(Action::Pass));
+            self.observe_for_client(action.unwrap_or(Action::Pass), client);
             match outcome {
                 Some(answer) => Ok(DnsPipeReply::typed(200, self.cap_answer(&query, answer))),
                 // Compatibility mapping only: semantic policy results are typed;
@@ -9284,6 +9305,7 @@ mod runtime {
                 name: "family-router".into(),
                 enabled: true,
                 query_log_enabled: true,
+                statistics_enabled: true,
                 filtering_enabled: true,
                 default_action: None,
                 upstream: Some("missing".into()),
@@ -9445,6 +9467,7 @@ mod runtime {
                 name: "family-router".into(),
                 enabled: true,
                 query_log_enabled: true,
+                statistics_enabled: true,
                 filtering_enabled: true,
                 default_action: Some(Action::Reject),
                 upstream: None,
@@ -9502,6 +9525,7 @@ mod runtime {
                 name: "guest-router".into(),
                 enabled: true,
                 query_log_enabled: false,
+                statistics_enabled: true,
                 filtering_enabled: false,
                 default_action: None,
                 upstream: None,
@@ -9570,6 +9594,7 @@ mod runtime {
                 name: "family-router".into(),
                 enabled: false,
                 query_log_enabled: true,
+                statistics_enabled: true,
                 filtering_enabled: true,
                 default_action: None,
                 upstream: None,
@@ -9613,6 +9638,7 @@ mod runtime {
                 name: "family-router".into(),
                 enabled: true,
                 query_log_enabled: true,
+                statistics_enabled: true,
                 filtering_enabled: true,
                 default_action: None,
                 upstream: None,
@@ -9663,6 +9689,7 @@ mod runtime {
                 name: "family-router".into(),
                 enabled: true,
                 query_log_enabled: true,
+                statistics_enabled: true,
                 filtering_enabled: true,
                 default_action: None,
                 upstream: None,
@@ -9713,6 +9740,7 @@ mod runtime {
                 name: "family-router".into(),
                 enabled: true,
                 query_log_enabled: true,
+                statistics_enabled: true,
                 filtering_enabled: true,
                 default_action: None,
                 upstream: None,
@@ -9758,6 +9786,7 @@ mod runtime {
                     name: "family-router".into(),
                     enabled: true,
                     query_log_enabled: true,
+                    statistics_enabled: true,
                     filtering_enabled: true,
                     default_action: None,
                     upstream: None,
@@ -9768,6 +9797,7 @@ mod runtime {
                     name: "guest-router".into(),
                     enabled: true,
                     query_log_enabled: true,
+                    statistics_enabled: true,
                     filtering_enabled: true,
                     default_action: None,
                     upstream: None,
@@ -9816,6 +9846,7 @@ mod runtime {
                     name: "family-router".into(),
                     enabled: true,
                     query_log_enabled: true,
+                    statistics_enabled: true,
                     filtering_enabled: true,
                     default_action: None,
                     upstream: None,
@@ -9837,6 +9868,7 @@ mod runtime {
                     name: "family-router".into(),
                     enabled: true,
                     query_log_enabled: true,
+                    statistics_enabled: true,
                     filtering_enabled: true,
                     default_action: None,
                     upstream: None,
@@ -12055,7 +12087,7 @@ mod runtime {
                 qclass: 1,
             };
             let outcome = policy.evaluate(&query);
-            policy.observe(Action::Drop);
+            policy.observe_for_client(Action::Drop, None);
             assert!(outcome.is_none());
             assert_eq!(telemetry.calls.load(Ordering::Relaxed), 1);
         }
@@ -12355,7 +12387,7 @@ mod runtime {
                 Action::Forward,
                 Action::Observe,
             ] {
-                policy.observe(action);
+                policy.observe_for_client(action, None);
             }
             let stats: serde_json::Value =
                 serde_json::from_str(&policy.admin_stats()).expect("stats JSON");
@@ -12370,6 +12402,30 @@ mod runtime {
             let cleared: serde_json::Value =
                 serde_json::from_str(&policy.admin_stats()).expect("cleared stats JSON");
             assert_eq!(cleared["total"], 0);
+        }
+
+        #[test]
+        fn client_can_disable_statistics_without_disabling_failure_observation() {
+            let mut config = Config::default();
+            config.policy.client_identities = vec![ClientIdentityConfig {
+                name: "private-client".into(),
+                enabled: true,
+                query_log_enabled: true,
+                statistics_enabled: false,
+                filtering_enabled: true,
+                default_action: None,
+                upstream: None,
+                clients: vec!["192.0.2.10".parse().expect("client address")],
+                client_cidrs: Vec::new(),
+            }];
+            let policy = Policy::new(config).expect("valid identity policy");
+            policy.observe_for_client(Action::Reject, Some("192.0.2.10".parse().unwrap()));
+            policy.observe_for_client(Action::Pass, Some("192.0.2.11".parse().unwrap()));
+            let stats: serde_json::Value =
+                serde_json::from_str(&policy.admin_stats()).expect("stats JSON");
+            assert_eq!(stats["total"], 1);
+            assert_eq!(stats["actions"]["reject"], 0);
+            assert_eq!(stats["actions"]["pass"], 1);
         }
 
         #[test]

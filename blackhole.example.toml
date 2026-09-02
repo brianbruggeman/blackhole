@@ -79,6 +79,7 @@ ttl = 30
 # transient and are not retained in telemetry or recording.
 # [[policy.client_identities]]
 # name = "family-router"
+# statistics_enabled = true
 # clients = ["192.0.2.10"]
 # upstream = "family"  # selects a named upstream declared below
 [[policy.profiles]]
@@ -203,6 +204,8 @@ reject_private_upstream_addresses = true
 # are never recorded. The authenticated admin surface exposes GET /logs and
 # POST /logs/clear.
 query_log_enabled = false
+# Set statistics_enabled = false on an identity to omit its actions from
+# aggregate statistics without disabling policy or failure telemetry.
 query_log_max_entries = 1024
 query_log_retention_secs = 86400
 # Optional Proxima JSONL destination for the same metadata-only events.

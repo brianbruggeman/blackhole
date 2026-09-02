@@ -187,6 +187,8 @@ allowing that client's queries through without applying policy rules; the
 global filtering switch remains independent.
 Set `query_log_enabled = false` to exclude that client's decision metadata from
 both query-recording destinations while retaining policy enforcement.
+Set `statistics_enabled = false` to exclude that client's actions from aggregate
+statistics while retaining policy enforcement, failure telemetry, and recording.
 Direct `client_cidrs` and named groups are mutually exclusive.
 Rules may use `client_cidrs` for a bounded set of IPv4/IPv6 networks; the
 most-specific matching network wins while `client_cidr` remains supported.

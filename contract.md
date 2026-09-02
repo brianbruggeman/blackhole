@@ -85,6 +85,10 @@ for that mapped client are omitted from both the bounded in-memory query log
 and the optional durable Proxima recording sink; telemetry action counts and
 failure causes remain unaffected.
 
+An enabled client identity may set `statistics_enabled = false` independently.
+Its action is omitted from aggregate decision counts, while policy matching,
+failure causes, and optional query-decision recording remain active.
+
 The authenticated `POST /country/preview` route performs the same kind of
 non-retaining dry-run for a client address against the live country map. It
 reports the matched country, region, ASN, and deny/observe results; it does

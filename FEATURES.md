@@ -42,6 +42,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Each identity can independently disable query-decision recording while
   retaining policy matching; this suppresses both the in-memory and durable
   Proxima recording sinks without changing telemetry action counts.
+- Each identity can independently disable aggregate action statistics while
+  retaining policy matching, failure telemetry, and optional query-decision
+  recording.
 - Each identity may select a bounded default action for unmatched queries;
   explicit domain, regex, and rewrite precedence remains unchanged.
 - Bounded Pi-hole/AdGuard-compatible blocklist ingestion from hosts/domain files

@@ -134,7 +134,7 @@ async fn decide<'a>(
         ProximaError::Config(error.to_string())
     })?;
     if matches!(action, crate::Action::Drop | crate::Action::Ignore) {
-        policy.observe(action);
+        policy.observe_for_client(action, client);
         let _ = state.transition(Event::Drop(DropReason::PolicyFailure));
         return Ok(None);
     }
