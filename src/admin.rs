@@ -176,6 +176,10 @@ const edit = (id, path, field) => {
   try { return send(path, {[field]: JSON.parse(document.querySelector(id).value)}); }
   catch (error) { document.querySelector('#operation-status').textContent = `${path}: ${error.message}`; return Promise.reject(error); }
 };
+const editArray = (id, path) => {
+  try { return operate(path, {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(JSON.parse(document.querySelector(id).value))}).then(refresh); }
+  catch (error) { document.querySelector('#operation-status').textContent = `${path}: ${error.message}`; return Promise.reject(error); }
+};
 const replaceCountry = () => {
   try { return operate('/reload/country/replace', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#country-editor').value}).then(refresh); }
   catch (error) { document.querySelector('#operation-status').textContent = `/reload/country/replace: ${error.message}`; return Promise.reject(error); }
@@ -204,10 +208,10 @@ document.querySelector('#upsert-groups').onclick = () => edit('#group-editor', '
 document.querySelector('#upsert-identities').onclick = () => edit('#identity-editor', '/reload/client-identities/upsert', 'client_identities');
 document.querySelector('#replace-country').onclick = replaceCountry;
 document.querySelector('#replace-rewrites').onclick = replaceRewrites;
-document.querySelector('#upsert-rules').onclick = () => edit('#rule-editor', '/reload/policy/upsert', 'rules');
-document.querySelector('#validate-rules').onclick = () => edit('#rule-editor', '/validate/policy', 'rules');
-document.querySelector('#validate-regex').onclick = () => edit('#regex-editor', '/validate/regex', 'regex_rules');
-document.querySelector('#upsert-regex').onclick = () => edit('#regex-editor', '/reload/regex/upsert', 'regex_rules');
+document.querySelector('#upsert-rules').onclick = () => editArray('#rule-editor', '/reload/policy/upsert');
+document.querySelector('#validate-rules').onclick = () => editArray('#rule-editor', '/validate/policy');
+document.querySelector('#validate-regex').onclick = () => editArray('#regex-editor', '/validate/regex');
+document.querySelector('#upsert-regex').onclick = () => editArray('#regex-editor', '/reload/regex/upsert');
 document.querySelector('#reload-blocklists').onclick = () => operate('/reload/blocklists', {method:'POST'}).then(refresh);
 document.querySelector('#reload-country').onclick = () => operate('/reload/country', {method:'POST'}).then(refresh);
 document.querySelector('#reload-admission').onclick = () => operate('/reload/admission', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#admission-config').value}).then(refresh);
