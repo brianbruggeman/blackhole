@@ -48,7 +48,10 @@ export DPKG_ROOT="$root"
 
 phase() { printf 'debian-smoke: %s\n' "$1"; }
 
-dpkg_args="--root=$root"
+# Keep the package database and install tree explicit. This avoids dpkg
+# version-specific interpretation of --root while retaining a disposable
+# transaction that cannot touch the runner's package database.
+dpkg_args="--admindir=$root/var/lib/dpkg --instdir=$root"
 
 mkdir -p "$root/etc" "$root/var/lib/dpkg" "$root/var/log"
 # Start with an empty database. A fabricated installed record without the
