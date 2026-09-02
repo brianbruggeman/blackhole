@@ -5548,6 +5548,20 @@ mod runtime {
                 self.observe_reload_latency("client_identities_unchanged", started);
                 return Ok(ReloadState::Unchanged);
             }
+            let replacement = load_blocklists_with_groups(
+                self.blocklist_paths.snapshot().as_ref(),
+                self.disabled_blocklist_paths.snapshot().as_ref(),
+                self.blocklist_groups.snapshot().as_ref(),
+                self.client_groups.snapshot().as_ref(),
+                self.blocklists_by_identity.snapshot().as_ref(),
+                &next,
+            )?;
+            self.replace_active_blocklist_rules_with_groups_locked(
+                started,
+                "client_identities_blocklists",
+                true,
+                replacement,
+            )?;
             self.client_identity_control.replace(next);
             self.policy_generation.fetch_add(1, Ordering::Relaxed);
             self.observe_reload_latency("client_identities", started);
@@ -5581,6 +5595,20 @@ mod runtime {
             }
             let next = validate_client_identities(&next)?;
             self.validate_identity_upstreams(&next)?;
+            let replacement = load_blocklists_with_groups(
+                self.blocklist_paths.snapshot().as_ref(),
+                self.disabled_blocklist_paths.snapshot().as_ref(),
+                self.blocklist_groups.snapshot().as_ref(),
+                self.client_groups.snapshot().as_ref(),
+                self.blocklists_by_identity.snapshot().as_ref(),
+                &next,
+            )?;
+            self.replace_active_blocklist_rules_with_groups_locked(
+                started,
+                "client_identities_upsert_blocklists",
+                true,
+                replacement,
+            )?;
             self.client_identity_control.replace(next);
             self.policy_generation.fetch_add(1, Ordering::Relaxed);
             self.observe_reload_latency("client_identities_upsert", started);
@@ -5611,6 +5639,20 @@ mod runtime {
                     reason: "no requested identity exists".into(),
                 });
             }
+            let replacement = load_blocklists_with_groups(
+                self.blocklist_paths.snapshot().as_ref(),
+                self.disabled_blocklist_paths.snapshot().as_ref(),
+                self.blocklist_groups.snapshot().as_ref(),
+                self.client_groups.snapshot().as_ref(),
+                self.blocklists_by_identity.snapshot().as_ref(),
+                &next,
+            )?;
+            self.replace_active_blocklist_rules_with_groups_locked(
+                started,
+                "client_identities_remove_blocklists",
+                true,
+                replacement,
+            )?;
             self.client_identity_control.replace(next);
             self.policy_generation.fetch_add(1, Ordering::Relaxed);
             self.observe_reload_latency("client_identities_remove", started);
