@@ -3774,6 +3774,35 @@ mod runtime {
         client_identity: Option<String>,
     }
 
+    fn validate_regex_identity_references(
+        configs: &[RegexRuleConfig],
+        identities: &[ClientIdentityConfig],
+    ) -> Result<(), policy::PolicyError> {
+        let enabled_identities = identities
+            .iter()
+            .filter(|identity| identity.enabled)
+            .map(|identity| identity.name.as_str())
+            .collect::<BTreeSet<_>>();
+        for rule in configs {
+            let Some(identity) = rule.client_identity.as_deref() else {
+                continue;
+            };
+            if identity.is_empty()
+                || !identity.is_ascii()
+                || identity.len() > 64
+                || !enabled_identities.contains(identity)
+            {
+                return Err(policy::PolicyError::InvalidRegex {
+                    id: rule.id,
+                    reason: format!(
+                        "client_identity must name an enabled ASCII identity: {identity:?}"
+                    ),
+                });
+            }
+        }
+        Ok(())
+    }
+
     fn compile_regex_rules(
         configs: &[RegexRuleConfig],
         mut rule_ids: BTreeSet<u32>,
@@ -4067,6 +4096,10 @@ mod runtime {
             for rule in &config.policy.rules {
                 rule_ids.insert(rule.id);
             }
+            validate_regex_identity_references(
+                &config.policy.regex_rules,
+                &config.policy.client_identities,
+            )?;
             let regex_rules = compile_regex_rules(&config.policy.regex_rules, rule_ids)?;
             config.policy.domains = config.policy.domains.into_iter().map(normalize).collect();
             let reference = PolicyStore::new(&config.policy.rules)?;
@@ -4349,6 +4382,7 @@ mod runtime {
                 allowlist_by_identity,
             )?);
             let _ = validate_client_identities(client_identities)?;
+            validate_regex_identity_references(regex_configs, client_identities)?;
             let _ = compile_rewrites(rewrite_configs)?;
             let _ = load_country_policy(country_config)?;
             let configured_paths = blocklist_paths.map_or_else(
@@ -5991,6 +6025,7 @@ mod runtime {
             )?);
             let client_identities = validate_client_identities(client_identities)?;
             self.validate_identity_upstreams(&client_identities)?;
+            validate_regex_identity_references(regex_configs, &client_identities)?;
             let rewrites = compile_rewrites(rewrite_configs)?;
             let country_policy = load_country_policy(country_config)?;
             let configured_paths = blocklist_paths.map_or_else(
@@ -6292,6 +6327,10 @@ mod runtime {
             let _reload = self.reload_lock.write().expect("reload lock");
             let started = Instant::now();
             let rule_ids = self.reference.rule_ids();
+            validate_regex_identity_references(
+                configs,
+                self.client_identities.snapshot().as_ref(),
+            )?;
             let compiled = compile_regex_rules(configs, rule_ids)?;
             if self.regex_rule_configs() == configs {
                 self.observe_reload_latency("regex_unchanged", started);
@@ -6398,6 +6437,10 @@ mod runtime {
             started: Instant,
         ) -> Result<ReloadState, policy::PolicyError> {
             let rule_ids = self.reference.rule_ids();
+            validate_regex_identity_references(
+                configs,
+                self.client_identities.snapshot().as_ref(),
+            )?;
             let compiled = compile_regex_rules(configs, rule_ids)?;
             self.regex_rules_control.replace(compiled);
             self.rules_configured.store(
@@ -12255,6 +12298,29 @@ mod runtime {
                 ),
                 Action::Pass
             );
+        }
+
+        #[test]
+        fn regex_rules_reject_unknown_client_identity_scopes() {
+            let mut config = Config::default();
+            config.policy.regex_rules = vec![RegexRuleConfig {
+                enabled: true,
+                id: 89,
+                pattern: "private".into(),
+                action: Action::Reject,
+                priority: 1,
+                qtype: None,
+                qtypes: Vec::new(),
+                qclass: None,
+                qclasses: Vec::new(),
+                client: None,
+                client_cidrs: Vec::new(),
+                client_identity: Some("missing".into()),
+            }];
+            assert!(matches!(
+                Policy::new(config),
+                Err(policy::PolicyError::InvalidRegex { id: 89, .. })
+            ));
         }
 
         #[test]
