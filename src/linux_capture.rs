@@ -5,6 +5,7 @@
 //! transaction controller are portable and deterministic.
 
 use std::fmt;
+use std::io::Write;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
@@ -283,12 +284,24 @@ impl OwnershipStore for FileOwnershipStore {
 
     fn save(&mut self, ownership: &CaptureOwnership) -> Result<(), String> {
         Self::validate_path(&self.path)?;
-        let temporary = self.path.with_extension("tmp");
-        std::fs::write(&temporary, Self::encode(ownership)).map_err(|error| error.to_string())?;
-        std::fs::File::open(&temporary)
-            .map_err(|error| error.to_string())?
-            .sync_all()
-            .map_err(|error| error.to_string())?;
+        let temporary = self
+            .path
+            .with_extension(format!("tmp.{}", std::process::id()));
+        let mut file = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+        {
+            Ok(file) => file,
+            Err(error) => return Err(error.to_string()),
+        };
+        if let Err(error) = file
+            .write_all(Self::encode(ownership).as_bytes())
+            .and_then(|()| file.sync_all())
+        {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(error.to_string());
+        }
         std::fs::rename(&temporary, &self.path).map_err(|error| error.to_string())?;
         if let Some(parent) = self.path.parent() {
             std::fs::File::open(parent)
