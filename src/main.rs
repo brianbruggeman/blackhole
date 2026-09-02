@@ -427,6 +427,12 @@ async fn restore_persisted_abuse(
             }
             continue;
         }
+        if kind == "blackhole.ddos_revoke"
+            && payload.get("scope").and_then(serde_json::Value::as_str) == Some("global")
+        {
+            policy.revoke_global_abuse_incident();
+            continue;
+        }
         let clients = if let Some(values) = payload.get("clients") {
             let values = values.as_array().ok_or_else(|| {
                 ProximaError::Record("abuse recording revoke clients is not an array".into())

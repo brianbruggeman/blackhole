@@ -3568,6 +3568,36 @@ mod runtime {
             recording.sync().await.map_err(|error| error.to_string())
         }
 
+        /// Persist revocation of the global temporary breaker through the
+        /// same bounded Proxima recording stream.
+        pub(crate) async fn persist_global_abuse_revocation(&self) -> Result<(), String> {
+            if !self.config.admission.ddos.persist_incidents {
+                return Ok(());
+            }
+            let recording = self
+                .recording
+                .as_ref()
+                .ok_or_else(|| "abuse persistence sink is not configured".to_owned())?;
+            let event = RecordingEvent {
+                id: InteractionId::new(),
+                ts_ms: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |duration| {
+                        duration.as_millis().min(u128::from(u64::MAX)) as u64
+                    }),
+                parent: None,
+                event: ProtocolEvent::Custom {
+                    kind: "blackhole.ddos_revoke".into(),
+                    payload: serde_json::json!({"scope": "global"}),
+                },
+            };
+            recording
+                .append(event)
+                .await
+                .map_err(|error| error.to_string())?;
+            recording.sync().await.map_err(|error| error.to_string())
+        }
+
         /// Append validated rules to the current authoritative table and
         /// publish the combined snapshot atomically. The base-table lock is
         /// held through validation and publication so concurrent appenders do
@@ -5446,6 +5476,11 @@ mod runtime {
             self.global_abuse
                 .restore_blocked(self.breaker_epoch, Duration::from_millis(remaining_ms));
             true
+        }
+
+        /// Revoke the active global temporary breaker.
+        pub fn revoke_global_abuse_incident(&self) {
+            self.global_abuse.release_blocked();
         }
 
         /// Revoke a temporary incident for the exact client and its configured

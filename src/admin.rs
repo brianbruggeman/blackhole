@@ -88,7 +88,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <meta charset="utf-8">
 <title>Blackhole</title>
 <h1>Blackhole</h1>
-<p><button id="clear-logs">Clear log</button> <button id="clear-durable-logs">Delete durable log</button> <button id="clear-stats">Clear stats</button> <button id="clear-cache">Clear cache</button> <button id="clear-abuse">Clear abuse</button> <button id="reload-blocklists-top">Reload lists</button> <button id="reload-country">Reload country</button> <button id="reload-admission">Reload admission</button> <button id="reload-bundle">Publish config</button> <button id="toggle-filtering">Toggle filtering</button></p>
+<p><button id="clear-logs">Clear log</button> <button id="clear-durable-logs">Delete durable log</button> <button id="clear-stats">Clear stats</button> <button id="clear-cache">Clear cache</button> <button id="clear-abuse">Clear abuse</button> <button id="revoke-global-abuse">Revoke global abuse</button> <button id="reload-blocklists-top">Reload lists</button> <button id="reload-country">Reload country</button> <button id="reload-admission">Reload admission</button> <button id="reload-bundle">Publish config</button> <button id="toggle-filtering">Toggle filtering</button></p>
 <p id="operation-status"></p>
 <h2>Status</h2><pre id="status"></pre>
 <h2>Stats</h2><pre id="stats"></pre>
@@ -217,6 +217,7 @@ document.querySelector('#s').onclick = () => send('/reload/privacy/redaction', d
 document.querySelector('#clear-stats').onclick = () => operate('/stats/clear', {method:'POST'}).then(refresh);
 document.querySelector('#clear-cache').onclick = () => operate('/cache/clear', {method:'POST'}).then(refresh);
 document.querySelector('#clear-abuse').onclick = () => operate('/abuse/clear', {method:'POST'}).then(refresh);
+document.querySelector('#revoke-global-abuse').onclick = () => operate('/abuse/global/revoke', {method:'POST'}).then(refresh);
 const updateDenylist = path => operate(path, {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#denylist-config').value}).then(refresh);
 document.querySelector('#add-denylist').onclick = () => updateDenylist('/abuse/denylist/add');
 document.querySelector('#remove-denylist').onclick = () => updateDenylist('/abuse/denylist/remove');
@@ -308,6 +309,16 @@ impl SendPipe for AdminHandler {
                 "{{\"status\":\"cleared\",\"entries\":{}}}",
                 self.policy.clear_abuse_state()
             ))),
+            ("POST", "/abuse/global/revoke") => {
+                if let Err(error) = self.policy.persist_global_abuse_revocation().await {
+                    return Ok(Response::new(503).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error).unwrap_or_else(|_| "null".into())
+                    )));
+                }
+                self.policy.revoke_global_abuse_incident();
+                Ok(Response::ok("{\"status\":\"global_revoked\"}"))
+            }
             ("POST", "/abuse/revoke") => {
                 if request.payload.len() > MAX_POLICY_BODY_BYTES {
                     return Ok(Response::new(413));
@@ -1301,6 +1312,7 @@ impl SendPipe for AdminHandler {
                 | "/abuse/incidents/export"
                 | "/abuse/denylist"
                 | "/abuse/clear"
+                | "/abuse/global/revoke"
                 | "/abuse/revoke"
                 | "/abuse/incidents/approve"
                 | "/abuse/denylist/add"
