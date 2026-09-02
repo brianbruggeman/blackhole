@@ -198,6 +198,8 @@ fn workflow_reports_platform_smoke_failures() {
     assert!(workflow.contains("report launchd smoke failure"));
     assert!(workflow.contains("tail -n 80 launchd-smoke.log"));
     assert!(workflow.contains("tail -n 80 systemd-smoke.log"));
+    assert!(workflow.contains("always() && steps.launchd-smoke.outcome == 'failure'"));
+    assert!(workflow.contains("always() && steps.systemd-smoke.outcome == 'failure'"));
 }
 
 #[cfg(unix)]
