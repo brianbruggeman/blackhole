@@ -1305,6 +1305,10 @@ mod runtime {
         pub regex_rules: Vec<RegexRuleConfig>,
         #[serde(default)]
         pub blocklists: Vec<String>,
+        /// Domains allowed by the operator even when a blocklist matches.
+        /// Each entry covers its apex and subdomains.
+        #[serde(default)]
+        pub allowlist: Vec<String>,
         /// Configured sources that remain retained but are excluded from the
         /// active blocklist snapshot.
         #[serde(default)]
@@ -1339,6 +1343,7 @@ mod runtime {
                 rules: Vec::new(),
                 regex_rules: Vec::new(),
                 blocklists: Vec::new(),
+                allowlist: Vec::new(),
                 disabled_blocklists: Vec::new(),
                 blocklist_groups: BTreeMap::new(),
                 blocklist_reload_interval_secs: 0,
@@ -2059,6 +2064,57 @@ mod runtime {
 
     const MAX_BLOCKLIST_GROUP_ASSIGNMENTS: usize = 256;
     const MAX_BLOCKLIST_GROUP_RULES: usize = 65_536;
+    const MAX_ALLOWLIST_DOMAINS: usize = 4_096;
+    const ALLOWLIST_RULE_BASE: u32 = 0x8000_0000;
+
+    fn compile_allowlist(domains: &[String]) -> Result<Vec<RuleConfig>, policy::PolicyError> {
+        if domains.len() > MAX_ALLOWLIST_DOMAINS {
+            return Err(policy::PolicyError::InvalidBlocklist {
+                path: "<allowlist>".into(),
+                reason: format!("domain count exceeds {MAX_ALLOWLIST_DOMAINS}"),
+            });
+        }
+        let mut seen = BTreeSet::new();
+        let mut rules = Vec::with_capacity(domains.len().saturating_mul(2));
+        for (index, raw_domain) in domains.iter().enumerate() {
+            let domain = normalize(raw_domain);
+            if !valid_blocklist_domain(&domain) || !seen.insert(domain.clone()) {
+                return Err(policy::PolicyError::InvalidBlocklist {
+                    path: "<allowlist>".into(),
+                    reason: format!(
+                        "allowlist contains invalid or duplicate domain {raw_domain:?}"
+                    ),
+                });
+            }
+            let base = ALLOWLIST_RULE_BASE
+                .checked_add((index as u32).saturating_mul(2))
+                .ok_or_else(|| policy::PolicyError::InvalidBlocklist {
+                    path: "<allowlist>".into(),
+                    reason: "generated rule ID range overflows".into(),
+                })?;
+            for (offset, rule_domain) in [domain.clone(), format!("*.{domain}")]
+                .into_iter()
+                .enumerate()
+            {
+                rules.push(RuleConfig {
+                    enabled: true,
+                    id: base + offset as u32,
+                    domain: rule_domain,
+                    action: Action::Pass,
+                    priority: i32::MAX,
+                    qtype: None,
+                    qtypes: Vec::new(),
+                    qclass: None,
+                    qclasses: Vec::new(),
+                    client: None,
+                    client_cidr: None,
+                    client_cidrs: Vec::new(),
+                    client_identity: None,
+                });
+            }
+        }
+        Ok(rules)
+    }
 
     fn load_blocklists_with_groups(
         configured_paths: &[String],
@@ -3530,8 +3586,9 @@ mod runtime {
                     ),
                 });
             }
-            let profile_rules =
+            let mut profile_rules =
                 compile_profiles(&config.policy.profiles, &config.policy.client_groups)?;
+            profile_rules.extend(compile_allowlist(&config.policy.allowlist)?);
             let explicit_rules = config.policy.rules.clone();
             config.policy.rules.extend(profile_rules);
             let base_rules = config.policy.rules.clone();
@@ -3810,7 +3867,8 @@ mod runtime {
             let _ = default_action;
             let _ = filtering_enabled;
             legacy_domains.map(validate_legacy_domains).transpose()?;
-            let generated = compile_profiles(profiles, client_groups)?;
+            let mut generated = compile_profiles(profiles, client_groups)?;
+            generated.extend(compile_allowlist(&self.config.policy.allowlist)?);
             let _ = validate_client_identities(client_identities)?;
             let _ = compile_rewrites(rewrite_configs)?;
             let _ = load_country_policy(country_config)?;
@@ -4238,7 +4296,9 @@ mod runtime {
         fn current_profile_rules(&self) -> Result<Vec<RuleConfig>, policy::PolicyError> {
             let profiles = self.profiles.snapshot();
             let client_groups = self.client_groups.snapshot();
-            compile_profiles(&profiles, &client_groups)
+            let mut rules = compile_profiles(&profiles, &client_groups)?;
+            rules.extend(compile_allowlist(&self.config.policy.allowlist)?);
+            Ok(rules)
         }
 
         fn publish_rules_locked(
@@ -4657,6 +4717,7 @@ mod runtime {
                 || next.upstream != current.upstream
                 || next.upstreams != current.upstreams
                 || next.policy.conditional_forwards != current.policy.conditional_forwards
+                || next.policy.allowlist != current.policy.allowlist
                 || next.cache != current.cache
                 || next.security != current.security
                 || startup_privacy != current.privacy
@@ -4732,7 +4793,8 @@ mod runtime {
                 self.observe_reload_latency("profiles_unchanged", started);
                 return Ok(ReloadState::Unchanged);
             }
-            let generated = compile_profiles(profiles, client_groups)?;
+            let mut generated = compile_profiles(profiles, client_groups)?;
+            generated.extend(compile_allowlist(&self.config.policy.allowlist)?);
             let explicit = self.explicit_rules.snapshot().as_ref().clone();
             let mut combined = explicit.clone();
             combined.extend(generated);
@@ -4868,7 +4930,8 @@ mod runtime {
                 }
             }
             let profiles = self.profiles.snapshot().as_ref().clone();
-            let generated = compile_profiles(&profiles, &groups)?;
+            let mut generated = compile_profiles(&profiles, &groups)?;
+            generated.extend(compile_allowlist(&self.config.policy.allowlist)?);
             let explicit = self.explicit_rules.snapshot().as_ref().clone();
             let mut combined = explicit.clone();
             combined.extend(generated);
@@ -4913,7 +4976,8 @@ mod runtime {
                 }
             }
             let groups = self.client_groups.snapshot().as_ref().clone();
-            let generated = compile_profiles(&profiles, &groups)?;
+            let mut generated = compile_profiles(&profiles, &groups)?;
+            generated.extend(compile_allowlist(&self.config.policy.allowlist)?);
             let explicit = self.explicit_rules.snapshot().as_ref().clone();
             let mut combined = explicit.clone();
             combined.extend(generated);
@@ -4949,7 +5013,8 @@ mod runtime {
                 });
             }
             let groups = self.client_groups.snapshot().as_ref().clone();
-            let generated = compile_profiles(&profiles, &groups)?;
+            let mut generated = compile_profiles(&profiles, &groups)?;
+            generated.extend(compile_allowlist(&self.config.policy.allowlist)?);
             let explicit = self.explicit_rules.snapshot().as_ref().clone();
             let mut combined = explicit.clone();
             combined.extend(generated);
@@ -4994,7 +5059,8 @@ mod runtime {
                 });
             }
             let profiles = self.profiles.snapshot().as_ref().clone();
-            let generated = compile_profiles(&profiles, &groups)?;
+            let mut generated = compile_profiles(&profiles, &groups)?;
+            generated.extend(compile_allowlist(&self.config.policy.allowlist)?);
             let explicit = self.explicit_rules.snapshot().as_ref().clone();
             let mut combined = explicit.clone();
             combined.extend(generated);
@@ -5099,7 +5165,8 @@ mod runtime {
             }
             let normalized_legacy_domains =
                 legacy_domains.map(validate_legacy_domains).transpose()?;
-            let generated = compile_profiles(profiles, client_groups)?;
+            let mut generated = compile_profiles(profiles, client_groups)?;
+            generated.extend(compile_allowlist(&self.config.policy.allowlist)?);
             let client_identities = validate_client_identities(client_identities)?;
             self.validate_identity_upstreams(&client_identities)?;
             let rewrites = compile_rewrites(rewrite_configs)?;
@@ -8952,6 +9019,73 @@ mod runtime {
                     if reason.contains("denyallow requires")
             ));
             std::fs::remove_file(malformed).expect("remove blocklist");
+        }
+
+        #[test]
+        fn first_class_allowlist_overrides_generated_blocklist_and_survives_reload() {
+            let path = std::env::temp_dir().join(format!(
+                "blackhole-allowlist-{}-{}.txt",
+                std::process::id(),
+                1
+            ));
+            std::fs::write(&path, "blocked.example\nsafe.example\n")
+                .expect("write allowlist fixture");
+            let mut config = Config::default();
+            config.policy.blocklists = vec![path.to_string_lossy().into_owned()];
+            config.policy.allowlist = vec!["safe.example".into()];
+            let policy = Policy::new(config).expect("valid allowlist");
+            let query = |name: &str| proxima_dns::DnsQuery {
+                id: 1,
+                recursion_desired: true,
+                name: name.into(),
+                qtype: 1,
+                qclass: 1,
+            };
+            assert_eq!(
+                policy
+                    .evaluate(&query("safe.example."))
+                    .expect("allowlisted apex")
+                    .rcode,
+                0
+            );
+            assert_eq!(
+                policy
+                    .evaluate(&query("deep.safe.example."))
+                    .expect("allowlisted subdomain")
+                    .rcode,
+                0
+            );
+            assert_eq!(
+                policy
+                    .evaluate(&query("blocked.example."))
+                    .expect("blocked domain")
+                    .rcode,
+                3
+            );
+            let replacement = RuleConfig {
+                enabled: true,
+                id: 9_999,
+                domain: "replacement.example".into(),
+                action: Action::Reject,
+                priority: 0,
+                qtype: None,
+                qtypes: Vec::new(),
+                qclass: None,
+                qclasses: Vec::new(),
+                client: None,
+                client_cidr: None,
+                client_cidrs: Vec::new(),
+                client_identity: None,
+            };
+            policy.reload_rules(&[replacement]).expect("reload rules");
+            assert_eq!(
+                policy
+                    .evaluate(&query("deep.safe.example."))
+                    .expect("allowlist after reload")
+                    .rcode,
+                0
+            );
+            std::fs::remove_file(path).expect("remove allowlist fixture");
         }
 
         #[test]

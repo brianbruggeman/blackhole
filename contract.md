@@ -46,6 +46,12 @@ Each source is validated against the configured source list, and its generated
 rules inherit the group's exact-address and CIDR scopes. Group assignments are
 startup configuration and are reused by bounded background source refreshes.
 
+`[policy].allowlist` is a bounded list of normalized ASCII domains. Each entry
+publishes an exact apex pass rule and a deep-subdomain pass rule. These rules
+take precedence over ordinary generated blocklist rules, while invalid or
+duplicate entries fail closed; every policy publication retains the configured
+allowlist.
+
 Regular-expression rules are evaluated only when no explicit domain rule
 matches. They use the normalized DNS name without its trailing root dot and
 are bounded at startup by expression count, pattern bytes, and compiled
