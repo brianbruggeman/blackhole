@@ -834,6 +834,10 @@ mod runtime {
         /// Operator-supplied lines of `COUNTRY CIDR`; no database is bundled.
         #[serde(default)]
         pub map_path: Option<String>,
+        /// Optional local path for an atomically refreshed last-good source
+        /// snapshot used when the primary map cannot be loaded.
+        #[serde(default)]
+        pub last_good_path: Option<String>,
         /// Optional lowercase or uppercase 64-digit SHA-256 digest pin
         /// for the complete map contents. A mismatch rejects the refresh and
         /// retains the last good snapshot.
@@ -2324,7 +2328,109 @@ mod runtime {
         value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
     }
 
+    const MAX_COUNTRY_LAST_GOOD_PATH_BYTES: usize = 4096;
+
     fn load_country_policy(
+        config: &CountryPolicyConfig,
+    ) -> Result<Option<CountryPolicy>, policy::PolicyError> {
+        match load_country_policy_from_source(config) {
+            Ok(policy) => {
+                if policy.is_some() {
+                    persist_country_last_good(config)?;
+                }
+                Ok(policy)
+            }
+            Err(primary_error) => {
+                let Some(last_good_path) = config.last_good_path.as_deref() else {
+                    return Err(primary_error);
+                };
+                if config.map_path.as_deref() == Some(last_good_path) {
+                    return Err(primary_error);
+                }
+                let mut fallback = config.clone();
+                fallback.map_path = Some(last_good_path.to_owned());
+                fallback.last_good_path = None;
+                fallback.max_age_secs = None;
+                load_country_policy_from_source(&fallback).map_err(|fallback_error| {
+                    policy::PolicyError::InvalidCountryMap {
+                        path: last_good_path.into(),
+                        reason: format!(
+                            "primary source failed ({primary_error}); last-good snapshot failed ({fallback_error})"
+                        ),
+                    }
+                })
+            }
+        }
+    }
+
+    fn persist_country_last_good(config: &CountryPolicyConfig) -> Result<(), policy::PolicyError> {
+        let Some(source) = config.map_path.as_deref() else {
+            return Ok(());
+        };
+        let Some(destination) = config.last_good_path.as_deref() else {
+            return Ok(());
+        };
+        if destination.len() > MAX_COUNTRY_LAST_GOOD_PATH_BYTES {
+            return Err(policy::PolicyError::InvalidCountryMap {
+                path: destination.into(),
+                reason: format!("last_good_path exceeds {MAX_COUNTRY_LAST_GOOD_PATH_BYTES} bytes"),
+            });
+        }
+        if http_source_parts(source).is_some() || http_source_parts(destination).is_some() {
+            return Err(policy::PolicyError::InvalidCountryMap {
+                path: destination.into(),
+                reason: "last_good_path requires local map paths".into(),
+            });
+        }
+        if source == destination {
+            return Err(policy::PolicyError::InvalidCountryMap {
+                path: destination.into(),
+                reason: "last_good_path must differ from map_path".into(),
+            });
+        }
+        let contents =
+            std::fs::read(source).map_err(|error| policy::PolicyError::InvalidCountryMap {
+                path: source.into(),
+                reason: format!("cannot refresh last-good snapshot: {error}"),
+            })?;
+        if contents.len() as u64 > MAX_COUNTRY_MAP_BYTES {
+            return Err(policy::PolicyError::InvalidCountryMap {
+                path: source.into(),
+                reason: format!("file exceeds {MAX_COUNTRY_MAP_BYTES} bytes"),
+            });
+        }
+        let destination_path = std::path::Path::new(destination);
+        let Some(parent) = destination_path.parent() else {
+            return Err(policy::PolicyError::InvalidCountryMap {
+                path: destination.into(),
+                reason: "last_good_path must have a parent directory".into(),
+            });
+        };
+        let temp = parent.join(format!(
+            ".{}.{}.tmp",
+            destination_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("country-map"),
+            std::process::id()
+        ));
+        std::fs::write(&temp, contents).map_err(|error| {
+            policy::PolicyError::InvalidCountryMap {
+                path: destination.into(),
+                reason: format!("cannot write last-good snapshot: {error}"),
+            }
+        })?;
+        if let Err(error) = std::fs::rename(&temp, destination_path) {
+            let _ = std::fs::remove_file(&temp);
+            return Err(policy::PolicyError::InvalidCountryMap {
+                path: destination.into(),
+                reason: format!("cannot publish last-good snapshot: {error}"),
+            });
+        }
+        Ok(())
+    }
+
+    fn load_country_policy_from_source(
         config: &CountryPolicyConfig,
     ) -> Result<Option<CountryPolicy>, policy::PolicyError> {
         if config.map_path.is_none()
@@ -10747,6 +10853,7 @@ mod runtime {
             let config = Config {
                 country_policy: CountryPolicyConfig {
                     map_path: Some(path.to_string_lossy().into_owned()),
+                    last_good_path: None,
                     expected_sha256: None,
                     max_age_secs: None,
                     reload_interval_secs: 0,
@@ -10877,6 +10984,50 @@ mod runtime {
         }
 
         #[test]
+        fn country_map_refreshes_and_recovers_from_last_good_snapshot() {
+            let source = std::env::temp_dir().join(format!(
+                "blackhole-country-source-{}-{}.txt",
+                std::process::id(),
+                2
+            ));
+            let last_good = std::env::temp_dir().join(format!(
+                "blackhole-country-last-good-{}-{}.txt",
+                std::process::id(),
+                2
+            ));
+            let contents = "US 192.0.2.0/24 US-CA AS64500\n";
+            std::fs::write(&source, contents).expect("write country source");
+            let _ = std::fs::remove_file(&last_good);
+            let config = CountryPolicyConfig {
+                map_path: Some(source.to_string_lossy().into_owned()),
+                last_good_path: Some(last_good.to_string_lossy().into_owned()),
+                deny: vec!["US".into()],
+                ..Default::default()
+            };
+            let policy = Policy::new(Config {
+                country_policy: config,
+                ..Default::default()
+            })
+            .expect("initial country policy");
+            assert_eq!(
+                std::fs::read_to_string(&last_good).expect("last-good map"),
+                contents
+            );
+
+            std::fs::write(&source, "not a country map\n").expect("corrupt country source");
+            assert_eq!(policy.reload_country_policy(), Ok(ReloadState::Unchanged));
+            let country_policy = policy
+                .country_policy
+                .snapshot()
+                .as_ref()
+                .clone()
+                .expect("recovered country policy");
+            assert!(country_policy.denied("192.0.2.10".parse().expect("client address")));
+            std::fs::remove_file(source).expect("remove country source");
+            std::fs::remove_file(last_good).expect("remove last-good map");
+        }
+
+        #[test]
         fn country_map_freshness_is_bounded_and_clock_skew_fails_closed() {
             let now = std::time::UNIX_EPOCH + Duration::from_secs(10_000);
             assert!(country_map_is_fresh(now - Duration::from_secs(60), now, 60));
@@ -10920,6 +11071,7 @@ mod runtime {
             let config = Config {
                 country_policy: CountryPolicyConfig {
                     map_path: Some(path.to_string_lossy().into_owned()),
+                    last_good_path: None,
                     expected_sha256: None,
                     max_age_secs: None,
                     reload_interval_secs: 0,

@@ -190,6 +190,8 @@ Named service profiles are also compiled into the authoritative rule table;
 each profile supplies a bounded domain set and action.
 The optional country policy accepts an operator-supplied local file or bounded
 HTTP(S) `COUNTRY CIDR [REGION] [ASN]` map;
+`country_policy.last_good_path` enables an optional local, atomically replaced
+last-good map snapshot for recovery from a failed source refresh.
 `country_policy.reload_interval_secs` enables bounded background refresh, where
 unchanged content is not republished and failed refreshes retain the last good
 map. Local files may use `max_age_secs`; hosted maps reject that option until a
