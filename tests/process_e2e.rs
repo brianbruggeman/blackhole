@@ -394,39 +394,42 @@ fn shipped_binary_allows_only_configured_private_upstream_answers() {
     let upstream_addr = upstream.local_addr().expect("upstream address");
     let upstream_thread = thread::spawn(move || {
         let mut packet = [0_u8; 4096];
-        let (length, peer) = upstream
-            .recv_from(&mut packet)
-            .expect("receive upstream query");
-        let message = parse_message(&packet[..length]).expect("parse upstream query");
-        let question = message
-            .questions()
-            .next()
-            .expect("upstream question")
-            .expect("valid upstream question");
-        let address = encode::ipv4_rdata("10.20.30.40".parse().expect("private address"));
-        let answer = encode::AnswerRecord {
-            name: &question.name.to_dotted(),
-            rtype: 1,
-            rclass: question.qclass,
-            ttl: 30,
-            rdata: &address,
-        };
-        let mut response = Vec::new();
-        encode::encode_response(
-            message.header.id,
-            Flags::for_response(true, false, true, 0),
-            encode::EncodeQuestion {
-                name: &question.name.to_dotted(),
-                qtype: question.qtype,
-                qclass: question.qclass,
-            },
-            &[answer],
-            &mut response,
-        )
-        .expect("encode upstream response");
-        upstream
-            .send_to(&response, peer)
-            .expect("send upstream response");
+        for _ in 0..2 {
+            let (length, peer) = upstream
+                .recv_from(&mut packet)
+                .expect("receive upstream query");
+            let message = parse_message(&packet[..length]).expect("parse upstream query");
+            let question = message
+                .questions()
+                .next()
+                .expect("upstream question")
+                .expect("valid upstream question");
+            let name = question.name.to_dotted();
+            let address = encode::ipv4_rdata("10.20.30.40".parse().expect("private address"));
+            let answer = encode::AnswerRecord {
+                name: &name,
+                rtype: 1,
+                rclass: question.qclass,
+                ttl: 30,
+                rdata: &address,
+            };
+            let mut response = Vec::new();
+            encode::encode_response(
+                message.header.id,
+                Flags::for_response(true, false, true, 0),
+                encode::EncodeQuestion {
+                    name: &name,
+                    qtype: question.qtype,
+                    qclass: question.qclass,
+                },
+                &[answer],
+                &mut response,
+            )
+            .expect("encode upstream response");
+            upstream
+                .send_to(&response, peer)
+                .expect("send upstream response");
+        }
     });
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("reserve listener port");
@@ -468,6 +471,31 @@ fn shipped_binary_allows_only_configured_private_upstream_answers() {
         .expect("valid private upstream answer");
     assert_eq!(
         answer.rdata,
+        proxima_protocols::dns::RData::A(Ipv4Addr::new(10, 20, 30, 40))
+    );
+
+    let mut tcp = wait_for_tcp(listener_addr);
+    tcp.set_read_timeout(Some(Duration::from_secs(3)))
+        .expect("set TCP timeout");
+    let tcp_query = query(0x6602, "tcp-split-dns.example.");
+    let tcp_length = u16::try_from(tcp_query.len()).expect("TCP query fits");
+    tcp.write_all(&tcp_length.to_be_bytes())
+        .expect("write TCP query length");
+    tcp.write_all(&tcp_query).expect("write TCP query");
+    let mut response_length = [0_u8; 2];
+    tcp.read_exact(&mut response_length)
+        .expect("read TCP response length");
+    let mut tcp_response = vec![0_u8; usize::from(u16::from_be_bytes(response_length))];
+    tcp.read_exact(&mut tcp_response)
+        .expect("read TCP response");
+    let tcp_message = parse_message(&tcp_response).expect("parse TCP response");
+    let tcp_answer = tcp_message
+        .answers()
+        .next()
+        .expect("TCP private upstream answer")
+        .expect("valid TCP private upstream answer");
+    assert_eq!(
+        tcp_answer.rdata,
         proxima_protocols::dns::RData::A(Ipv4Addr::new(10, 20, 30, 40))
     );
     upstream_thread.join().expect("reap upstream");
