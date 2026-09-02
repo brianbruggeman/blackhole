@@ -10702,6 +10702,41 @@ mod runtime {
         }
 
         #[test]
+        fn hosted_country_map_without_freshness_contract_fails_closed() {
+            use std::io::{Read, Write};
+
+            let server = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+                .expect("bind freshness fixture");
+            let address = server.local_addr().expect("freshness fixture address");
+            let thread = std::thread::spawn(move || {
+                let (mut stream, _) = server.accept().expect("accept freshness request");
+                let mut request = [0_u8; 2048];
+                stream.read(&mut request).expect("read freshness request");
+                let body = b"US 192.0.2.0/24\n";
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                )
+                .expect("write freshness headers");
+                stream.write_all(body).expect("write freshness body");
+            });
+
+            let config = CountryPolicyConfig {
+                map_path: Some(format!("http://{address}/country.txt")),
+                max_age_secs: Some(60),
+                deny: vec!["US".into()],
+                ..Default::default()
+            };
+            assert!(matches!(
+                load_country_policy(&config),
+                Err(policy::PolicyError::InvalidCountryMap { reason, .. })
+                    if reason.contains("Cache-Control max-age")
+            ));
+            thread.join().expect("join freshness fixture");
+        }
+
+        #[test]
         fn hosted_sources_reject_non_http_schemes() {
             assert!(http_source_parts("ftp://example.test/map.txt").is_none());
             assert!(http_source_parts("file:///etc/hosts").is_none());
