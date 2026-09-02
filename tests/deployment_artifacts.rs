@@ -53,6 +53,10 @@ fn wasm_workflow_runs_node_and_deno_measurements() {
     assert!(section.contains("node scripts/wasm_edge_bench.mjs"));
     assert!(section.contains("denoland/setup-deno@v2"));
     assert!(section.contains("deno run --allow-read scripts/wasm_edge_bench.mjs"));
+    assert!(section.contains("| tee wasm-node.txt"));
+    assert!(section.contains("| tee wasm-deno.txt"));
+    assert!(section.contains("wasm-node.txt"));
+    assert!(section.contains("wasm-deno.txt"));
 }
 
 #[test]
