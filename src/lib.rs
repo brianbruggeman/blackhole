@@ -3290,6 +3290,67 @@ mod runtime {
             Ok(())
         }
 
+        /// Validate a complete proposed policy bundle without publishing it.
+        /// This deliberately mirrors the reload validator's cross-table
+        /// checks so operators can preflight the exact transaction they plan
+        /// to publish.
+        #[allow(clippy::too_many_arguments)]
+        pub fn validate_policy_bundle_with_legacy_and_admission(
+            &self,
+            rules: &[RuleConfig],
+            regex_configs: &[RegexRuleConfig],
+            profiles: &[ServiceProfileConfig],
+            client_groups: &[ClientGroupConfig],
+            client_identities: &[ClientIdentityConfig],
+            rewrite_configs: &[RewriteConfig],
+            country_config: &CountryPolicyConfig,
+            blocklist_paths: Option<&[String]>,
+            legacy_mode: Option<Mode>,
+            legacy_domains: Option<&[String]>,
+            default_action: Option<Action>,
+            filtering_enabled: Option<bool>,
+            disabled_blocklists: Option<&[String]>,
+            admission: Option<&AdmissionConfig>,
+        ) -> Result<(), policy::PolicyError> {
+            if let Some(admission) = admission {
+                self.validate_admission(admission)?;
+            }
+            let _ = legacy_mode;
+            let _ = default_action;
+            let _ = filtering_enabled;
+            legacy_domains.map(validate_legacy_domains).transpose()?;
+            let generated = compile_profiles(profiles, client_groups)?;
+            let _ = validate_client_identities(client_identities)?;
+            let _ = compile_rewrites(rewrite_configs)?;
+            let _ = load_country_policy(country_config)?;
+            let configured_paths = blocklist_paths.map_or_else(
+                || self.blocklist_paths.snapshot().as_ref().clone(),
+                <[String]>::to_vec,
+            );
+            let configured_disabled = disabled_blocklists.map_or_else(
+                || {
+                    self.disabled_blocklist_paths
+                        .snapshot()
+                        .iter()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                },
+                <[String]>::to_vec,
+            );
+            let active_paths = active_blocklist_paths(&configured_paths, &configured_disabled)?;
+            let replacement = load_blocklists(&active_paths)?;
+            let mut published = rules.to_vec();
+            published.extend(generated);
+            published.extend(replacement);
+            let rule_ids = published
+                .iter()
+                .map(|rule| rule.id)
+                .collect::<BTreeSet<_>>();
+            let _ = compile_regex_rules(regex_configs, rule_ids)?;
+            let _ = ReferencePolicy::new(&published)?;
+            Ok(())
+        }
+
         fn validate_admission(
             &self,
             admission: &AdmissionConfig,

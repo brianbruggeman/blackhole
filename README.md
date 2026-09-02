@@ -249,6 +249,9 @@ configuration replacement), bounded
 `POST /reload/policy/upsert` (a non-empty JSON array that replaces or adds rules by stable ID while preserving unspecified rules), and bounded
 `POST /reload/policy/remove` (a JSON array of stable rule IDs removed atomically), and bounded
 `POST /validate/policy` (a JSON array validated against the current profile-generated rules without publishing), and bounded
+`POST /validate/policy-bundle` (a complete bundle validated across profiles,
+identities, rewrites, country policy, blocklists, legacy fields, admission,
+and rule IDs without publishing), and bounded
 `POST /reload/regex` (a JSON array of regex rule objects),
 `POST /validate/regex` (a JSON array validated against the current domain rule IDs without publishing),
 `POST /reload/regex/upsert` (a JSON array that replaces or adds regex rules by

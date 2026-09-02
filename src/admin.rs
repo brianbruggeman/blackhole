@@ -97,7 +97,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <h2>Denylist</h2><textarea id="denylist-config" rows="5" cols="80"></textarea><p><button id="add-denylist">Add</button> <button id="remove-denylist">Revoke</button></p>
 <h2>Abuse</h2><textarea id="abuse-revoke"></textarea><button id="revoke-abuse">Revoke</button><button id="approve-abuse">Approve</button>
 <h2>Incidents</h2><p><button id="export-abuse">Export durable</button></p><pre id="abuse-incidents"></pre>
-<h2>Policy bundle</h2><textarea id="policy-bundle" rows="12" cols="80">loading…</textarea>
+<h2>Policy bundle</h2><textarea id="policy-bundle" rows="12" cols="80">loading…</textarea><button id="validate-bundle">Validate bundle</button>
 <h2>Blocklists</h2><textarea id="blocklist-sources"></textarea><button id="replace-blocklists">Replace</button><button id="add-blocklists">Add</button><button id="remove-blocklists">Remove</button><button id="reload-blocklists">Reload</button><div id="blocklist-controls"></div><pre id="blocklists"></pre>
 <h2>Country</h2><textarea id="country-editor" rows="8" cols="80"></textarea><button id="replace-country">Replace country policy</button><pre id="country-status"></pre>
 <h2>Privacy</h2><pre id="privacy-status"></pre><select id="r"><option value="metadata">metadata</option><option value="action_only">action only</option></select><button id="s">Apply</button>
@@ -216,6 +216,7 @@ document.querySelector('#reload-blocklists').onclick = () => operate('/reload/bl
 document.querySelector('#reload-country').onclick = () => operate('/reload/country', {method:'POST'}).then(refresh);
 document.querySelector('#reload-admission').onclick = () => operate('/reload/admission', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#admission-config').value}).then(refresh);
 document.querySelector('#reload-bundle').onclick = () => operate('/reload/config', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#policy-bundle').value}).then(refresh);
+document.querySelector('#validate-bundle').onclick = () => operate('/validate/policy-bundle', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#policy-bundle').value});
 document.querySelector('#toggle-filtering').onclick = () => fetch('/policy-bundle').then(response => response.json()).then(value => operate('/reload/filtering', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({enabled: !value.filtering_enabled})}).then(refresh));
 refresh();
 </script>
@@ -611,6 +612,45 @@ impl SendPipe for AdminHandler {
                 }
             }
             ("GET", "/rewrites") => Ok(Response::ok(self.policy.admin_rewrites())),
+            ("POST", "/validate/policy-bundle") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let bundle = match serde_json::from_slice::<PolicyBundle>(&request.payload) {
+                    Ok(bundle) => bundle,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            r#"{{"status":"error","message":{}}}"#,
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                match self
+                    .policy
+                    .validate_policy_bundle_with_legacy_and_admission(
+                        &bundle.rules,
+                        &bundle.regex_rules,
+                        &bundle.profiles,
+                        &bundle.client_groups,
+                        &bundle.client_identities,
+                        &bundle.rewrites,
+                        &bundle.country_policy,
+                        bundle.blocklists.as_deref(),
+                        bundle.mode,
+                        bundle.domains.as_deref(),
+                        bundle.default_action,
+                        bundle.filtering_enabled,
+                        bundle.disabled_blocklists.as_deref(),
+                        bundle.admission.as_ref(),
+                    ) {
+                    Ok(()) => Ok(Response::ok(r#"{"status":"valid"}"#)),
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        r#"{{"status":"error","message":{}}}"#,
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
             ("POST", "/reload/policy-bundle") => {
                 if request.payload.len() > MAX_POLICY_BODY_BYTES {
                     return Ok(Response::new(413));
@@ -1263,6 +1303,7 @@ impl SendPipe for AdminHandler {
                 | "/reload/client-identities/upsert"
                 | "/reload/client-identities/remove"
                 | "/reload/policy-bundle"
+                | "/validate/policy-bundle"
                 | "/reload/config"
                 | "/logs"
                 | "/cache/clear"
@@ -1496,6 +1537,7 @@ mod tests {
             b"profile-editor".as_slice(),
             b"group-editor".as_slice(),
             b"identity-editor".as_slice(),
+            b"validate-bundle".as_slice(),
             b"upsert-profiles".as_slice(),
             b"upsert-groups".as_slice(),
             b"upsert-identities".as_slice(),
@@ -2674,6 +2716,17 @@ mod tests {
         assert_eq!(bundle["rewrites"][0]["name"], "router.example");
         assert_eq!(bundle["rewrites"][0]["ipv4"], "192.0.2.1");
         assert_eq!(bundle["blocklists"], serde_json::Value::Null);
+        let validate_bundle = Request::builder()
+            .method("POST")
+            .path("/validate/policy-bundle")
+            .payload(
+                r#"{"rules":[{"id":7,"domain":"blocked.example","action":"nxdomain"}],"regex_rules":[{"id":8,"pattern":"^ads\\.","action":"drop"}],"profiles":[{"id":9,"name":"family","domains":["family.example"],"action":"reject"}],"client_groups":[],"client_identities":[{"name":"family-router","clients":["192.0.2.10"]}],"rewrites":[{"name":"router.example","ipv4":"192.0.2.1","ipv6":null,"ttl":30}]}"#,
+            )
+            .build()
+            .expect("bundle validation request");
+        let response = block_on(handler.call(validate_bundle)).expect("bundle validation response");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.payload.as_ref(), br#"{"status":"valid"}"#);
         let validate = Request::builder()
             .method("POST")
             .path("/validate/policy")
