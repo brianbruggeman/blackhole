@@ -8599,6 +8599,8 @@ mod runtime {
                     && country_policy.observed(client)
                 {
                     self.observe_country(country);
+                } else if country_policy.observed(client) {
+                    self.observe_country("UNMAPPED");
                 }
             }
             let query = request.payload;
