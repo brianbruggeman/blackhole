@@ -48,7 +48,10 @@ phase() { printf 'debian-smoke: %s\n' "$1"; }
 dpkg_args="--root=$root"
 
 mkdir -p "$root/etc" "$root/var/lib/dpkg" "$root/var/log"
-printf 'Package: blackhole\nStatus: install ok installed\n' > "$root/var/lib/dpkg/status"
+# Start with an empty database. A fabricated installed record without the
+# package's version and architecture makes dpkg treat the first unpack as an
+# upgrade of a malformed package instead of a real installation.
+: > "$root/var/lib/dpkg/status"
 cp /etc/passwd /etc/group /etc/shadow "$root/etc/"
 
 phase 'unpack initial package'
