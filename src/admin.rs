@@ -2760,6 +2760,7 @@ mod tests {
             upstream: None,
             clients: vec!["192.0.2.10".parse().expect("identity address")],
             max_queries_per_second: None,
+            max_response_bytes_per_second: None,
             client_cidrs: Vec::new(),
         }];
         let handler = AdminHandler::new(Arc::new(Policy::new(config).expect("valid rules")));
@@ -2995,6 +2996,7 @@ mod tests {
             upstream: None,
             clients: vec!["192.0.2.10".parse().expect("identity address")],
             max_queries_per_second: None,
+            max_response_bytes_per_second: None,
             client_cidrs: Vec::new(),
         }];
         let policy = Arc::new(Policy::new(config).expect("valid profile policy"));

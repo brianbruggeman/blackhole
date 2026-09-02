@@ -78,6 +78,8 @@ I/O, and configuration errors in the existing Proxima telemetry stream before
 the failure is returned to the listener.
 Client identities may set an optional bounded `max_queries_per_second` ceiling;
 identities without an override use the configured admission default.
+They may also set `max_response_bytes_per_second` to cap encoded DNS egress for
+that identity independently of the default per-client budget.
 Repeated per-client rate-limit violations open a bounded temporary abuse
 breaker; unidentified callers are not assigned a shared abuse identity.
 Identified malformed-query floods also feed that same bounded client/network
