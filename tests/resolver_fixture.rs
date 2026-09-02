@@ -1035,7 +1035,7 @@ async fn listener_enforces_service_profile_on_the_real_udp_path() {
 }
 
 #[proxima::test]
-async fn listener_enforces_runtime_denylist_on_the_real_udp_path() {
+async fn listener_enforces_runtime_denylist_on_the_real_udp_and_tcp_paths() {
     let policy = Arc::new(Policy::new(Config::default()).expect("valid default policy"));
     policy
         .add_deny_client_cidrs(&["127.0.0.0/8".into()])
@@ -1077,5 +1077,40 @@ async fn listener_enforces_runtime_denylist_on_the_real_udp_path() {
     assert_eq!(message.header.id, 0x4323);
     assert_eq!(message.header.flags.rcode(), 5);
     assert_eq!(message.answers().count(), 0);
+
+    let tcp_client = PrimeTcpUpstream::new(listener_addr);
+    let mut tcp = tcp_client.connect().await.expect("connect TCP listener");
+    let mut tcp_query = Vec::new();
+    encode::encode_query(
+        0x4324,
+        true,
+        encode::EncodeQuestion {
+            name: "runtime-denied-tcp.example.",
+            qtype: 1,
+            qclass: 1,
+        },
+        &mut tcp_query,
+    )
+    .expect("encode TCP denylist query");
+    let frame_len = u16::try_from(tcp_query.len()).expect("DNS query fits TCP frame");
+    tcp.write_all(&frame_len.to_be_bytes())
+        .await
+        .expect("write TCP frame length");
+    tcp.write_all(&tcp_query)
+        .await
+        .expect("write TCP denylist query");
+    let mut tcp_response_len = [0u8; 2];
+    tcp.read_exact(&mut tcp_response_len)
+        .await
+        .expect("read TCP denylist response length");
+    let tcp_response_len = usize::from(u16::from_be_bytes(tcp_response_len));
+    let mut tcp_response = vec![0u8; tcp_response_len];
+    tcp.read_exact(&mut tcp_response)
+        .await
+        .expect("read TCP denylist response");
+    let tcp_message = parse_message(&tcp_response).expect("parse TCP denylist response");
+    assert_eq!(tcp_message.header.id, 0x4324);
+    assert_eq!(tcp_message.header.flags.rcode(), 5);
+    assert_eq!(tcp_message.answers().count(), 0);
     server.stop();
 }
