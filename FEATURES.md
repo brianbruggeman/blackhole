@@ -91,6 +91,10 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   matching, optional client-identity scope, identity-over-global precedence,
   explicit policy precedence, and fail-closed validation for malformed,
   duplicate, mixed-record, or oversized configuration.
+- Bounded startup loading of standard hosts files through `policy.hosts_path`
+  into local A/AAAA rewrites, including comments, multiple names per address,
+  explicit-rewrite precedence, and fail-closed path, line, file, name, and
+  entry bounds.
 - Named service-blocking profiles compile into the authoritative rule table,
   with bounded domains, optional IPv4/IPv6 client-network scopes, stable
   generated IDs, independent qtype/qclass filters, optional adapter-owned

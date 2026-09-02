@@ -1394,6 +1394,11 @@ mod runtime {
         pub blocklist_reload_interval_secs: u64,
         #[serde(default)]
         pub rewrites: Vec<RewriteConfig>,
+        /// Optional bounded hosts-file source for local A/AAAA answers.
+        /// Explicit rewrites take precedence for a name supplied by both
+        /// sources. The file is read at startup and remains startup-only.
+        #[serde(default)]
+        pub hosts_path: Option<String>,
         #[serde(default)]
         pub profiles: Vec<ServiceProfileConfig>,
         #[serde(default)]
@@ -1427,6 +1432,7 @@ mod runtime {
                 blocklists_by_identity: BTreeMap::new(),
                 blocklist_reload_interval_secs: 0,
                 rewrites: Vec::new(),
+                hosts_path: None,
                 profiles: Vec::new(),
                 client_groups: Vec::new(),
                 client_identities: Vec::new(),
@@ -3025,6 +3031,8 @@ mod runtime {
     }
 
     const MAX_REWRITES: usize = 10_000;
+    const MAX_HOSTS_BYTES: u64 = 16 * 1024 * 1024;
+    const MAX_HOSTS_LINE_BYTES: usize = 4096;
 
     const MAX_PROFILES: usize = 256;
     const MAX_CLIENT_GROUPS: usize = 256;
@@ -3542,6 +3550,103 @@ mod runtime {
             wildcard_entries,
         })
     }
+
+    fn load_hosts_rewrites(path: Option<&str>) -> Result<Vec<RewriteConfig>, policy::PolicyError> {
+        let Some(path) = path else {
+            return Ok(Vec::new());
+        };
+        if path.is_empty() || path.len() > MAX_BLOCKLIST_PATH_BYTES {
+            return Err(policy::PolicyError::InvalidRewrite {
+                name: path.to_owned(),
+                reason: "hosts_path is empty or exceeds the path bound".into(),
+            });
+        }
+        let contents =
+            std::fs::read_to_string(path).map_err(|error| policy::PolicyError::InvalidRewrite {
+                name: path.to_owned(),
+                reason: format!("cannot read hosts file: {error}"),
+            })?;
+        if contents.len() as u64 > MAX_HOSTS_BYTES {
+            return Err(policy::PolicyError::InvalidRewrite {
+                name: path.to_owned(),
+                reason: format!("hosts file exceeds {MAX_HOSTS_BYTES} bytes"),
+            });
+        }
+        let mut records = BTreeMap::<String, (Option<Ipv4Addr>, Option<Ipv6Addr>)>::new();
+        for (line_number, raw_line) in contents.lines().enumerate() {
+            if raw_line.len() > MAX_HOSTS_LINE_BYTES {
+                return Err(policy::PolicyError::InvalidRewrite {
+                    name: path.to_owned(),
+                    reason: format!(
+                        "line {} exceeds {MAX_HOSTS_LINE_BYTES} bytes",
+                        line_number + 1
+                    ),
+                });
+            }
+            let line = raw_line.split('#').next().unwrap_or_default();
+            let mut fields = line.split_whitespace();
+            let Some(address) = fields.next() else {
+                continue;
+            };
+            let Ok(address) = address.parse::<IpAddr>() else {
+                continue;
+            };
+            for hostname in fields {
+                let name = normalize(hostname);
+                if name.is_empty() || !valid_dns_name(&name) {
+                    return Err(policy::PolicyError::InvalidRewrite {
+                        name: hostname.to_owned(),
+                        reason: format!(
+                            "hosts file line {} has an invalid DNS name",
+                            line_number + 1
+                        ),
+                    });
+                }
+                let entry = records.entry(name).or_default();
+                match address {
+                    IpAddr::V4(address) => entry.0 = Some(address),
+                    IpAddr::V6(address) => entry.1 = Some(address),
+                }
+            }
+            if records.len() > MAX_REWRITES {
+                return Err(policy::PolicyError::InvalidRewrite {
+                    name: path.to_owned(),
+                    reason: format!("hosts entry count exceeds {MAX_REWRITES}"),
+                });
+            }
+        }
+        Ok(records
+            .into_iter()
+            .map(|(name, (ipv4, ipv6))| RewriteConfig {
+                name,
+                client_identity: None,
+                ipv4,
+                ipv6,
+                cname: None,
+                ptr: None,
+                txt: None,
+                ttl: default_ttl(),
+            })
+            .collect())
+    }
+
+    fn merge_hosts_rewrites(
+        explicit: &[RewriteConfig],
+        hosts: &[RewriteConfig],
+    ) -> Vec<RewriteConfig> {
+        let explicit_names = explicit
+            .iter()
+            .map(|rewrite| normalize(&rewrite.name))
+            .collect::<BTreeSet<_>>();
+        let mut merged = explicit.to_vec();
+        merged.extend(
+            hosts
+                .iter()
+                .filter(|rewrite| !explicit_names.contains(&normalize(&rewrite.name)))
+                .cloned(),
+        );
+        merged
+    }
     fn default_breaker_failures() -> u32 {
         3
     }
@@ -3791,6 +3896,7 @@ mod runtime {
 
     pub struct Policy {
         config: Config,
+        hosts_rewrites: Vec<RewriteConfig>,
         capture_original_destination: Option<SocketAddr>,
         base_rules: Live<Vec<RuleConfig>>,
         base_rules_control: LiveControl<Vec<RuleConfig>>,
@@ -4228,7 +4334,9 @@ mod runtime {
             )?;
             let retained_blocklist_rules = blocklist_rules.clone();
             let country_policy = load_country_policy(&config.country_policy)?;
-            let rewrites = compile_rewrites(&config.policy.rewrites)?;
+            let hosts_rewrites = load_hosts_rewrites(config.policy.hosts_path.as_deref())?;
+            let rewrite_configs = merge_hosts_rewrites(&config.policy.rewrites, &hosts_rewrites);
+            let rewrites = compile_rewrites(&rewrite_configs)?;
             let conditional_forwards = compile_conditional_forwards(&config, &client_identities)?;
             config.policy.rules.extend(blocklist_rules);
             let mut rule_ids = BTreeSet::new();
@@ -4321,6 +4429,7 @@ mod runtime {
                 live(config.privacy.query_recording_redaction);
             let policy = Self {
                 config,
+                hosts_rewrites,
                 capture_original_destination,
                 base_rules,
                 base_rules_control,
@@ -5639,6 +5748,7 @@ mod runtime {
                 || next.policy.allowlist != current.policy.allowlist
                 || next.policy.service_profiles_by_identity
                     != current.policy.service_profiles_by_identity
+                || next.policy.hosts_path != current.policy.hosts_path
                 || next.cache != current.cache
                 || next.security != current.security
                 || startup_privacy != current.privacy
@@ -5664,6 +5774,8 @@ mod runtime {
             }
             let redaction_changed = next.privacy.query_recording_redaction
                 != *self.query_recording_redaction.snapshot();
+            let effective_rewrites =
+                merge_hosts_rewrites(&next.policy.rewrites, &self.hosts_rewrites);
             let result = self.reload_policy_bundle_with_legacy_and_admission(
                 &next.policy.rules,
                 &next.policy.regex_rules,
@@ -5672,7 +5784,7 @@ mod runtime {
                 &next.policy.client_identities,
                 &next.policy.allowlist_by_identity,
                 &next.policy.blocklists_by_identity,
-                &next.policy.rewrites,
+                &effective_rewrites,
                 &next.country_policy,
                 Some(&next.policy.blocklists),
                 Some(next.policy.mode),
@@ -6466,11 +6578,12 @@ mod runtime {
         ) -> Result<ReloadState, policy::PolicyError> {
             let _reload = self.reload_lock.write().expect("reload lock");
             let started = Instant::now();
-            if self.rewrite_configs.read(|current| current == configs) {
+            let effective = merge_hosts_rewrites(configs, &self.hosts_rewrites);
+            if self.rewrite_configs.read(|current| current == &effective) {
                 self.observe_reload_latency("rewrites_unchanged", started);
                 return Ok(ReloadState::Unchanged);
             }
-            self.publish_rewrites_locked(configs, "rewrites", started)
+            self.publish_rewrites_locked(&effective, "rewrites", started)
         }
 
         fn publish_rewrites_locked(
@@ -13314,6 +13427,53 @@ mod runtime {
                 .expect("policy answer");
             assert_eq!(blocked.rcode, 3);
             assert!(blocked.records.is_empty());
+        }
+
+        #[test]
+        fn hosts_file_supplies_bounded_local_rewrites_and_explicit_names_win() {
+            let path = std::env::temp_dir().join(format!(
+                "blackhole-hosts-{}-{}.txt",
+                std::process::id(),
+                std::thread::current().name().unwrap_or("test")
+            ));
+            std::fs::write(
+                &path,
+                "# local records\n192.0.2.10 router.home.arpa\n2001:db8::10 router.home.arpa\n192.0.2.11 printer.home.arpa\n",
+            )
+            .expect("write hosts file");
+            let mut config = Config::default();
+            config.policy.hosts_path = Some(path.to_string_lossy().into_owned());
+            config.policy.rewrites = vec![RewriteConfig {
+                name: "router.home.arpa".into(),
+                client_identity: None,
+                ipv4: Some(Ipv4Addr::new(192, 0, 2, 99)),
+                ipv6: None,
+                cname: None,
+                ptr: None,
+                txt: None,
+                ttl: 30,
+            }];
+            let policy = Policy::new(config).expect("valid hosts source");
+            let query = |name: &str, qtype| proxima_dns::DnsQuery {
+                id: 1,
+                recursion_desired: true,
+                name: name.into(),
+                qtype,
+                qclass: 1,
+            };
+            let router = policy
+                .evaluate(&query("router.home.arpa", 1))
+                .expect("router A rewrite");
+            assert_eq!(router.records[0].rdata, vec![192, 0, 2, 99]);
+            let router_v6 = policy
+                .evaluate(&query("router.home.arpa", 28))
+                .expect("router AAAA rewrite");
+            assert!(router_v6.records.is_empty());
+            let printer = policy
+                .evaluate(&query("printer.home.arpa", 1))
+                .expect("printer A rewrite");
+            assert_eq!(printer.records[0].rdata, vec![192, 0, 2, 11]);
+            let _ = std::fs::remove_file(path);
         }
 
         #[test]

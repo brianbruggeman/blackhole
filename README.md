@@ -200,6 +200,11 @@ exactly one record family: `ipv4`, `ipv6`,
 `cname`, `ptr`, or `txt`. The `[capture]` section is disabled
 by default; when enabled, it installs and recovers only the platform-native,
 journal-owned DNS redirect rules.
+An optional `policy.hosts_path` reads a bounded standard hosts file at startup
+and turns its IPv4/IPv6 entries into local A/AAAA rewrites. Comments and
+multiple names per address are supported; explicit rewrites win for names
+present in both sources. The hosts source is startup-only and is not reread by
+the runtime rewrite endpoints.
 Configured blocklists may be refreshed by Proxima's cancellable background
 interval with `policy.blocklist_reload_interval_secs`; zero disables polling,
 the interval is bounded to one day, unchanged content does not create a new
