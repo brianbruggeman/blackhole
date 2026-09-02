@@ -110,6 +110,10 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   bounded UDP exchanges and DNS-over-TCP fallback when UDP sets `TC`; timeout
   is bounded to 60 seconds, at most eight attempts per exchange, and the
   outstanding-query limit is bounded.
+- Standard DNSSEC response records (DS, RRSIG, NSEC, DNSKEY, NSEC3,
+  NSEC3PARAM, CDS, and CDNSKEY) are bounded and passed through with the upstream answer; Blackhole
+  validates their owner/class and preserves raw RDATA but does not claim to
+  perform DNSSEC cryptographic validation.
 - Configurable Proxima upstream transport: `udp` (with TCP fallback), `tcp`,
   `tls` for DNS-over-TLS, or `doh` for DNS-over-HTTPS stream-only exchanges;
   encrypted modes require an explicit server name and use Proxima's GitHub

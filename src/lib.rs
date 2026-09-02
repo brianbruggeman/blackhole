@@ -7470,7 +7470,8 @@ mod runtime {
                     || (query.qtype != 255
                         && record.rtype != query.qtype
                         && record.rtype != 5
-                        && record.rtype != 39)
+                        && record.rtype != 39
+                        && !Self::is_dnssec_record_type(record.rtype))
                 {
                     return Err("upstream_question_mismatch");
                 }
@@ -7535,6 +7536,10 @@ mod runtime {
                 return Err("upstream_question_mismatch");
             }
             Ok(())
+        }
+
+        fn is_dnssec_record_type(rtype: u16) -> bool {
+            matches!(rtype, 43 | 46 | 47 | 48 | 50 | 51 | 59 | 60)
         }
 
         fn validate_upstream_response(
@@ -14944,6 +14949,32 @@ mod runtime {
             };
             assert_eq!(
                 policy.validate_upstream_answer(&query, &valid_cname),
+                Ok(())
+            );
+
+            let dnssec_answer = DnsAnswer {
+                records: vec![
+                    DnsAnswerRecord {
+                        name: "answer.example.".into(),
+                        rtype: 1,
+                        rclass: 1,
+                        ttl: 30,
+                        rdata: vec![93, 184, 216, 34],
+                    },
+                    DnsAnswerRecord {
+                        name: "answer.example.".into(),
+                        rtype: 46,
+                        rclass: 1,
+                        ttl: 30,
+                        // RRSIG has a fixed header followed by a signer name;
+                        // raw preservation belongs to Proxima's DNS codec.
+                        rdata: vec![0; 18],
+                    },
+                ],
+                ..DnsAnswer::ok(Vec::new())
+            };
+            assert_eq!(
+                policy.validate_upstream_answer(&query, &dnssec_answer),
                 Ok(())
             );
 

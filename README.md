@@ -85,6 +85,10 @@ answers only during its configured stale window.
 Upstream failures preserve bounded cause labels for timeout, wire, response-ID,
 I/O, and configuration errors in the existing Proxima telemetry stream before
 the failure is returned to the listener.
+DNSSEC response records (DS, RRSIG, NSEC, DNSKEY, NSEC3, NSEC3PARAM, CDS, and
+CDNSKEY) are bounded
+and passed through with validated owner/class metadata; cryptographic DNSSEC
+validation remains the upstream resolver's responsibility.
 Validated upstream CNAME targets are inspected against the same policy before
 the response is cached or returned, so a blocked target cannot bypass domain,
 regex, qtype, qclass, or client-scope rules.
