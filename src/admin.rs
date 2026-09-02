@@ -2139,6 +2139,7 @@ mod tests {
         assert_eq!(status["profiles_configured"], 0);
         assert_eq!(status["client_groups_configured"], 0);
         assert_eq!(status["upstream_configured"], false);
+        assert_eq!(status["upstream_fallbacks_configured"], 0);
         assert_eq!(status["upstream_breaker_state"], "closed");
         assert_eq!(status["upstream_rebinding_protection"], true);
         assert_eq!(status["allowed_upstream_networks"], 0);

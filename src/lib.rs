@@ -9095,6 +9095,7 @@ mod runtime {
                 "profiles_configured": self.profiles.read(Vec::len),
                 "client_groups_configured": self.client_groups.read(Vec::len),
                 "upstream_configured": self.upstream.is_some(),
+                "upstream_fallbacks_configured": self.upstream_fallbacks.len(),
                 "named_upstreams_configured": self.config.upstreams.len(),
                 "named_upstreams_attached": self.named_upstreams.len(),
                 "upstream_rebinding_protection": self
