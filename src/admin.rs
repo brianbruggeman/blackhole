@@ -88,7 +88,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <meta charset="utf-8">
 <title>Blackhole</title>
 <h1>Blackhole</h1>
-<p><button id="clear-logs">Clear log</button> <button id="clear-durable-logs">Delete durable log</button> <button id="clear-stats">Clear stats</button> <button id="clear-cache">Clear cache</button> <button id="clear-abuse">Clear abuse</button> <button id="reload-blocklists">Reload lists</button> <button id="reload-country">Reload country</button> <button id="reload-admission">Reload admission</button> <button id="reload-bundle">Publish config</button> <button id="toggle-filtering">Toggle filtering</button></p>
+<p><button id="clear-logs">Clear log</button> <button id="clear-durable-logs">Delete durable log</button> <button id="clear-stats">Clear stats</button> <button id="clear-cache">Clear cache</button> <button id="clear-abuse">Clear abuse</button> <button id="reload-blocklists-top">Reload lists</button> <button id="reload-country">Reload country</button> <button id="reload-admission">Reload admission</button> <button id="reload-bundle">Publish config</button> <button id="toggle-filtering">Toggle filtering</button></p>
 <p id="operation-status"></p>
 <h2>Status</h2><pre id="status"></pre>
 <h2>Stats</h2><pre id="stats"></pre>
@@ -235,7 +235,7 @@ document.querySelector('#upsert-rules').onclick = () => editArray('#rule-editor'
 document.querySelector('#validate-rules').onclick = () => editArray('#rule-editor', '/validate/policy');
 document.querySelector('#validate-regex').onclick = () => editArray('#regex-editor', '/validate/regex');
 document.querySelector('#upsert-regex').onclick = () => editArray('#regex-editor', '/reload/regex/upsert');
-document.querySelector('#reload-blocklists').onclick = () => operate('/reload/blocklists', {method:'POST'}).then(refresh);
+for (const id of ['reload-blocklists-top', 'reload-blocklists']) document.querySelector(`#${id}`).onclick = () => operate('/reload/blocklists', {method:'POST'}).then(refresh);
 document.querySelector('#reload-country').onclick = () => operate('/reload/country', {method:'POST'}).then(refresh);
 document.querySelector('#reload-admission').onclick = () => operate('/reload/admission', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#admission-config').value}).then(refresh);
 document.querySelector('#reload-bundle').onclick = () => operate('/reload/config', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#policy-bundle').value}).then(refresh);
@@ -1529,6 +1529,18 @@ mod tests {
             ui.payload
                 .windows(b"toggle-filtering".len())
                 .any(|window| window == b"toggle-filtering")
+        );
+        assert_eq!(
+            ui.payload
+                .windows(b"id=\"reload-blocklists\"".len())
+                .filter(|window| *window == b"id=\"reload-blocklists\"")
+                .count(),
+            1
+        );
+        assert!(
+            ui.payload
+                .windows(b"reload-blocklists-top".len())
+                .any(|window| window == b"reload-blocklists-top")
         );
         assert!(
             ui.payload
