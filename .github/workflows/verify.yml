@@ -90,6 +90,20 @@ jobs:
           path: dist/
       - name: build capture smoke
         run: cargo build --locked --example capture_smoke
+      - name: record Linux privileged smoke capabilities
+        run: |
+          {
+            echo "runner=$(uname -a)"
+            sudo -n id
+            sudo -n systemctl --version | head -n 1
+            sudo -n nft --version || true
+            sudo -n systemctl is-system-running || true
+          } 2>&1 | tee systemd-capabilities.log
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: blackhole-linux-capabilities-${{ github.sha }}
+          path: systemd-capabilities.log
       - name: run systemd install and rollback smoke
         id: systemd-smoke
         run: |
@@ -179,6 +193,15 @@ jobs:
       - name: build launchd release binary
         if: always()
         run: cargo build --locked --release --bin blackhole
+      - name: record macOS privileged smoke capabilities
+        if: always()
+        run: |
+          {
+            echo "runner=$(sw_vers -productVersion) $(uname -a)"
+            sudo -n id
+            launchctl version
+            sudo -n launchctl print system/com.brianbruggeman.blackhole || true
+          } 2>&1 | tee launchd-capabilities.log
       - name: run launchd host install and upgrade smoke
         id: launchd-smoke
         if: always()
@@ -197,6 +220,7 @@ jobs:
           path: |
             macos-toolchain.txt
             macos-cargo-check.log
+            launchd-capabilities.log
             launchd-smoke.log
       - name: report launchd smoke failure
         if: ${{ always() && steps.launchd-smoke.outcome == 'failure' }}
