@@ -15,6 +15,27 @@ const DEB_BUILDER: &str = "deploy/package/build-deb.sh";
 const DEB_SMOKE: &str = "deploy/package/smoke-deb.sh";
 const ARCHIVE_SMOKE: &str = "deploy/package/smoke-archive.sh";
 const VERIFY_WORKFLOW: &str = ".github/workflows/verify.yml";
+const WASM_BENCH: &str = "scripts/wasm_edge_bench.mjs";
+
+#[test]
+fn wasm_edge_benchmark_covers_bounded_workload_cells() {
+    let bench = fs::read_to_string(WASM_BENCH).expect("read WASM edge benchmark");
+    for required in [
+        "validPacket",
+        "shortPacket",
+        "longPacket",
+        "adversarialPacket",
+        "mixed_p50_ns=",
+        "p95_ns=",
+        "p99_ns=",
+        "_cov=",
+    ] {
+        assert!(
+            bench.contains(required),
+            "missing WASM workload evidence: {required}"
+        );
+    }
+}
 
 #[test]
 fn launchd_service_is_unprivileged_and_direct() {
