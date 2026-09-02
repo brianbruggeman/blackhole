@@ -223,8 +223,10 @@ last-good map snapshot for recovery from a failed source refresh.
 unchanged content is not republished and failed refreshes retain the last good
 map. Local files may use `max_age_secs`; that bound also applies when a
 last-good snapshot is used after a failed refresh, so stale recovery fails
-closed. Hosted maps reject that option until a trusted remote freshness
-contract exists. Region and ASN selectors are explicit
+closed. Hosted refreshes use Proxima's bounded 30-second timeout for connection,
+response headers, and the complete response body, and fail closed when that
+deadline or the byte bound is exceeded. Hosted maps reject `max_age_secs` until
+a trusted remote freshness contract exists. Region and ASN selectors are explicit
 operator policy over those map labels; no GeoIP database or inferred identity
 is provided. Set `country_policy.unmapped_action` to `pass` (the default),
 `observe`, or `deny` to make the treatment of clients absent from the map
