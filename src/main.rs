@@ -1399,18 +1399,6 @@ async fn main() -> Result<(), ProximaError> {
         }
     }
     let mut capture = install_capture(&capture_config, bind.port())?;
-    let capture_destination = if capture_config.enabled {
-        Some(
-            capture_config
-                .original_destination
-                .parse()
-                .map_err(|error| {
-                    ProximaError::Config(format!("invalid capture original_destination: {error}"))
-                })?,
-        )
-    } else {
-        None
-    };
     let upstream = config.upstream.clone();
     let named_upstreams = config.upstreams.clone();
     let mut policy = Policy::new(config)
@@ -1533,16 +1521,8 @@ async fn main() -> Result<(), ProximaError> {
     let server = match Listener::builder()
         .bind(bind)
         .any()
-        .protocol(if let Some(destination) = capture_destination {
-            UdpProtocol::new(Arc::clone(&policy)).with_original_destination(destination)
-        } else {
-            UdpProtocol::new(Arc::clone(&policy))
-        })
-        .protocol(if let Some(destination) = capture_destination {
-            TcpProtocol::new(Arc::clone(&policy)).with_original_destination(destination)
-        } else {
-            TcpProtocol::new(Arc::clone(&policy))
-        })
+        .protocol(UdpProtocol::new(Arc::clone(&policy)))
+        .protocol(TcpProtocol::new(Arc::clone(&policy)))
         .handle(into_handle(AnyHandler))
         .serve()
         .await

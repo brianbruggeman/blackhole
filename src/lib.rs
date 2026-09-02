@@ -118,6 +118,7 @@ mod runtime {
     use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
     use std::fs::Metadata;
     use std::hash::Hash;
+    use std::net::SocketAddr;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -4323,6 +4324,17 @@ mod runtime {
 
         pub fn query_log(&self) -> Option<Arc<QueryLog>> {
             self.query_log.as_ref().map(Arc::clone)
+        }
+
+        /// Return the capture destination for the request envelope. The
+        /// destination is configuration/payload data, not listener state, so
+        /// UDP and TCP adapters share the same source of truth.
+        pub(crate) fn configured_original_destination(&self) -> Option<SocketAddr> {
+            self.config
+                .capture
+                .enabled
+                .then(|| self.config.capture.original_destination.parse().ok())
+                .flatten()
         }
 
         /// Attach a Proxima recording backend behind its bounded recording

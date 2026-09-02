@@ -28,43 +28,23 @@ const ORIGINAL_DESTINATION_METADATA: &str = "blackhole-original-destination";
 
 pub struct UdpProtocol {
     policy: Arc<Policy>,
-    original_destination: Option<SocketAddr>,
 }
 
 pub struct TcpProtocol {
     policy: Arc<Policy>,
-    original_destination: Option<SocketAddr>,
 }
 
 impl UdpProtocol {
     #[must_use]
     pub fn new(policy: Arc<Policy>) -> Self {
-        Self {
-            policy,
-            original_destination: None,
-        }
-    }
-
-    #[must_use]
-    pub fn with_original_destination(mut self, destination: SocketAddr) -> Self {
-        self.original_destination = Some(destination);
-        self
+        Self { policy }
     }
 }
 
 impl TcpProtocol {
     #[must_use]
     pub fn new(policy: Arc<Policy>) -> Self {
-        Self {
-            policy,
-            original_destination: None,
-        }
-    }
-
-    #[must_use]
-    pub fn with_original_destination(mut self, destination: SocketAddr) -> Self {
-        self.original_destination = Some(destination);
-        self
+        Self { policy }
     }
 }
 
@@ -119,7 +99,6 @@ async fn decide<'a>(
     packet: &'a [u8],
     peer: Option<PeerInfo>,
     tcp: bool,
-    original_destination: Option<SocketAddr>,
 ) -> Result<Option<(Vec<u8>, DecisionState<'a>)>, ProximaError> {
     let _latency = ListenerLatency {
         policy,
@@ -173,7 +152,12 @@ async fn decide<'a>(
         })?;
     }
 
-    let request = request(query.clone(), tcp, peer.clone(), original_destination);
+    let request = request(
+        query.clone(),
+        tcp,
+        peer.clone(),
+        policy.configured_original_destination(),
+    );
     let answer = policy
         .call_owned(request, action)
         .await
@@ -360,16 +344,7 @@ impl AnyProtocol for UdpProtocol {
                 return Ok(());
             }
             let state = DecisionState::received(&packet);
-            if let Some((reply, state)) = decide(
-                &self.policy,
-                state,
-                &packet,
-                peer,
-                false,
-                self.original_destination,
-            )
-            .await?
-            {
+            if let Some((reply, state)) = decide(&self.policy, state, &packet, peer, false).await? {
                 stream.write_all(&reply).await.map_err(|error| {
                     self.policy.observe_failure("transport_write");
                     ProximaError::Io(error)
@@ -447,15 +422,8 @@ impl AnyProtocol for TcpProtocol {
                 } else {
                     DecisionState::received(&frame)
                 };
-                if let Some((reply, responding)) = decide(
-                    &self.policy,
-                    state,
-                    &frame,
-                    peer.clone(),
-                    true,
-                    self.original_destination,
-                )
-                .await?
+                if let Some((reply, responding)) =
+                    decide(&self.policy, state, &frame, peer.clone(), true).await?
                 {
                     let length = u16::try_from(reply.len()).map_err(|_| {
                         self.policy.observe_failure("frame_overflow");
@@ -719,7 +687,6 @@ mod tests {
             &[0; 11],
             None,
             false,
-            None,
         ))
         .expect("malformed input is a dropped request");
         assert!(result.is_none());
@@ -767,7 +734,6 @@ mod tests {
             &packet,
             None,
             false,
-            None,
         ))
         .expect("drop is a normal no-response result");
         assert!(result.is_none());
@@ -790,7 +756,6 @@ mod tests {
             &[0; 11],
             None,
             false,
-            None,
         ))
         .expect("malformed input is a dropped request");
         assert!(result.is_none());
@@ -816,7 +781,6 @@ mod tests {
                 &[0; 11],
                 peer.clone(),
                 false,
-                None,
             ))
             .expect("malformed input is dropped");
             assert!(result.is_none());
