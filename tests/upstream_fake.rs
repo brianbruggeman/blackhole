@@ -6,14 +6,14 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 
 use blackhole::policy::Action;
-use blackhole::{Config, Policy, RuleConfig, UpstreamConfig};
+use blackhole::{ClientIdentityConfig, Config, Policy, RuleConfig, UpstreamConfig};
 use bytes::Bytes;
 use proxima::pipe::SendPipe;
 use proxima::pipe::into_handle;
 use proxima_core::ProximaError;
 use proxima_dns::DnsResolverConfig;
 use proxima_primitives::pipe::request::{Request, Response};
-use proxima_primitives::stream::{DatagramFactory, DatagramSocket};
+use proxima_primitives::stream::{DatagramFactory, DatagramSocket, PeerInfo};
 use proxima_protocols::dns::{Flags, encode, parse_message};
 
 #[derive(Clone, Copy)]
@@ -270,6 +270,12 @@ fn request() -> proxima_dns::DnsPipeRequest {
     }
 }
 
+fn request_from_client(client: IpAddr) -> proxima_dns::DnsPipeRequest {
+    let mut request = request();
+    request.context.peer = Some(PeerInfo::Tcp(SocketAddr::new(client, 53_000)));
+    request
+}
+
 struct FakeDoh {
     calls: Arc<AtomicUsize>,
     malformed: bool,
@@ -335,6 +341,72 @@ async fn fake_upstream_success_flows_through_policy() {
     let answer = policy.call(request()).await.unwrap();
     assert_eq!(answer.payload.rcode, 0);
     assert_eq!(answer.payload.records.len(), 1);
+}
+
+#[proxima::test]
+async fn named_client_upstream_route_uses_its_proxima_exchange() {
+    let socket = FakeSocket::new(ReplyMode::Valid);
+    let mut config = Config::default();
+    config.policy.rules = vec![RuleConfig {
+        enabled: true,
+        id: 2,
+        domain: "example.com".into(),
+        action: Action::Forward,
+        priority: 0,
+        qtype: None,
+        qtypes: Vec::new(),
+        qclass: None,
+        qclasses: Vec::new(),
+        client: None,
+        client_cidr: None,
+        client_cidrs: Vec::new(),
+        client_identity: None,
+    }];
+    config.upstreams.insert(
+        "family".into(),
+        UpstreamConfig {
+            resolver_ip: resolver_addr().ip().to_string(),
+            port: resolver_addr().port(),
+            query_timeout_ms: 10,
+            max_attempts: 1,
+            ..UpstreamConfig::default()
+        },
+    );
+    config.policy.client_identities = vec![ClientIdentityConfig {
+        name: "family-router".into(),
+        enabled: true,
+        query_log_enabled: true,
+        filtering_enabled: true,
+        default_action: None,
+        upstream: Some("family".into()),
+        clients: vec!["192.0.2.10".parse().expect("client address")],
+        client_cidrs: Vec::new(),
+    }];
+    let upstream = config.upstreams["family"].clone();
+    let policy = Policy::new(config)
+        .expect("valid named upstream config")
+        .with_named_upstream(
+            "family",
+            Arc::new(FakeFactory {
+                socket: socket.clone(),
+            }),
+            DnsResolverConfig::builder()
+                .resolver_ip(upstream.resolver_ip)
+                .port(upstream.port)
+                .query_timeout_ms(upstream.query_timeout_ms)
+                .max_attempts(upstream.max_attempts)
+                .build(),
+            upstream.max_outstanding,
+        )
+        .expect("attach named upstream");
+    let answer = policy
+        .call(request_from_client(
+            "192.0.2.10".parse().expect("client address"),
+        ))
+        .await
+        .expect("named upstream exchange");
+    assert_eq!(answer.payload.records.len(), 1);
+    assert_eq!(socket.state.lock().expect("fake state").sent.len(), 1);
 }
 
 #[proxima::test]

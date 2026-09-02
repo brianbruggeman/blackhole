@@ -197,14 +197,16 @@ mod runtime {
         name: String,
         qtype: u16,
         qclass: u16,
+        route: Option<String>,
     }
 
     impl CacheKey {
-        fn from_query(query: &proxima_dns::DnsQuery) -> Self {
+        fn from_query(query: &proxima_dns::DnsQuery, route: Option<&str>) -> Self {
             Self {
                 name: normalize(&query.name),
                 qtype: query.qtype,
                 qclass: query.qclass,
+                route: route.map(str::to_owned),
             }
         }
     }
@@ -2945,6 +2947,12 @@ mod runtime {
         }
     }
 
+    struct NamedUpstream {
+        upstream: DnsClientUpstream,
+        slots: Arc<AtomicPermitPool>,
+        breaker: Arc<ProximaCircuitBreaker>,
+    }
+
     pub struct Policy {
         config: Config,
         base_rules: Live<Vec<RuleConfig>>,
@@ -2996,6 +3004,7 @@ mod runtime {
         admission_control: LiveControl<AdmissionConfig>,
         upstream: Option<DnsClientUpstream>,
         upstream_slots: Option<Arc<AtomicPermitPool>>,
+        named_upstreams: BTreeMap<String, NamedUpstream>,
         cache: Live<DnsCache>,
         cache_control: LiveControl<DnsCache>,
         breaker: Arc<ProximaCircuitBreaker>,
@@ -3407,6 +3416,7 @@ mod runtime {
                 admission_control,
                 upstream: None,
                 upstream_slots: None,
+                named_upstreams: BTreeMap::new(),
                 cache,
                 cache_control,
                 breaker,
@@ -5145,6 +5155,41 @@ mod runtime {
             self
         }
 
+        /// Attach one configured named upstream using Proxima's existing
+        /// [`DnsClientUpstream`] exchange. The identity route is selected only
+        /// for clients mapped to that name; all other clients keep the default
+        /// upstream path.
+        pub fn with_named_upstream(
+            mut self,
+            name: impl Into<String>,
+            factory: std::sync::Arc<dyn DatagramFactory>,
+            resolver: proxima_dns::DnsResolverConfig,
+            max_outstanding: usize,
+        ) -> Result<Self, policy::PolicyError> {
+            let name = name.into();
+            let config = self.config.upstreams.get(&name).ok_or_else(|| {
+                policy::PolicyError::InvalidUpstream {
+                    reason: format!("named upstream {name:?} is not configured"),
+                }
+            })?;
+            let breaker = Arc::new(ProximaCircuitBreaker::new(
+                config.breaker_failures,
+                Duration::from_secs(config.breaker_cooldown_secs),
+                1,
+            ));
+            self.named_upstreams.insert(
+                name,
+                NamedUpstream {
+                    upstream: DnsClientUpstream::new(factory, resolver),
+                    slots: Arc::new(AtomicPermitPool::new(
+                        max_outstanding.clamp(1, MAX_UPSTREAM_OUTSTANDING),
+                    )),
+                    breaker,
+                },
+            );
+            Ok(self)
+        }
+
         /// Attach the optional TCP transport used when the UDP resolver sets
         /// the DNS truncation bit. It reuses the same `DnsClientUpstream`
         /// exchange and bounded semaphore; no second upstream abstraction is
@@ -5164,6 +5209,26 @@ mod runtime {
             self
         }
 
+        /// Attach a Proxima TCP fallback to a named upstream.
+        pub fn with_named_tcp_upstream(
+            mut self,
+            name: &str,
+            tcp_upstream: Arc<
+                dyn proxima_primitives::stream::StreamUpstream<
+                        Conn = Box<dyn proxima_primitives::stream::StreamConnection>,
+                    >,
+            >,
+        ) -> Result<Self, policy::PolicyError> {
+            let Some(mut route) = self.named_upstreams.remove(name) else {
+                return Err(policy::PolicyError::InvalidUpstream {
+                    reason: format!("named upstream {name:?} is not attached"),
+                });
+            };
+            route.upstream = route.upstream.with_tcp_upstream(tcp_upstream);
+            self.named_upstreams.insert(name.to_owned(), route);
+            Ok(self)
+        }
+
         /// Use the configured stream transport for every upstream exchange.
         /// This is required for DNS-over-TLS; it keeps Proxima's bounded
         /// framed DNS client and does not add a second upstream abstraction.
@@ -5173,6 +5238,19 @@ mod runtime {
                 self.upstream = Some(upstream.with_tcp_only());
             }
             self
+        }
+
+        /// Use the configured stream transport for every exchange on a named
+        /// upstream.
+        pub fn with_named_tcp_only(mut self, name: &str) -> Result<Self, policy::PolicyError> {
+            let Some(mut route) = self.named_upstreams.remove(name) else {
+                return Err(policy::PolicyError::InvalidUpstream {
+                    reason: format!("named upstream {name:?} is not attached"),
+                });
+            };
+            route.upstream = route.upstream.with_tcp_only();
+            self.named_upstreams.insert(name.to_owned(), route);
+            Ok(self)
         }
 
         /// Use an existing Proxima HTTP pipe for every upstream exchange.
@@ -5187,6 +5265,22 @@ mod runtime {
                 self.upstream = Some(upstream.with_doh_upstream(doh_upstream));
             }
             self
+        }
+
+        /// Attach an existing Proxima HTTP pipe to a named DoH upstream.
+        pub fn with_named_doh_upstream(
+            mut self,
+            name: &str,
+            doh_upstream: proxima_primitives::pipe::handler::PipeHandle,
+        ) -> Result<Self, policy::PolicyError> {
+            let Some(mut route) = self.named_upstreams.remove(name) else {
+                return Err(policy::PolicyError::InvalidUpstream {
+                    reason: format!("named upstream {name:?} is not attached"),
+                });
+            };
+            route.upstream = route.upstream.with_doh_upstream(doh_upstream);
+            self.named_upstreams.insert(name.to_owned(), route);
+            Ok(self)
         }
 
         fn validate_upstream(&self, upstream: &UpstreamConfig) -> Result<(), policy::PolicyError> {
@@ -5361,6 +5455,15 @@ mod runtime {
                 Self::client_identity_index(identities, client)
                     .and_then(|index| identities.get(index))
                     .map(|identity| identity.name.clone())
+            })
+        }
+
+        fn client_upstream_name(&self, client: Option<std::net::IpAddr>) -> Option<String> {
+            let client = client?;
+            self.client_identities.read(|identities| {
+                Self::client_identity_index(identities, client)
+                    .and_then(|index| identities.get(index))
+                    .and_then(|identity| identity.upstream.clone())
             })
         }
 
@@ -6952,6 +7055,8 @@ mod runtime {
                 "profiles_configured": self.profiles.read(Vec::len),
                 "client_groups_configured": self.client_groups.read(Vec::len),
                 "upstream_configured": self.upstream.is_some(),
+                "named_upstreams_configured": self.config.upstreams.len(),
+                "named_upstreams_attached": self.named_upstreams.len(),
                 "upstream_breaker_state": upstream_breaker_state,
                 "country_policy_configured": self.country_policy.snapshot().is_some(),
                 "country_reload_interval_secs": self.config.country_policy.reload_interval_secs,
@@ -7713,7 +7818,19 @@ mod runtime {
                 _ => None,
             };
             if let Some(forwarding_action) = forwarding_action {
-                let Some(slots) = self.upstream_slots.as_ref() else {
+                let route_name = self.client_upstream_name(client);
+                let selected_upstream = match route_name.as_deref() {
+                    Some(name) => self
+                        .named_upstreams
+                        .get(name)
+                        .map(|route| (&route.slots, &route.upstream, &route.breaker)),
+                    None => self
+                        .upstream_slots
+                        .as_ref()
+                        .zip(self.upstream.as_ref())
+                        .map(|(slots, upstream)| (slots, upstream, &self.breaker)),
+                };
+                let Some((slots, upstream, breaker)) = selected_upstream else {
                     if forwarding_action == Action::Forward {
                         self.observe_failure("upstream_unconfigured");
                     }
@@ -7725,21 +7842,14 @@ mod runtime {
                     self.observe(forwarding_action);
                     return Ok(DnsPipeReply::typed(204, DnsAnswer::ok(Vec::new())));
                 };
-                let Some(upstream) = self.upstream.as_ref() else {
-                    if forwarding_action == Action::Forward {
-                        self.observe_failure("upstream_unconfigured");
-                    }
-                    self.observe(forwarding_action);
-                    return Ok(DnsPipeReply::typed(204, DnsAnswer::ok(Vec::new())));
-                };
-                let key = CacheKey::from_query(&query);
+                let key = CacheKey::from_query(&query, route_name.as_deref());
                 if let Some(answer) = self.cache_fresh(&key) {
                     self.observe_cache("fresh_hit");
                     self.observe(forwarding_action);
                     return Ok(DnsPipeReply::typed(200, self.cap_answer(&query, answer)));
                 }
                 self.observe_cache("miss");
-                if !self.breaker.allow(self.breaker_now_nanos()) {
+                if !breaker.allow(self.breaker_now_nanos()) {
                     if let Some(answer) = self.cache_stale(&key) {
                         self.observe_cache("stale_hit");
                         self.observe(forwarding_action);
@@ -7758,12 +7868,12 @@ mod runtime {
                 let answer = match response {
                     Ok(response) => {
                         if let Err(cause) = self.validate_upstream_response(&query, &response) {
-                            self.breaker.on_failure(self.breaker_now_nanos());
+                            breaker.on_failure(self.breaker_now_nanos());
                             self.observe_failure(cause);
                             self.observe(forwarding_action);
                             return Ok(DnsPipeReply::typed(200, server_failure_answer()));
                         }
-                        self.breaker.on_success();
+                        breaker.on_success();
                         let answer = response.answer;
                         if matches!(answer.rcode, 0 | 3) {
                             self.observe_cache_ttl(&answer);
@@ -7772,7 +7882,7 @@ mod runtime {
                         answer
                     }
                     Err(error) => {
-                        self.breaker.on_failure(self.breaker_now_nanos());
+                        breaker.on_failure(self.breaker_now_nanos());
                         if let Some(answer) = self.cache_stale(&key) {
                             self.observe_cache("stale_hit");
                             self.observe(forwarding_action);
@@ -8094,6 +8204,7 @@ mod runtime {
                 name: "cached.example".into(),
                 qtype: 1,
                 qclass: 1,
+                route: None,
             };
             policy.cache_insert(cached_key.clone(), DnsAnswer::name_error(), Instant::now());
             assert!(policy.cache_fresh(&cached_key).is_some());
@@ -9865,11 +9976,13 @@ mod runtime {
                 name: "one.example".into(),
                 qtype: 1,
                 qclass: 1,
+                route: None,
             };
             let second = CacheKey {
                 name: "two.example".into(),
                 qtype: 1,
                 qclass: 1,
+                route: None,
             };
             let now = Instant::now();
             assert!(!cache.insert(first.clone(), DnsAnswer::ok(Vec::new()), now));
@@ -10118,6 +10231,7 @@ mod runtime {
                 name: "stale.example".into(),
                 qtype: 1,
                 qclass: 1,
+                route: None,
             };
             let now = Instant::now();
             cache.insert(key.clone(), DnsAnswer::name_error(), now);
@@ -10144,6 +10258,7 @@ mod runtime {
                 name: "long.example".into(),
                 qtype: 1,
                 qclass: 1,
+                route: None,
             };
             let now = Instant::now();
             cache.insert(

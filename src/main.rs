@@ -1215,6 +1215,112 @@ impl SendPipe for AnyHandler {
 }
 
 #[cfg(feature = "std")]
+fn attach_prime_upstream(
+    mut policy: Policy,
+    route_name: Option<&str>,
+    upstream: &blackhole::UpstreamConfig,
+) -> Result<Policy, ProximaError> {
+    let resolver = Policy::resolver_config(upstream);
+    let resolver_addr = SocketAddr::new(
+        upstream.resolver_ip.parse().map_err(|error| {
+            ProximaError::Config(format!("invalid upstream resolver address: {error}"))
+        })?,
+        upstream.port,
+    );
+    policy = match route_name {
+        Some(name) => policy
+            .with_named_upstream(
+                name,
+                Arc::new(PrimeDatagramFactory),
+                resolver,
+                upstream.max_outstanding,
+            )
+            .map_err(|error| ProximaError::Config(error.to_string()))?,
+        None => policy.with_upstream(
+            Arc::new(PrimeDatagramFactory),
+            resolver,
+            upstream.max_outstanding,
+        ),
+    };
+    if matches!(upstream.transport, UpstreamTransport::Doh) {
+        let server_name = upstream.tls_server_name.clone().ok_or_else(|| {
+            ProximaError::Config("tls_server_name is required for DoH upstreams".into())
+        })?;
+        let tls = TlsStreamUpstream::with_webpki_roots(
+            PrimeTcpUpstream::new(resolver_addr),
+            server_name.clone(),
+        )
+        .map_err(|error| ProximaError::Config(format!("invalid DoH TLS upstream: {error}")))?;
+        let http = H1ClientUpstream::new(tls, server_name, "blackhole.doh");
+        policy = match route_name {
+            Some(name) => policy
+                .with_named_doh_upstream(name, into_handle(http))
+                .map_err(|error| ProximaError::Config(error.to_string()))?,
+            None => policy.with_doh_upstream(into_handle(http)),
+        };
+    } else {
+        let tcp_upstream: Arc<dyn StreamUpstream<Conn = Box<dyn StreamConnection>>> = match upstream
+            .transport
+        {
+            UpstreamTransport::Udp | UpstreamTransport::Tcp => {
+                PrimeTcpUpstream::boxed(resolver_addr)
+            }
+            UpstreamTransport::Tls => {
+                let server_name = upstream.tls_server_name.clone().ok_or_else(|| {
+                    ProximaError::Config("tls_server_name is required for TLS upstreams".into())
+                })?;
+                let tls_config = TlsClientConfig {
+                    server_name,
+                    alpn_protocols: Vec::new(),
+                };
+                let tls = TlsStreamUpstream::from_config(
+                    PrimeTcpUpstream::new(resolver_addr),
+                    &tls_config,
+                )
+                .map_err(|error| ProximaError::Config(format!("invalid TLS upstream: {error}")))?;
+                Arc::new(BoxedTlsUpstream { inner: tls })
+            }
+            UpstreamTransport::Doq => {
+                #[cfg(feature = "doq")]
+                {
+                    let server_name = upstream.tls_server_name.clone().ok_or_else(|| {
+                        ProximaError::Config("tls_server_name is required for DoQ upstreams".into())
+                    })?;
+                    let tls = doq_tls_config()?;
+                    Arc::new(
+                        QuicUpstream::with_client_config(resolver_addr, server_name, tls).map_err(
+                            |error| ProximaError::Config(format!("invalid DoQ upstream: {error}")),
+                        )?,
+                    )
+                }
+                #[cfg(not(feature = "doq"))]
+                {
+                    return Err(ProximaError::Config(
+                        "DoQ upstreams require the `doq` feature".into(),
+                    ));
+                }
+            }
+            UpstreamTransport::Doh => unreachable!("DoH handled above"),
+        };
+        policy = match route_name {
+            Some(name) => policy
+                .with_named_tcp_upstream(name, tcp_upstream)
+                .map_err(|error| ProximaError::Config(error.to_string()))?,
+            None => policy.with_tcp_upstream(tcp_upstream),
+        };
+        if !matches!(upstream.transport, UpstreamTransport::Udp) {
+            policy = match route_name {
+                Some(name) => policy
+                    .with_named_tcp_only(name)
+                    .map_err(|error| ProximaError::Config(error.to_string()))?,
+                None => policy.with_tcp_only(),
+            };
+        }
+    }
+    Ok(policy)
+}
+
+#[cfg(feature = "std")]
 #[proxima::main]
 async fn main() -> Result<(), ProximaError> {
     let arguments: Vec<String> = env::args().skip(1).collect();
@@ -1294,6 +1400,7 @@ async fn main() -> Result<(), ProximaError> {
     }
     let mut capture = install_capture(&capture_config, bind.port())?;
     let upstream = config.upstream.clone();
+    let named_upstreams = config.upstreams.clone();
     let mut policy = Policy::new(config)
         .map_err(|error| ProximaError::Config(format!("invalid policy rule: {error}")))?;
     if persist_ddos_incidents && let Some(path) = query_recording_path.as_deref() {
@@ -1309,85 +1416,10 @@ async fn main() -> Result<(), ProximaError> {
         }
     }
     if let Some(upstream) = upstream {
-        let resolver = Policy::resolver_config(&upstream);
-        let resolver_addr = SocketAddr::new(
-            upstream.resolver_ip.parse().map_err(|error| {
-                ProximaError::Config(format!("invalid upstream resolver address: {error}"))
-            })?,
-            upstream.port,
-        );
-        policy = policy.with_upstream(
-            Arc::new(PrimeDatagramFactory),
-            resolver,
-            upstream.max_outstanding,
-        );
-        if matches!(upstream.transport, UpstreamTransport::Doh) {
-            let server_name = upstream.tls_server_name.clone().ok_or_else(|| {
-                ProximaError::Config("tls_server_name is required for DoH upstreams".into())
-            })?;
-            let tls = TlsStreamUpstream::with_webpki_roots(
-                PrimeTcpUpstream::new(resolver_addr),
-                server_name.clone(),
-            )
-            .map_err(|error| ProximaError::Config(format!("invalid DoH TLS upstream: {error}")))?;
-            let http = H1ClientUpstream::new(tls, server_name, "blackhole.doh");
-            policy = policy.with_doh_upstream(into_handle(http));
-        } else {
-            let tcp_upstream: Arc<dyn StreamUpstream<Conn = Box<dyn StreamConnection>>> =
-                match upstream.transport {
-                    UpstreamTransport::Udp | UpstreamTransport::Tcp => {
-                        PrimeTcpUpstream::boxed(resolver_addr)
-                    }
-                    UpstreamTransport::Tls => {
-                        let server_name = upstream.tls_server_name.ok_or_else(|| {
-                            ProximaError::Config(
-                                "tls_server_name is required for TLS upstreams".into(),
-                            )
-                        })?;
-                        let tls_config = TlsClientConfig {
-                            server_name,
-                            // DNS-over-TLS does not require an HTTP ALPN token.
-                            alpn_protocols: Vec::new(),
-                        };
-                        let tls = TlsStreamUpstream::from_config(
-                            PrimeTcpUpstream::new(resolver_addr),
-                            &tls_config,
-                        )
-                        .map_err(|error| {
-                            ProximaError::Config(format!("invalid TLS upstream: {error}"))
-                        })?;
-                        Arc::new(BoxedTlsUpstream { inner: tls })
-                    }
-                    UpstreamTransport::Doq => {
-                        #[cfg(feature = "doq")]
-                        {
-                            let server_name = upstream.tls_server_name.ok_or_else(|| {
-                                ProximaError::Config(
-                                    "tls_server_name is required for DoQ upstreams".into(),
-                                )
-                            })?;
-                            let tls = doq_tls_config()?;
-                            Arc::new(
-                                QuicUpstream::with_client_config(resolver_addr, server_name, tls)
-                                    .map_err(|error| {
-                                    ProximaError::Config(format!("invalid DoQ upstream: {error}"))
-                                })?,
-                            )
-                        }
-                        #[cfg(not(feature = "doq"))]
-                        {
-                            return Err(ProximaError::Config(
-                                "DoQ upstreams require the `doq` feature".into(),
-                            ));
-                        }
-                    }
-                    UpstreamTransport::Doh => unreachable!("DoH handled above"),
-                };
-            policy = policy.with_tcp_upstream(tcp_upstream);
-            if !matches!(upstream.transport, UpstreamTransport::Udp) {
-                policy = policy.with_tcp_only();
-            }
-        }
+        policy = attach_prime_upstream(policy, None, &upstream)?;
+    }
+    for (name, upstream) in named_upstreams {
+        policy = attach_prime_upstream(policy, Some(&name), &upstream)?;
     }
     if let Some(path) = query_recording_path {
         let spigot = deferred_runtime();

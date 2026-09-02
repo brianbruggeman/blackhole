@@ -81,6 +81,10 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   HTTP/TLS pipe adapters. An opt-in `doq` feature uses Proxima's GitHub QUIC
   stream adapter with the DoQ ALPN and a bounded reusable connection pool;
   stale connections are replaced; the default Prime build remains QUIC-free.
+- Named upstreams can be selected per enabled client identity. Each route uses
+  its own existing Proxima `DnsClientUpstream`, permit bound, circuit breaker,
+  transport, and cache namespace; clients without a route use the default
+  upstream.
 - Bounded positive and negative response caching with a configured maximum
   protocol TTL, a bounded stale-serving window for upstream outages, plus
   Proxima-native hit/miss/stale/eviction counters and effective positive/

@@ -80,6 +80,7 @@ ttl = 30
 # [[policy.client_identities]]
 # name = "family-router"
 # clients = ["192.0.2.10"]
+# upstream = "family"  # selects a named upstream declared below
 [[policy.profiles]]
 id = 40000
 name = "telemetry"
@@ -122,6 +123,19 @@ max_outstanding = 64
 breaker_failures = 3
 # Keep the circuit open for this long before allowing a probe.
 breaker_cooldown_secs = 30
+
+# Optional named upstreams. An identity can select one with upstream = "name".
+# Every named route uses the same bounded Proxima DNS exchange and transport
+# validation as the default [upstream].
+# [upstreams.family]
+# resolver_ip = "9.9.9.9"
+# port = 53
+# transport = "udp"
+# query_timeout_ms = 2000
+# max_attempts = 2
+# max_outstanding = 64
+# breaker_failures = 3
+# breaker_cooldown_secs = 30
 
 [cache]
 # Bound memory used by positive and negative upstream answers.

@@ -37,9 +37,9 @@ below are future capabilities, grouped by the dependency layer they extend.
   destination, and bounded startup rotation. The current `metadata` and
   `action_only` redaction modes are part of the baseline.
 - Add the remaining Pi-hole/AdGuard Home policy features that fit Blackhole's
-  explicit-action model, including client-specific upstream or service settings
+  explicit-action model, including additional client-specific service settings
   beyond the current identity, per-client filtering toggle, fallback-action,
-  and profile controls.
+  named upstream routing, and profile controls.
 - Add a separately isolated honeypot terminal with explicit retention and
   access controls.
 - Extend the measured policy/codec WASM edge experiment with additional
