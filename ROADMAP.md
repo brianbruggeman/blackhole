@@ -36,7 +36,8 @@ below are future capabilities, grouped by the dependency layer they extend.
   beyond the current identity, filtering, query-log, statistics, cache, fallback,
   named-upstream, identity-scoped profile, identity-scoped allowlist,
   global rate-limit-whitelist, per-identity query-rate,
-  per-identity response-budget, and per-identity concurrency controls.
+  per-identity client and network response budgets, and per-identity
+  concurrency controls.
 - Add a separately isolated honeypot terminal with explicit retention and
   access controls.
 
