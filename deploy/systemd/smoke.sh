@@ -33,7 +33,10 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 make_root "$root_dir"
-cp -a /usr/lib/systemd/system/*.target "$root_dir/usr/lib/systemd/system/"
+# Keep verification independent of the runner's systemd unit subset. The
+# install itself remains rooted in this disposable directory; copying the
+# unit definitions supplies dependency metadata without touching the host.
+cp -a /usr/lib/systemd/system/. "$root_dir/usr/lib/systemd/system/"
 BLACKHOLE_INSTALL_ROOT="$root_dir" BLACKHOLE_BINARY="$binary" \
     BLACKHOLE_CONFIG="$config" "$script_dir/install.sh"
 test -x "$root_dir/usr/local/bin/blackhole"
