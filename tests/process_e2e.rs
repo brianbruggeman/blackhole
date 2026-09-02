@@ -1021,4 +1021,24 @@ fn shipped_binary_applies_region_and_asn_policy_to_real_udp_peers() {
         assert_eq!(message.header.flags.rcode(), 5);
         assert!(message.answers().next().is_none());
     }
+
+    let mut tcp = TcpStream::connect((Ipv4Addr::LOCALHOST, listener_addr.port()))
+        .expect("connect TCP client");
+    tcp.set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("set TCP timeout");
+    let tcp_query = query(0x4052, "region-asn-denied.example.");
+    let tcp_length = u16::try_from(tcp_query.len()).expect("TCP query fits frame");
+    tcp.write_all(&tcp_length.to_be_bytes())
+        .expect("write TCP query length");
+    tcp.write_all(&tcp_query).expect("write TCP query");
+    let mut tcp_response_length = [0u8; 2];
+    tcp.read_exact(&mut tcp_response_length)
+        .expect("read TCP denial length");
+    let tcp_response_length = usize::from(u16::from_be_bytes(tcp_response_length));
+    let mut tcp_response = vec![0u8; tcp_response_length];
+    tcp.read_exact(&mut tcp_response).expect("read TCP denial");
+    let tcp_message = parse_message(&tcp_response).expect("parse TCP region denial");
+    assert_eq!(tcp_message.header.id, 0x4052);
+    assert_eq!(tcp_message.header.flags.rcode(), 5);
+    assert!(tcp_message.answers().next().is_none());
 }
