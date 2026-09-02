@@ -940,33 +940,36 @@ mod runtime {
             client_identity: Option<&str>,
         ) -> Option<DnsAnswer> {
             let name = normalize(&query.name);
+            let suffix = name.split_once('.').map(|(_, suffix)| suffix)?;
             for identity in [client_identity, None] {
+                let identity = identity.map(str::to_owned);
                 if let Some(answer) =
                     self.entries
-                        .get(&(identity.map(str::to_owned), name.clone(), query.qtype))
+                        .get(&(identity.clone(), name.clone(), query.qtype))
                 {
                     return Some(answer.clone());
                 }
+                if let Some(answer) = self
+                    .wildcard_entries
+                    .get(&(identity, query.qtype))
+                    .and_then(|entries| entries.get(suffix))
+                {
+                    let answer = answer.clone();
+                    let query_name = query.name.clone();
+                    return Some(DnsAnswer {
+                        records: answer
+                            .records
+                            .into_iter()
+                            .map(|mut record| {
+                                record.name = query_name.clone();
+                                record
+                            })
+                            .collect(),
+                        ..answer
+                    });
+                }
             }
-            let suffix = name.split_once('.').map(|(_, suffix)| suffix)?;
-            let answer = [client_identity, None].into_iter().find_map(|identity| {
-                self.wildcard_entries
-                    .get(&(identity.map(str::to_owned), query.qtype))?
-                    .get(suffix)
-                    .cloned()
-            })?;
-            let query_name = query.name.clone();
-            Some(DnsAnswer {
-                records: answer
-                    .records
-                    .into_iter()
-                    .map(|mut record| {
-                        record.name = query_name.clone();
-                        record
-                    })
-                    .collect(),
-                ..answer
-            })
+            None
         }
     }
 
@@ -11385,7 +11388,7 @@ mod runtime {
                     ttl: 30,
                 },
                 RewriteConfig {
-                    name: "router.example".into(),
+                    name: "*.example".into(),
                     client_identity: Some("family".into()),
                     ipv4: Some(Ipv4Addr::new(192, 0, 2, 42)),
                     ipv6: None,
