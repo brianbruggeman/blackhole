@@ -3250,6 +3250,10 @@ mod runtime {
             self.validate_admission(admission)?;
             let _reload = self.reload_lock.write().expect("reload lock");
             let started = Instant::now();
+            if self.admission.read(|current| current == admission) {
+                self.observe_reload_latency("admission_unchanged", started);
+                return Ok(ReloadState::Unchanged);
+            }
             self.admission_control.replace(admission.clone());
             self.policy_generation.fetch_add(1, Ordering::Relaxed);
             self.observe_reload_latency("admission", started);
@@ -9566,6 +9570,10 @@ mod runtime {
             assert_eq!(
                 policy.reload_admission(&replacement),
                 Ok(ReloadState::Published)
+            );
+            assert_eq!(
+                policy.reload_admission(&replacement),
+                Ok(ReloadState::Unchanged)
             );
             let status: serde_json::Value =
                 serde_json::from_str(&policy.admin_admission_status()).expect("admission status");

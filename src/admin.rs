@@ -419,7 +419,12 @@ impl SendPipe for AdminHandler {
                     }
                 };
                 match self.policy.reload_admission(&admission) {
-                    Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
+                    Ok(crate::snapshot::ReloadState::Published) => {
+                        Ok(Response::ok("{\"status\":\"reloaded\"}"))
+                    }
+                    Ok(crate::snapshot::ReloadState::Unchanged) => {
+                        Ok(Response::ok("{\"status\":\"unchanged\"}"))
+                    }
                     Err(error) => Ok(Response::new(422).with_body(format!(
                         "{{\"status\":\"error\",\"message\":{}}}",
                         serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
@@ -1656,6 +1661,16 @@ mod tests {
         let status: serde_json::Value = serde_json::from_slice(&status.payload).expect("status");
         assert_eq!(status["reject_any"], true);
         assert_eq!(status["max_queries_per_second"], 7);
+
+        let unchanged = Request::builder()
+            .method("POST")
+            .path("/reload/admission")
+            .payload(r#"{"reject_any":true,"max_queries_per_second":7}"#)
+            .build()
+            .expect("unchanged admission reload");
+        let response = block_on(handler.call(unchanged)).expect("unchanged admission response");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.payload.as_ref(), br#"{"status":"unchanged"}"#);
 
         let rejected = Request::builder()
             .method("POST")
