@@ -316,7 +316,7 @@ async fn admin_http_listener_enforces_bearer_auth() {
     .expect("reload response");
     let reloaded = String::from_utf8_lossy(&reloaded);
     assert!(reloaded.starts_with("HTTP/1.1 200"));
-    assert!(reloaded.contains("{\"status\":\"reloaded\"}"));
+    assert!(reloaded.contains("{\"status\":\"unchanged\"}"));
     let country = request(
         addr,
         "POST",

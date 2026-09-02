@@ -790,8 +790,13 @@ impl SendPipe for AdminHandler {
                     serde_json::to_string(&error).unwrap_or_else(|_| "null".into())
                 ))),
             },
-            ("POST", "/reload/blocklists") => match self.policy.reload_blocklists() {
-                Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
+            ("POST", "/reload/blocklists") => match self.policy.reload_blocklists_if_changed() {
+                Ok(crate::snapshot::ReloadState::Published) => {
+                    Ok(Response::ok("{\"status\":\"reloaded\"}"))
+                }
+                Ok(crate::snapshot::ReloadState::Unchanged) => {
+                    Ok(Response::ok("{\"status\":\"unchanged\"}"))
+                }
                 Err(error) => Ok(Response::new(500).with_body(format!(
                     "{{\"status\":\"error\",\"message\":{}}}",
                     serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
@@ -2673,6 +2678,16 @@ mod tests {
                 .status,
             413
         );
+    }
+
+    #[test]
+    fn blocklist_reload_route_reports_an_unchanged_snapshot() {
+        let policy = Arc::new(Policy::new(crate::Config::default()).expect("default policy"));
+        let handler = AdminHandler::new(policy);
+        let response = block_on(handler.call(request("POST", "/reload/blocklists")))
+            .expect("blocklist reload response");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.payload.as_ref(), br#"{"status":"unchanged"}"#);
     }
 
     #[test]
