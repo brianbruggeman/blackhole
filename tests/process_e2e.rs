@@ -970,3 +970,55 @@ fn shipped_binary_applies_country_policy_to_real_udp_and_tcp_peers() {
     assert_eq!(tcp_message.header.flags.rcode(), 5);
     assert!(tcp_message.answers().next().is_none());
 }
+
+#[test]
+fn shipped_binary_applies_region_and_asn_policy_to_real_udp_peers() {
+    let map = NamedTempFile::new().expect("create country map");
+    std::fs::write(
+        map.path(),
+        "US 127.0.0.0/8 US-LOCAL AS64500\nCA 127.0.1.0/24 CA-LOCAL AS64501\n",
+    )
+    .expect("write country map");
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("reserve listener port");
+    let listener_addr = listener.local_addr().expect("listener address");
+    drop(listener);
+    let mut config = NamedTempFile::new().expect("create config");
+    writeln!(
+        config,
+        "[server]\nlisten = \"{listener_addr}\"\n\n[country_policy]\nmap_path = \"{}\"\ndeny_regions = [\"US-LOCAL\"]\ndeny_asns = [64501]",
+        map.path().to_string_lossy()
+    )
+    .expect("write config");
+
+    let _child = ChildGuard(
+        Command::new(env!("CARGO_BIN_EXE_blackhole"))
+            .arg(config.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("start shipped blackhole binary"),
+    );
+    drop(wait_for_tcp(listener_addr));
+
+    for (client_ip, id) in [
+        (Ipv4Addr::new(127, 0, 0, 2), 0x4050),
+        (Ipv4Addr::new(127, 0, 1, 2), 0x4051),
+    ] {
+        let client = UdpSocket::bind((client_ip, 0)).expect("bind UDP client");
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("set UDP timeout");
+        client
+            .send_to(&query(id, "region-asn-denied.example."), listener_addr)
+            .expect("send region or ASN query");
+        let mut response = [0u8; 4096];
+        let (length, _) = client
+            .recv_from(&mut response)
+            .expect("receive region or ASN denial");
+        let message = parse_message(&response[..length]).expect("parse region or ASN denial");
+        assert_eq!(message.header.id, id);
+        assert_eq!(message.header.flags.rcode(), 5);
+        assert!(message.answers().next().is_none());
+    }
+}
