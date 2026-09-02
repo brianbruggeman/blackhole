@@ -508,13 +508,21 @@ fn shipped_binary_restores_persisted_global_abuse_after_restart() {
         client.recv_from(&mut response),
         Err(error) if matches!(error.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut)
     ));
+    let recording_deadline = Instant::now() + Duration::from_secs(3);
+    let recording_contents = loop {
+        let contents = std::fs::read_to_string(recording.path()).expect("read recording");
+        if contents.contains("temporary_global_blacklist") {
+            break contents;
+        }
+        assert!(
+            Instant::now() < recording_deadline,
+            "first process must persist the global incident: {contents}"
+        );
+        thread::sleep(Duration::from_millis(20));
+    };
+    assert!(recording_contents.contains("temporary_global_blacklist"));
     first.0.kill().expect("stop first blackhole process");
     first.0.wait().expect("wait for first blackhole process");
-    let recording_contents = std::fs::read_to_string(recording.path()).expect("read recording");
-    assert!(
-        recording_contents.contains("temporary_global_blacklist"),
-        "first process must persist the global incident: {recording_contents}"
-    );
 
     let mut second = ChildGuard(
         Command::new(env!("CARGO_BIN_EXE_blackhole"))
