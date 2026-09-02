@@ -2055,6 +2055,14 @@ mod runtime {
                 reason: "a region or ASN cannot be both denied and observed".into(),
             });
         }
+        if let Some(expected) = config.expected_sha256.as_deref()
+            && !valid_sha256(expected)
+        {
+            return Err(policy::PolicyError::InvalidCountryMap {
+                path: path.into(),
+                reason: "expected_sha256 must be exactly 64 hexadecimal digits".into(),
+            });
+        }
         let contents = if http_source_parts(path).is_some() {
             if config.max_age_secs.is_some() {
                 return Err(policy::PolicyError::InvalidCountryMap {
@@ -2130,12 +2138,6 @@ mod runtime {
             contents
         };
         if let Some(expected) = config.expected_sha256.as_deref() {
-            if !valid_sha256(expected) {
-                return Err(policy::PolicyError::InvalidCountryMap {
-                    path: path.into(),
-                    reason: "expected_sha256 must be exactly 64 hexadecimal digits".into(),
-                });
-            }
             let actual = source_sha256(contents.as_bytes());
             if !actual.eq_ignore_ascii_case(expected) {
                 return Err(policy::PolicyError::InvalidCountryMap {
