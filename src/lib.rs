@@ -7567,50 +7567,75 @@ mod runtime {
                 return None;
             }
             for record in &answer.records {
-                if record.rtype != 5 {
-                    continue;
-                }
-                let Ok((target, used)) = proxima_protocols::dns::parse_name(&record.rdata, 0)
-                else {
-                    continue;
-                };
-                if used != record.rdata.len() {
-                    continue;
-                }
-                let target_query = proxima_dns::DnsQuery {
-                    id: query.id,
-                    recursion_desired: query.recursion_desired,
-                    name: target.to_dotted(),
-                    qtype: 5,
-                    qclass: query.qclass,
-                };
-                let action = if self.rules_configured.load(Ordering::Acquire) {
-                    self.decision(&target_query, client)
-                        .or_else(|| {
-                            self.regex_decision(
-                                &normalize(&target_query.name),
-                                target_query.qtype,
-                                target_query.qclass,
-                                client,
-                            )
-                        })
-                        .map(|decision| decision.action)
-                } else if self.matches(&target_query.name) {
-                    Some(match *self.legacy_mode.snapshot() {
-                        Mode::Ignore => Action::Ignore,
-                        Mode::Nxdomain => Action::Nxdomain,
-                        Mode::Honeypot => Action::Honeypot,
-                    })
-                } else {
-                    None
-                };
-                if action.is_some_and(|action| {
-                    !matches!(action, Action::Pass | Action::Observe | Action::Forward)
-                }) {
-                    return action;
+                if record.rtype == 5 {
+                    let Ok((target, used)) = proxima_protocols::dns::parse_name(&record.rdata, 0)
+                    else {
+                        continue;
+                    };
+                    if used == record.rdata.len()
+                        && let Some(action) =
+                            self.alias_target_action(query, target.to_dotted(), client)
+                        && !matches!(action, Action::Pass | Action::Observe | Action::Forward)
+                    {
+                        return Some(action);
+                    }
+                } else if record.rtype == 39 {
+                    let Ok((target, used)) = proxima_protocols::dns::parse_name(&record.rdata, 0)
+                    else {
+                        continue;
+                    };
+                    let owner = normalize(&record.name);
+                    let query_name = normalize(&query.name);
+                    if used == record.rdata.len()
+                        && query_name.len() > owner.len()
+                        && query_name.ends_with(&format!(".{owner}"))
+                    {
+                        let prefix = &query_name[..query_name.len() - owner.len() - 1];
+                        let synthesized = format!("{prefix}.{}.", target.to_dotted());
+                        if let Some(action) = self.alias_target_action(query, synthesized, client)
+                            && !matches!(action, Action::Pass | Action::Observe | Action::Forward)
+                        {
+                            return Some(action);
+                        }
+                    }
                 }
             }
             None
+        }
+
+        fn alias_target_action(
+            &self,
+            query: &proxima_dns::DnsQuery,
+            name: String,
+            client: Option<IpAddr>,
+        ) -> Option<Action> {
+            let target_query = proxima_dns::DnsQuery {
+                id: query.id,
+                recursion_desired: query.recursion_desired,
+                name,
+                qtype: 5,
+                qclass: query.qclass,
+            };
+            if self.rules_configured.load(Ordering::Acquire) {
+                self.decision(&target_query, client)
+                    .or_else(|| {
+                        self.regex_decision(
+                            &normalize(&target_query.name),
+                            target_query.qtype,
+                            target_query.qclass,
+                            client,
+                        )
+                    })
+                    .map(|decision| decision.action)
+            } else if self.matches(&target_query.name) {
+                Some(match *self.legacy_mode.snapshot() {
+                    Mode::Ignore => Action::Ignore,
+                    Mode::Nxdomain => Action::Nxdomain,
+                    Mode::Honeypot => Action::Honeypot,
+                })
+            } else {
+                None
+            }
         }
 
         fn cname_policy_answer(
@@ -14998,6 +15023,51 @@ mod runtime {
             assert_eq!(
                 policy.validate_upstream_answer(&query, &oversized_records),
                 Err("upstream_overflow")
+            );
+        }
+
+        #[test]
+        fn dname_synthesized_target_is_checked_by_policy() {
+            let mut config = Config::default();
+            config.policy.rules = vec![RuleConfig {
+                enabled: true,
+                id: 41,
+                domain: "host.target.example".into(),
+                action: Action::Nxdomain,
+                priority: 0,
+                qtype: Some(5),
+                qtypes: Vec::new(),
+                qclass: None,
+                qclasses: Vec::new(),
+                client: None,
+                client_cidr: None,
+                client_cidrs: Vec::new(),
+                client_identity: None,
+            }];
+            let policy = Policy::new(config).expect("valid DNAME policy");
+            let query = proxima_dns::DnsQuery {
+                id: 7,
+                recursion_desired: true,
+                name: "host.example.".into(),
+                qtype: 1,
+                qclass: 1,
+            };
+            let mut rdata = Vec::new();
+            proxima_protocols::dns::encode::encode_name("target.example.", &mut rdata)
+                .expect("valid DNAME target");
+            let answer = DnsAnswer {
+                records: vec![DnsAnswerRecord {
+                    name: "example.".into(),
+                    rtype: 39,
+                    rclass: 1,
+                    ttl: 30,
+                    rdata,
+                }],
+                ..DnsAnswer::ok(Vec::new())
+            };
+            assert_eq!(
+                policy.cname_target_action(&query, &answer, None),
+                Some(Action::Nxdomain)
             );
         }
 
