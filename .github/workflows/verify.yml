@@ -154,6 +154,7 @@ jobs:
             cc --version
             shasum -a 256 Cargo.lock
             echo "fuzz_corpus_files=$(find fuzz/corpus/query_view -type f | wc -l)"
+            find fuzz/corpus/query_view -type f -print0 | sort -z | xargs -0 shasum -a 256 | shasum -a 256
           } > macos-toolchain.txt 2>&1
       - name: check all targets
         id: macos-check
