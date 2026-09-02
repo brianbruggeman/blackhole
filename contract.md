@@ -19,6 +19,9 @@ The optional DHCPv4 adapter advertises the configured resolver through option
 provide up to four additional IPv4 resolvers. When `dhcp.domain_name` is set,
 the bounded ASCII DNS domain is advertised through option 15. Invalid values
 are rejected before the adapter binds port 67.
+When `dhcp.lease_path` is configured, active leases are restored from and
+published to that local file using bounded records and an atomically replaced,
+flushed temporary file; a malformed or oversized lease file fails closed.
 
 Local rewrites are configured as bounded A/AAAA/CNAME/PTR/TXT answers. They are used only
 when the selected action is `pass` or `observe`; an explicit matching rule for

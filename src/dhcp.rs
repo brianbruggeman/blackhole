@@ -1,6 +1,8 @@
 //! Bounded sans-I/O DHCPv4 primitives for the optional LAN adapter.
 
 use std::collections::BTreeMap;
+use std::fs;
+use std::io::Write;
 use std::net::Ipv4Addr;
 use std::net::SocketAddr;
 use std::sync::{
@@ -13,6 +15,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::DhcpConfig;
 
 pub const MAX_DHCP_PACKET: usize = 1500;
+const MAX_LEASE_FILE_BYTES: u64 = 1 << 20;
 const FIXED_HEADER: usize = 236;
 const MAGIC_COOKIE: [u8; 4] = [99, 130, 83, 99];
 const OPTION_END: u8 = 255;
@@ -349,7 +352,7 @@ fn serve_socket(
         domain_name,
         lease_secs: config.lease_secs,
     };
-    let mut leases = BTreeMap::new();
+    let mut leases = load_leases(config.lease_path.as_deref(), &pool)?;
     let mut packet = [0u8; MAX_DHCP_PACKET];
     let mut output = [0u8; MAX_DHCP_PACKET];
     while !stop.load(Ordering::Acquire) {
@@ -390,6 +393,11 @@ fn serve_socket(
         ) else {
             continue;
         };
+        if let Some(path) = config.lease_path.as_deref()
+            && persist_leases(path, &leases).is_err()
+        {
+            continue;
+        }
         let Ok(response_length) =
             encode_reply(&request, message_type, address, reply_config, &mut output)
         else {
@@ -401,6 +409,100 @@ fn serve_socket(
             peer
         };
         socket.send_to(&output[..response_length], destination)?;
+    }
+    Ok(())
+}
+
+fn load_leases(
+    path: Option<&str>,
+    pool: &Pool,
+) -> std::io::Result<BTreeMap<[u8; 6], (Ipv4Addr, u64)>> {
+    let Some(path) = path else {
+        return Ok(BTreeMap::new());
+    };
+    let metadata = match fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(BTreeMap::new());
+        }
+        Err(error) => return Err(error),
+    };
+    if metadata.len() > MAX_LEASE_FILE_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "DHCP lease file exceeds the bounded size",
+        ));
+    }
+    let contents = fs::read_to_string(path)?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    let mut leases = BTreeMap::new();
+    for line in contents.lines() {
+        let fields = line.split_ascii_whitespace().collect::<Vec<_>>();
+        if fields.len() != 3 || fields[0].len() != 12 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "invalid DHCP lease record",
+            ));
+        }
+        let mut client = [0u8; 6];
+        for (index, slot) in client.iter_mut().enumerate() {
+            *slot = u8::from_str_radix(&fields[0][index * 2..index * 2 + 2], 16).map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid DHCP client")
+            })?;
+        }
+        let address = fields[1].parse::<Ipv4Addr>().map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "invalid DHCP lease address",
+            )
+        })?;
+        let expiry = fields[2].parse::<u64>().map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid DHCP lease expiry")
+        })?;
+        if expiry > now
+            && u32::from(address) >= pool.start
+            && u32::from(address) <= pool.end
+            && leases.values().all(|(used, _)| *used != address)
+        {
+            leases.insert(client, (address, expiry));
+        }
+        if leases.len() > 4096 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "DHCP lease count exceeds the bounded limit",
+            ));
+        }
+    }
+    Ok(leases)
+}
+
+fn persist_leases(path: &str, leases: &BTreeMap<[u8; 6], (Ipv4Addr, u64)>) -> std::io::Result<()> {
+    let parent = std::path::Path::new(path).parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "lease path has no parent")
+    })?;
+    let mut contents = String::new();
+    for (client, (address, expiry)) in leases {
+        contents.push_str(&format!(
+            "{:02x}{:02x}{:02x}{:02x}{:02x}{:02x} {address} {expiry}\n",
+            client[0], client[1], client[2], client[3], client[4], client[5]
+        ));
+    }
+    if contents.len() as u64 > MAX_LEASE_FILE_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "DHCP lease output exceeds the bounded size",
+        ));
+    }
+    let temporary = parent.join(format!(".blackhole-leases.{}.tmp", std::process::id()));
+    let mut file = fs::File::create(&temporary)?;
+    file.write_all(contents.as_bytes())?;
+    file.sync_all()?;
+    drop(file);
+    if let Err(error) = fs::rename(&temporary, path) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error);
     }
     Ok(())
 }
@@ -472,6 +574,7 @@ impl Pool {
 mod tests {
     use super::*;
     use std::net::SocketAddr;
+    use tempfile::tempdir;
 
     fn discover() -> Vec<u8> {
         let mut packet = vec![0u8; 240];
@@ -594,6 +697,47 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn lease_file_round_trips_active_pool_leases() {
+        let directory = tempdir().expect("lease directory");
+        let path = directory.path().join("leases");
+        let pool =
+            Pool::new(Ipv4Addr::new(192, 0, 2, 20), Ipv4Addr::new(192, 0, 2, 21)).expect("pool");
+        let mut leases = BTreeMap::new();
+        leases.insert([0, 1, 2, 3, 4, 5], (Ipv4Addr::new(192, 0, 2, 20), u64::MAX));
+        persist_leases(path.to_str().expect("utf8 path"), &leases).expect("persist leases");
+        let restored = load_leases(path.to_str(), &pool).expect("restore leases");
+        assert_eq!(restored, leases);
+    }
+
+    #[test]
+    fn lease_file_discards_expired_and_out_of_pool_entries() {
+        let directory = tempdir().expect("lease directory");
+        let path = directory.path().join("leases");
+        std::fs::write(
+            &path,
+            "000102030405 192.0.2.20 0\n000102030406 192.0.2.99 18446744073709551615\n",
+        )
+        .expect("write leases");
+        let pool =
+            Pool::new(Ipv4Addr::new(192, 0, 2, 20), Ipv4Addr::new(192, 0, 2, 21)).expect("pool");
+        assert!(
+            load_leases(path.to_str(), &pool)
+                .expect("restore leases")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn malformed_lease_file_fails_closed() {
+        let directory = tempdir().expect("lease directory");
+        let path = directory.path().join("leases");
+        std::fs::write(&path, "not-a-lease\n").expect("write leases");
+        let pool =
+            Pool::new(Ipv4Addr::new(192, 0, 2, 20), Ipv4Addr::new(192, 0, 2, 21)).expect("pool");
+        assert!(load_leases(path.to_str(), &pool).is_err());
     }
 
     #[test]

@@ -1271,6 +1271,9 @@ mod runtime {
         /// Optional bounded IPv4 resolver list advertised through DHCP option 6.
         #[serde(default)]
         pub dns_servers: Vec<String>,
+        /// Optional local file for bounded atomic DHCP lease persistence.
+        #[serde(default)]
+        pub lease_path: Option<String>,
         /// Optional ASCII DNS search domain advertised through DHCP option 15.
         #[serde(default)]
         pub domain_name: Option<String>,
@@ -1292,6 +1295,7 @@ mod runtime {
                 router: None,
                 dns: None,
                 dns_servers: Vec::new(),
+                lease_path: None,
                 domain_name: None,
                 lease_secs: default_dhcp_lease_secs(),
                 max_leases: default_dhcp_max_leases(),
@@ -8830,6 +8834,13 @@ mod runtime {
         }
         for value in &config.dns_servers {
             parse_ip("dns_servers", value)?;
+        }
+        if let Some(lease_path) = config.lease_path.as_deref()
+            && (lease_path.is_empty() || lease_path.len() > 4096 || lease_path.contains('\0'))
+        {
+            return Err(policy::PolicyError::InvalidDhcp {
+                reason: "lease_path must be a bounded local path".into(),
+            });
         }
         if let Some(domain_name) = config.domain_name.as_deref()
             && (domain_name.is_empty()

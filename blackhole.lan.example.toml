@@ -18,6 +18,8 @@ pool_end = "192.168.50.199"
 router = "192.168.50.1"
 dns = "192.168.50.1"
 domain_name = "lan.example"
+# Optional local lease state; the parent directory must already exist.
+# lease_path = "/var/lib/blackhole/dhcp.leases"
 lease_secs = 3600
 max_leases = 256
 
