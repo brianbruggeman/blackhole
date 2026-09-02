@@ -1268,6 +1268,9 @@ mod runtime {
         pub router: Option<String>,
         #[serde(default)]
         pub dns: Option<String>,
+        /// Optional bounded IPv4 resolver list advertised through DHCP option 6.
+        #[serde(default)]
+        pub dns_servers: Vec<String>,
         /// Optional ASCII DNS search domain advertised through DHCP option 15.
         #[serde(default)]
         pub domain_name: Option<String>,
@@ -1288,6 +1291,7 @@ mod runtime {
                 pool_end: default_dhcp_pool_end(),
                 router: None,
                 dns: None,
+                dns_servers: Vec::new(),
                 domain_name: None,
                 lease_secs: default_dhcp_lease_secs(),
                 max_leases: default_dhcp_max_leases(),
@@ -8818,6 +8822,14 @@ mod runtime {
             if let Some(value) = value {
                 parse_ip(name, value)?;
             }
+        }
+        if config.dns_servers.len() > 4 {
+            return Err(policy::PolicyError::InvalidDhcp {
+                reason: "dns_servers cannot contain more than four addresses".into(),
+            });
+        }
+        for value in &config.dns_servers {
+            parse_ip("dns_servers", value)?;
         }
         if let Some(domain_name) = config.domain_name.as_deref()
             && (domain_name.is_empty()

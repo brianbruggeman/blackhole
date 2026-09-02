@@ -154,6 +154,7 @@ pub struct ReplyConfig<'domain> {
     pub subnet_mask: Ipv4Addr,
     pub router: Option<Ipv4Addr>,
     pub dns: Option<Ipv4Addr>,
+    pub dns_servers: &'domain [Ipv4Addr],
     pub domain_name: Option<&'domain str>,
     pub lease_secs: u32,
 }
@@ -174,12 +175,15 @@ pub fn encode_reply(
     if config.lease_secs == 0 {
         return Err(EncodeError::InvalidLease);
     }
+    let additional_dns_count = config.dns_servers.len().min(4);
+    let dns_count = additional_dns_count.saturating_add(usize::from(config.dns.is_some()));
+    let dns_option_bytes = if dns_count == 0 { 0 } else { 2 + dns_count * 4 };
     let required = 240
         + 3
         + 6
         + 6
         + config.router.is_some() as usize * 6
-        + config.dns.is_some() as usize * 6
+        + dns_option_bytes
         + config.domain_name.map_or(0, |name| 2 + name.len())
         + 1;
     if output.len() < required || output.len() > MAX_DHCP_PACKET {
@@ -209,8 +213,25 @@ pub fn encode_reply(
         cursor += 6;
     }
     if let Some(dns) = config.dns {
-        push_option(&mut output[cursor..], 6, &dns.octets());
-        cursor += 6;
+        let mut octets = [0u8; 20];
+        octets[..4].copy_from_slice(&dns.octets());
+        let count = additional_dns_count;
+        for (index, address) in config.dns_servers[..count].iter().enumerate() {
+            let start = (index + 1) * 4;
+            octets[start..start + 4].copy_from_slice(&address.octets());
+        }
+        let octet_count = (count + 1) * 4;
+        push_option(&mut output[cursor..], 6, &octets[..octet_count]);
+        cursor += 2 + octet_count;
+    } else if !config.dns_servers.is_empty() {
+        let mut octets = [0u8; 16];
+        for (index, address) in config.dns_servers.iter().take(4).enumerate() {
+            let start = index * 4;
+            octets[start..start + 4].copy_from_slice(&address.octets());
+        }
+        let octet_count = additional_dns_count * 4;
+        push_option(&mut output[cursor..], 6, &octets[..octet_count]);
+        cursor += 2 + octet_count;
     }
     if let Some(domain_name) = config.domain_name {
         push_option(
@@ -309,12 +330,22 @@ fn serve_socket(
         .dns
         .as_deref()
         .map(|value| value.parse::<Ipv4Addr>().expect("validated DHCP DNS"));
+    let dns_servers = config
+        .dns_servers
+        .iter()
+        .map(|value| {
+            value
+                .parse::<Ipv4Addr>()
+                .expect("validated DHCP DNS servers")
+        })
+        .collect::<Vec<_>>();
     let domain_name = config.domain_name.as_deref();
     let reply_config = ReplyConfig {
         server,
         subnet_mask,
         router,
         dns,
+        dns_servers: &dns_servers,
         domain_name,
         lease_secs: config.lease_secs,
     };
@@ -475,6 +506,7 @@ mod tests {
                 subnet_mask: Ipv4Addr::new(255, 255, 255, 0),
                 router: None,
                 dns: Some(Ipv4Addr::new(192, 0, 2, 1)),
+                dns_servers: &[Ipv4Addr::new(192, 0, 2, 2), Ipv4Addr::new(192, 0, 2, 3)],
                 domain_name: Some("home.arpa"),
                 lease_secs: 300,
             },
@@ -483,6 +515,11 @@ mod tests {
         .expect("offer");
         assert_eq!(&output[16..20], &[192, 0, 2, 20]);
         assert_eq!(&output[240..243], &[OPTION_MESSAGE_TYPE, 1, 2]);
+        assert!(
+            output[..length]
+                .windows(14)
+                .any(|window| window == [6, 12, 192, 0, 2, 1, 192, 0, 2, 2, 192, 0, 2, 3])
+        );
         let domain_option = [
             OPTION_DOMAIN_NAME,
             "home.arpa".len() as u8,
