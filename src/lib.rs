@@ -8547,6 +8547,15 @@ mod runtime {
                 changed_country_status["source_fingerprint"].as_str(),
                 Some(unchanged_fingerprint.as_str())
             );
+            let mut pinned_config = policy.country_policy_config.snapshot().as_ref().clone();
+            pinned_config.expected_fingerprint = Some("0000000000000000".into());
+            assert!(policy.replace_country_policy(&pinned_config).is_err());
+            let pinned_failure_status: serde_json::Value =
+                serde_json::from_str(&policy.admin_country_status()).expect("country status");
+            assert_eq!(
+                pinned_failure_status["source_fingerprint"],
+                changed_country_status["source_fingerprint"]
+            );
             std::fs::write(&path, "not-a-country-map\n").expect("corrupt country map");
             assert!(policy.reload_country_policy().is_err());
             let failed_reload_status: serde_json::Value =
