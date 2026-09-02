@@ -5410,7 +5410,7 @@ mod runtime {
             Ok(ReloadState::Published)
         }
 
-        /// Atomically replace or add local rewrites by normalized DNS name.
+        /// Atomically replace or add local rewrites by identity and normalized DNS name.
         /// All entries compile before the live table changes.
         pub fn upsert_rewrites(
             &self,

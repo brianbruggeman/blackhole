@@ -3815,7 +3815,7 @@ mod tests {
     }
 
     #[test]
-    fn rewrite_upsert_and_removal_are_atomic_by_name() {
+    fn rewrite_upsert_and_removal_are_atomic_by_identity_and_name() {
         let mut config = crate::Config::default();
         config.policy.rewrites = vec![RewriteConfig {
             name: "router.example".into(),
