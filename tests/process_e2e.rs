@@ -122,6 +122,29 @@ fn shipped_binary_serves_udp_datagrams_and_tcp_frames() {
     udp.set_read_timeout(Some(Duration::from_secs(3)))
         .expect("set UDP timeout");
 
+    udp.set_read_timeout(Some(Duration::from_millis(200)))
+        .expect("set malformed-query timeout");
+    udp.send_to(&[0, 1, 0], listener_addr)
+        .expect("send malformed UDP query");
+    let mut malformed_response = [0u8; 4096];
+    let malformed_result = udp.recv_from(&mut malformed_response);
+    assert!(matches!(
+        malformed_result,
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+    ));
+
+    let mut response_shaped_query = query(0x1009, "response-shaped.example.");
+    response_shaped_query[2] |= 0x80;
+    udp.send_to(&response_shaped_query, listener_addr)
+        .expect("send response-shaped UDP query");
+    let response_shaped_result = udp.recv_from(&mut malformed_response);
+    assert!(matches!(
+        response_shaped_result,
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+    ));
+    udp.set_read_timeout(Some(Duration::from_secs(3)))
+        .expect("restore UDP timeout");
+
     let blocked_query = query(0x1000, "blocked.example.");
     udp.send_to(&blocked_query, listener_addr)
         .expect("send blocked UDP query");
