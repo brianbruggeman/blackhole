@@ -94,6 +94,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   its own existing Proxima `DnsClientUpstream`, permit bound, circuit breaker,
   transport, and cache namespace; clients without a route use the default
   upstream.
+- Client identities may independently lower their bounded query-rate,
+  encoded-response-byte, and concurrent-request ceilings; absent overrides
+  inherit the admission defaults.
 - Bounded positive and negative response caching with a configured maximum
   protocol TTL, a bounded stale-serving window for upstream outages, plus
   Proxima-native hit/miss/stale/eviction counters and effective positive/

@@ -35,7 +35,7 @@ below are future capabilities, grouped by the dependency layer they extend.
   explicit-action model, including additional client-specific service settings
   beyond the current identity, filtering, query-log, statistics, cache, fallback,
   named-upstream, profile, global rate-limit-whitelist, per-identity query-rate,
-  and per-identity response-budget controls.
+  per-identity response-budget, and per-identity concurrency controls.
 - Add a separately isolated honeypot terminal with explicit retention and
   access controls.
 - Extend the measured policy/codec WASM edge experiment with additional

@@ -84,6 +84,7 @@ ttl = 30
 # clients = ["192.0.2.10"]
 # max_queries_per_second = 100  # optional per-client rate ceiling
 # max_response_bytes_per_second = 65536  # optional encoded egress budget
+# max_inflight_requests = 8  # optional concurrent request ceiling
 # upstream = "family"  # selects a named upstream declared below
 [[policy.profiles]]
 id = 40000

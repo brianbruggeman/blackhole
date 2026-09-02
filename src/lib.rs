@@ -696,6 +696,7 @@ mod runtime {
 
     const MAX_CLIENT_RATE_ENTRIES: usize = 4096;
     const MAX_GLOBAL_QUERIES_PER_SECOND: usize = 1_000_000;
+    const MAX_GLOBAL_INFLIGHT_REQUESTS: usize = 65_536;
 
     impl Default for CacheConfig {
         fn default() -> Self {
@@ -1392,6 +1393,10 @@ mod runtime {
         /// When absent, the admission default applies.
         #[serde(default)]
         pub max_response_bytes_per_second: Option<usize>,
+        /// Optional per-client concurrent request ceiling. When absent, the
+        /// admission default applies to this identity's clients.
+        #[serde(default)]
+        pub max_inflight_requests: Option<usize>,
         #[serde(default)]
         pub clients: Vec<IpAddr>,
         /// Optional bounded networks whose clients receive this identity.
@@ -5775,11 +5780,14 @@ mod runtime {
         fn try_client_admission(&self, client: Option<IpAddr>) -> Option<ClientPermit> {
             let client = client?;
             let admission = self.admission_config();
-            self.client_admission.try_acquire(
-                client,
-                admission.max_inflight_per_client,
-                self.breaker_epoch,
-            )
+            let limit = self.client_identities.read(|identities| {
+                Self::client_identity_index(identities, client)
+                    .and_then(|index| identities.get(index))
+                    .and_then(|identity| identity.max_inflight_requests)
+                    .unwrap_or(admission.max_inflight_per_client)
+            });
+            self.client_admission
+                .try_acquire(client, limit, self.breaker_epoch)
         }
 
         fn allow_client_rate(&self, client: Option<IpAddr>) -> bool {
@@ -7936,6 +7944,17 @@ mod runtime {
                     ),
                 });
             }
+            if identity
+                .max_inflight_requests
+                .is_some_and(|limit| limit == 0 || limit > MAX_GLOBAL_INFLIGHT_REQUESTS)
+            {
+                return Err(policy::PolicyError::InvalidClientIdentityMap {
+                    name: identity.name.clone(),
+                    reason: format!(
+                        "max_inflight_requests must be between 1 and {MAX_GLOBAL_INFLIGHT_REQUESTS}"
+                    ),
+                });
+            }
             for client in &identity.clients {
                 if let Some(previous) = clients.insert(*client, identity.name.clone()) {
                     return Err(policy::PolicyError::InvalidClientIdentityMap {
@@ -9483,6 +9502,7 @@ mod runtime {
                 clients: vec!["192.0.2.10".parse().expect("client address")],
                 max_queries_per_second: None,
                 max_response_bytes_per_second: None,
+                max_inflight_requests: None,
                 client_cidrs: Vec::new(),
             }];
             assert!(matches!(
@@ -9648,6 +9668,7 @@ mod runtime {
                 clients: vec!["192.0.2.10".parse().expect("client")],
                 max_queries_per_second: None,
                 max_response_bytes_per_second: None,
+                max_inflight_requests: None,
                 client_cidrs: Vec::new(),
             }];
             config.policy.rules = vec![RuleConfig {
@@ -9709,6 +9730,7 @@ mod runtime {
                 clients: vec!["192.0.2.20".parse().expect("client")],
                 max_queries_per_second: None,
                 max_response_bytes_per_second: None,
+                max_inflight_requests: None,
                 client_cidrs: Vec::new(),
             }];
             config.policy.rules = vec![RuleConfig {
@@ -9781,6 +9803,7 @@ mod runtime {
                 clients: vec!["192.0.2.10".parse().expect("client")],
                 max_queries_per_second: None,
                 max_response_bytes_per_second: None,
+                max_inflight_requests: None,
                 client_cidrs: Vec::new(),
             }];
             config.policy.rules = vec![RuleConfig {
@@ -9828,6 +9851,7 @@ mod runtime {
                 clients: vec!["192.0.2.10".parse().expect("client")],
                 max_queries_per_second: None,
                 max_response_bytes_per_second: None,
+                max_inflight_requests: None,
                 client_cidrs: Vec::new(),
             }];
             config.policy.profiles = vec![ServiceProfileConfig {
@@ -9882,6 +9906,7 @@ mod runtime {
                 clients: Vec::new(),
                 max_queries_per_second: None,
                 max_response_bytes_per_second: None,
+                max_inflight_requests: None,
                 client_cidrs: vec!["192.0.2.0/24".into()],
             }];
             config.policy.profiles = vec![ServiceProfileConfig {
@@ -9936,6 +9961,7 @@ mod runtime {
                 clients: vec!["192.0.2.10".parse().expect("client")],
                 max_queries_per_second: None,
                 max_response_bytes_per_second: None,
+                max_inflight_requests: None,
                 client_cidrs: vec!["192.0.2.0/24".into(), "2001:db8::/32".into()],
             }];
             config.policy.rules = vec![RuleConfig {
@@ -9985,6 +10011,7 @@ mod runtime {
                     clients: vec!["192.0.2.10".parse().expect("client")],
                     max_queries_per_second: None,
                     max_response_bytes_per_second: None,
+                    max_inflight_requests: None,
                     client_cidrs: vec!["192.0.2.0/24".into()],
                 },
                 ClientIdentityConfig {
@@ -9999,6 +10026,7 @@ mod runtime {
                     clients: Vec::new(),
                     max_queries_per_second: None,
                     max_response_bytes_per_second: None,
+                    max_inflight_requests: None,
                     client_cidrs: vec!["192.0.2.128/25".into()],
                 },
             ];
@@ -10051,6 +10079,7 @@ mod runtime {
                     clients: vec![family],
                     max_queries_per_second: None,
                     max_response_bytes_per_second: None,
+                    max_inflight_requests: None,
                     client_cidrs: Vec::new(),
                 }]),
                 Ok(ReloadState::Published)
@@ -10076,6 +10105,7 @@ mod runtime {
                     clients: Vec::new(),
                     max_queries_per_second: None,
                     max_response_bytes_per_second: None,
+                    max_inflight_requests: None,
                     client_cidrs: Vec::new(),
                 }]),
                 Err(policy::PolicyError::InvalidClientIdentityMap {
@@ -11742,6 +11772,59 @@ mod runtime {
         }
 
         #[test]
+        fn client_identity_can_lower_concurrency_ceiling() {
+            let mut config = Config::default();
+            config.admission.max_inflight_per_client = 8;
+            config.policy.client_identities = vec![ClientIdentityConfig {
+                name: "constrained-device".into(),
+                enabled: true,
+                query_log_enabled: true,
+                statistics_enabled: true,
+                cache_enabled: true,
+                filtering_enabled: true,
+                default_action: None,
+                upstream: None,
+                max_queries_per_second: None,
+                max_response_bytes_per_second: None,
+                max_inflight_requests: Some(1),
+                clients: vec!["192.0.2.10".parse().expect("client address")],
+                client_cidrs: Vec::new(),
+            }];
+            let policy = Policy::new(config).expect("valid identity concurrency limit");
+            let client = Some("192.0.2.10".parse().expect("client address"));
+            let permit = policy
+                .try_client_admission(client)
+                .expect("first request admitted");
+            assert!(policy.try_client_admission(client).is_none());
+            drop(permit);
+            assert!(policy.try_client_admission(client).is_some());
+        }
+
+        #[test]
+        fn client_identity_concurrency_limit_rejects_zero() {
+            let mut config = Config::default();
+            config.policy.client_identities = vec![ClientIdentityConfig {
+                name: "invalid-device".into(),
+                enabled: true,
+                query_log_enabled: true,
+                statistics_enabled: true,
+                cache_enabled: true,
+                filtering_enabled: true,
+                default_action: None,
+                upstream: None,
+                max_queries_per_second: None,
+                max_response_bytes_per_second: None,
+                max_inflight_requests: Some(0),
+                clients: vec!["192.0.2.10".parse().expect("client address")],
+                client_cidrs: Vec::new(),
+            }];
+            assert!(matches!(
+                Policy::new(config),
+                Err(policy::PolicyError::InvalidClientIdentityMap { .. })
+            ));
+        }
+
+        #[test]
         fn per_client_rate_limit_sheds_repeated_requests() {
             let mut config = Config::default();
             config.admission.max_queries_per_client_per_second = 2;
@@ -11769,6 +11852,7 @@ mod runtime {
                 max_queries_per_second: Some(1),
                 clients: vec!["192.0.2.10".parse().expect("client")],
                 max_response_bytes_per_second: None,
+                max_inflight_requests: None,
                 client_cidrs: Vec::new(),
             }];
             let policy = Policy::new(config).expect("valid identity rate limit");
@@ -11795,6 +11879,7 @@ mod runtime {
                 max_queries_per_second: Some(0),
                 clients: vec!["192.0.2.10".parse().expect("client")],
                 max_response_bytes_per_second: None,
+                max_inflight_requests: None,
                 client_cidrs: Vec::new(),
             }];
             assert!(matches!(
@@ -11818,6 +11903,7 @@ mod runtime {
                 upstream: None,
                 max_queries_per_second: None,
                 max_response_bytes_per_second: Some(6),
+                max_inflight_requests: None,
                 clients: vec!["192.0.2.12".parse().expect("client")],
                 client_cidrs: Vec::new(),
             }];
@@ -12719,6 +12805,7 @@ mod runtime {
                 clients: vec!["192.0.2.10".parse().expect("client address")],
                 max_queries_per_second: None,
                 max_response_bytes_per_second: None,
+                max_inflight_requests: None,
                 client_cidrs: Vec::new(),
             }];
             let policy = Policy::new(config).expect("valid identity policy");

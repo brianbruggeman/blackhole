@@ -80,6 +80,8 @@ Client identities may set an optional bounded `max_queries_per_second` ceiling;
 identities without an override use the configured admission default.
 They may also set `max_response_bytes_per_second` to cap encoded DNS egress for
 that identity independently of the default per-client budget.
+They may set `max_inflight_requests` to lower the concurrent request ceiling
+for that identity; absent overrides use the admission default.
 Repeated per-client rate-limit violations open a bounded temporary abuse
 breaker; unidentified callers are not assigned a shared abuse identity.
 Identified malformed-query floods also feed that same bounded client/network
