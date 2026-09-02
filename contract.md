@@ -31,6 +31,12 @@ authoritative rule set per group. Direct `client_cidrs` and named `groups`
 cannot be combined, and an unknown or empty group fails configuration before
 publication.
 
+Blocklist sources named by `[policy.blocklist_groups]` are removed from the
+unscoped blocklist set and apply only to the referenced enabled client group.
+Each source is validated against the configured source list, and its generated
+rules inherit the group's exact-address and CIDR scopes. Group assignments are
+startup configuration and are reused by bounded background source refreshes.
+
 Regular-expression rules are evaluated only when no explicit domain rule
 matches. They use the normalized DNS name without its trailing root dot and
 are bounded at startup by expression count, pattern bytes, and compiled

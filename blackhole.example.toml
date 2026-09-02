@@ -50,6 +50,10 @@ default_action = "pass"
 blocklists = []
 # Optional cancellable background reload interval; zero disables polling.
 blocklist_reload_interval_secs = 0
+# Optional group-scoped sources. A referenced source is removed from the
+# unscoped list and applies only to enabled clients in the named group.
+# [policy.blocklist_groups]
+# family = ["/etc/blackhole/family-blocklist.txt"]
 
 # Optional local DNS rewrites. A rewrite answers matching A/AAAA/CNAME queries
 # when the selected policy action is pass or observe. Set exactly one record

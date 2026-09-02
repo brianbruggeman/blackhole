@@ -325,6 +325,10 @@ individual source paths, preserving the last good snapshot on failure.
 Blocklist sources may also be absolute `http://` or `https://` URLs; hosted
 lists are fetched through Proxima with the same per-source and aggregate byte
 limits, and failed fetches do not replace the last good snapshot.
+Sources can be scoped to a named client group with `[policy.blocklist_groups]`;
+assigned sources are not applied globally. Group assignments are validated at
+startup and participate in bounded blocklist refreshes; changing assignments
+requires restart so a live refresh cannot publish a partially scoped table.
 `GET /privacy/status` exposes only privacy-recording enablement and configured
 limits; it does not expose recording paths, names, clients, or payloads. When
 `privacy.query_recording_rotation_enabled = true`, startup rotates an oversized

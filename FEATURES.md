@@ -48,6 +48,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   cancellation, bounded `$denyallow` exceptions, fail-closed startup reloads,
   and retained per-source enable/disable state; unknown or malformed filter
   modifiers are rejected.
+- Blocklist sources can be assigned to named client groups; assigned sources
+  are excluded from the unscoped rule set and expand into bounded exact-client
+  or CIDR-scoped rules, with disabled groups producing no active rules.
 - Bounded local A/AAAA/CNAME rewrites with exact and one-label wildcard
   matching, explicit policy precedence, and fail-closed validation for
   malformed, duplicate, mixed-record, or oversized configuration.

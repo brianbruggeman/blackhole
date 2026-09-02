@@ -1258,6 +1258,10 @@ mod runtime {
         /// active blocklist snapshot.
         #[serde(default)]
         pub disabled_blocklists: Vec<String>,
+        /// Optional group-scoped source assignments. A key names a configured
+        /// client group and values select configured blocklist sources for it.
+        #[serde(default)]
+        pub blocklist_groups: BTreeMap<String, Vec<String>>,
         /// Optional bounded background reload interval. Zero disables polling.
         #[serde(default)]
         pub blocklist_reload_interval_secs: u64,
@@ -1282,6 +1286,7 @@ mod runtime {
                 regex_rules: Vec::new(),
                 blocklists: Vec::new(),
                 disabled_blocklists: Vec::new(),
+                blocklist_groups: BTreeMap::new(),
                 blocklist_reload_interval_secs: 0,
                 rewrites: Vec::new(),
                 profiles: Vec::new(),
@@ -1951,6 +1956,142 @@ mod runtime {
                     client_identity: None,
                 });
                 next_id = next_id.saturating_sub(1);
+            }
+        }
+        Ok(rules)
+    }
+
+    const MAX_BLOCKLIST_GROUP_ASSIGNMENTS: usize = 256;
+    const MAX_BLOCKLIST_GROUP_RULES: usize = 65_536;
+
+    fn load_blocklists_with_groups(
+        configured_paths: &[String],
+        disabled_paths: &BTreeSet<String>,
+        assignments: &BTreeMap<String, Vec<String>>,
+        groups: &[ClientGroupConfig],
+    ) -> Result<Vec<RuleConfig>, policy::PolicyError> {
+        let active_paths = active_blocklist_paths(
+            configured_paths,
+            &disabled_paths.iter().cloned().collect::<Vec<_>>(),
+        )?;
+        let assigned_sources = assignments.values().flatten().collect::<BTreeSet<_>>();
+        let unscoped_paths = active_paths
+            .iter()
+            .filter(|path| !assigned_sources.contains(path))
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut rules = load_blocklists(&unscoped_paths)?;
+        if assignments.is_empty() {
+            return Ok(rules);
+        }
+        compile_profiles(&[], groups)?;
+        if assignments.len() > MAX_BLOCKLIST_GROUP_ASSIGNMENTS {
+            return Err(policy::PolicyError::InvalidBlocklist {
+                path: "<groups>".into(),
+                reason: format!("group assignment count exceeds {MAX_BLOCKLIST_GROUP_ASSIGNMENTS}"),
+            });
+        }
+        let configured = configured_paths.iter().collect::<BTreeSet<_>>();
+        let active = active_paths.iter().collect::<BTreeSet<_>>();
+        let mut names = BTreeSet::new();
+        let mut next_id = rules
+            .iter()
+            .map(|rule| rule.id)
+            .min()
+            .unwrap_or(u32::MAX)
+            .saturating_sub(1);
+        for (group_name, source_paths) in assignments {
+            let normalized_name = group_name.trim().to_ascii_lowercase();
+            if normalized_name.is_empty()
+                || !group_name.is_ascii()
+                || !names.insert(normalized_name.clone())
+            {
+                return Err(policy::PolicyError::InvalidBlocklist {
+                    path: group_name.clone(),
+                    reason: "group assignment names must be unique non-empty ASCII".into(),
+                });
+            }
+            let group = groups
+                .iter()
+                .find(|group| group.name.eq_ignore_ascii_case(group_name))
+                .ok_or_else(|| policy::PolicyError::InvalidBlocklist {
+                    path: group_name.clone(),
+                    reason: "group assignment references an unknown client group".into(),
+                })?;
+            if source_paths.is_empty() {
+                return Err(policy::PolicyError::InvalidBlocklist {
+                    path: group_name.clone(),
+                    reason: "group assignment must select at least one source".into(),
+                });
+            }
+            let mut unique_sources = BTreeSet::new();
+            if source_paths
+                .iter()
+                .any(|source| !unique_sources.insert(source))
+            {
+                return Err(policy::PolicyError::InvalidBlocklist {
+                    path: group_name.clone(),
+                    reason: "group assignment sources must be unique".into(),
+                });
+            }
+            if source_paths
+                .iter()
+                .any(|source| !configured.contains(source))
+            {
+                return Err(policy::PolicyError::InvalidBlocklist {
+                    path: group_name.clone(),
+                    reason: "group assignment source is not configured".into(),
+                });
+            }
+            if !group.enabled {
+                continue;
+            }
+            let active_sources = source_paths
+                .iter()
+                .filter(|source| active.contains(source))
+                .cloned()
+                .collect::<Vec<_>>();
+            if active_sources.is_empty() {
+                continue;
+            }
+            let source_rules = load_blocklists(&active_sources)?;
+            for source_rule in source_rules {
+                for client in &group.client_addresses {
+                    if rules.len() >= MAX_BLOCKLIST_GROUP_RULES {
+                        return Err(policy::PolicyError::InvalidBlocklist {
+                            path: group_name.clone(),
+                            reason: format!(
+                                "group-scoped rule count exceeds {MAX_BLOCKLIST_GROUP_RULES}"
+                            ),
+                        });
+                    }
+                    let mut scoped = source_rule.clone();
+                    scoped.id = next_id;
+                    next_id = next_id.saturating_sub(1);
+                    scoped.client = Some(*client);
+                    scoped.client_cidr = None;
+                    scoped.client_cidrs.clear();
+                    scoped.client_identity = None;
+                    rules.push(scoped);
+                }
+                if !group.client_cidrs.is_empty() {
+                    if rules.len() >= MAX_BLOCKLIST_GROUP_RULES {
+                        return Err(policy::PolicyError::InvalidBlocklist {
+                            path: group_name.clone(),
+                            reason: format!(
+                                "group-scoped rule count exceeds {MAX_BLOCKLIST_GROUP_RULES}"
+                            ),
+                        });
+                    }
+                    let mut scoped = source_rule;
+                    scoped.id = next_id;
+                    next_id = next_id.saturating_sub(1);
+                    scoped.client = None;
+                    scoped.client_cidr = None;
+                    scoped.client_cidrs = group.client_cidrs.clone();
+                    scoped.client_identity = None;
+                    rules.push(scoped);
+                }
             }
         }
         Ok(rules)
@@ -3101,11 +3242,18 @@ mod runtime {
             let explicit_rules = config.policy.rules.clone();
             config.policy.rules.extend(profile_rules);
             let base_rules = config.policy.rules.clone();
-            let active_blocklists = active_blocklist_paths(
+            let disabled_blocklists = config
+                .policy
+                .disabled_blocklists
+                .iter()
+                .cloned()
+                .collect::<BTreeSet<_>>();
+            let blocklist_rules = load_blocklists_with_groups(
                 &config.policy.blocklists,
-                &config.policy.disabled_blocklists,
+                &disabled_blocklists,
+                &config.policy.blocklist_groups,
+                &config.policy.client_groups,
             )?;
-            let blocklist_rules = load_blocklists(&active_blocklists)?;
             let retained_blocklist_rules = blocklist_rules.clone();
             let country_policy = load_country_policy(&config.country_policy)?;
             let rewrites = compile_rewrites(&config.policy.rewrites)?;
@@ -3372,8 +3520,12 @@ mod runtime {
                 },
                 <[String]>::to_vec,
             );
-            let active_paths = active_blocklist_paths(&configured_paths, &configured_disabled)?;
-            let replacement = load_blocklists(&active_paths)?;
+            let replacement = load_blocklists_with_groups(
+                &configured_paths,
+                &configured_disabled.iter().cloned().collect::<BTreeSet<_>>(),
+                &self.config.policy.blocklist_groups,
+                client_groups,
+            )?;
             let mut published = rules.to_vec();
             published.extend(generated);
             published.extend(replacement);
@@ -3814,13 +3966,9 @@ mod runtime {
                 }
             }
             let disabled = self.disabled_blocklist_paths.snapshot().as_ref().clone();
-            let active = paths
-                .iter()
-                .filter(|path| !disabled.contains(*path))
-                .cloned()
-                .collect::<Vec<_>>();
             let result = self.replace_active_blocklist_rules_locked(
-                &active,
+                &paths,
+                &disabled,
                 started,
                 "blocklists_add",
                 true,
@@ -3856,13 +4004,9 @@ mod runtime {
             }
             let started = Instant::now();
             let disabled = self.disabled_blocklist_paths.snapshot().as_ref().clone();
-            let active = paths
-                .iter()
-                .filter(|path| !disabled.contains(*path))
-                .cloned()
-                .collect::<Vec<_>>();
             let result = self.replace_active_blocklist_rules_locked(
-                &active,
+                &paths,
+                &disabled,
                 started,
                 "blocklists_remove",
                 true,
@@ -3929,13 +4073,9 @@ mod runtime {
                 self.observe_reload_latency("blocklists_enable_unchanged", started);
                 return Ok(ReloadState::Unchanged);
             }
-            let active = configured
-                .iter()
-                .filter(|path| !disabled.contains(*path))
-                .cloned()
-                .collect::<Vec<_>>();
             let result = self.replace_active_blocklist_rules_locked(
-                &active,
+                &configured,
+                &disabled,
                 started,
                 if enabled {
                     "blocklists_enable"
@@ -3960,6 +4100,7 @@ mod runtime {
                 || !self.disabled_blocklist_paths.read(BTreeSet::is_empty);
             let result = self.replace_active_blocklist_rules_locked(
                 paths,
+                &BTreeSet::new(),
                 started,
                 reload_kind,
                 state_changed,
@@ -3972,12 +4113,18 @@ mod runtime {
 
         fn replace_active_blocklist_rules_locked(
             &self,
-            paths: &[String],
+            configured_paths: &[String],
+            disabled_paths: &BTreeSet<String>,
             started: Instant,
             reload_kind: &'static str,
             state_changed: bool,
         ) -> Result<ReloadState, policy::PolicyError> {
-            let replacement = load_blocklists(paths)?;
+            let replacement = load_blocklists_with_groups(
+                configured_paths,
+                disabled_paths,
+                &self.config.policy.blocklist_groups,
+                self.client_groups.snapshot().as_ref(),
+            )?;
             if !state_changed
                 && self
                     .blocklist_rules
@@ -4022,11 +4169,12 @@ mod runtime {
             let started = Instant::now();
             let paths = self.blocklist_paths.snapshot().as_ref().clone();
             let disabled = self.disabled_blocklist_paths.snapshot().as_ref().clone();
-            let paths = paths
-                .into_iter()
-                .filter(|path| !disabled.contains(path))
-                .collect::<Vec<_>>();
-            let replacement = load_blocklists(&paths)?;
+            let replacement = load_blocklists_with_groups(
+                &paths,
+                &disabled,
+                &self.config.policy.blocklist_groups,
+                self.client_groups.snapshot().as_ref(),
+            )?;
             if replacement == *self.blocklist_rules.snapshot() {
                 self.observe_reload_latency("blocklists_unchanged", started);
                 return Ok(ReloadState::Unchanged);
@@ -4157,6 +4305,7 @@ mod runtime {
             }
             if next.admission.max_inflight_requests != current.admission.max_inflight_requests
                 || next.admission.ddos.persist_incidents != current.admission.ddos.persist_incidents
+                || next.policy.blocklist_groups != current.policy.blocklist_groups
                 || next.policy.blocklist_reload_interval_secs
                     != current.policy.blocklist_reload_interval_secs
                 || next.country_policy.reload_interval_secs
@@ -4602,8 +4751,12 @@ mod runtime {
                 },
                 <[String]>::to_vec,
             );
-            let active_paths = active_blocklist_paths(&configured_paths, &configured_disabled)?;
-            let replacement = load_blocklists(&active_paths)?;
+            let replacement = load_blocklists_with_groups(
+                &configured_paths,
+                &configured_disabled.iter().cloned().collect::<BTreeSet<_>>(),
+                &self.config.policy.blocklist_groups,
+                client_groups,
+            )?;
             let mut base = rules.to_vec();
             base.extend(generated);
             let mut published = base.clone();
@@ -6675,6 +6828,7 @@ mod runtime {
                 "regex_rules": regex_rules.len(),
                 "blocklist_sources": blocklist_paths.len(),
                 "disabled_blocklist_sources": disabled_blocklists.len(),
+                "blocklist_group_assignments": self.config.policy.blocklist_groups.len(),
                 "blocklist_rules": blocklist_rules.len(),
                 "rewrites": rewrites.len(),
                 "profiles": profiles.len(),
@@ -6897,6 +7051,7 @@ mod runtime {
                 })).collect::<Vec<_>>(),
                 "country_policy": self.country_policy_config.snapshot().as_ref().clone(),
                 "blocklists": serde_json::Value::Null,
+                "blocklist_groups": self.config.policy.blocklist_groups,
                 "disabled_blocklists": self
                     .disabled_blocklist_paths
                     .snapshot()
@@ -7926,6 +8081,50 @@ mod runtime {
             );
             assert_eq!(policy.evaluate(&query("clear.example.")).unwrap().rcode, 0);
             std::fs::remove_file(path).expect("remove blocklist");
+        }
+
+        #[test]
+        fn blocklists_can_be_scoped_to_a_client_group() {
+            let path = std::env::temp_dir().join(format!(
+                "blackhole-blocklist-group-{}-{}.txt",
+                std::process::id(),
+                1
+            ));
+            std::fs::write(&path, "||group-only.example^\n").expect("write group blocklist");
+            let mut config = Config::default();
+            config.policy.blocklists = vec![path.to_string_lossy().into_owned()];
+            config.policy.client_groups = vec![ClientGroupConfig {
+                name: "family".into(),
+                enabled: true,
+                client_addresses: vec!["192.0.2.10".parse().expect("group client")],
+                client_cidrs: Vec::new(),
+            }];
+            config
+                .policy
+                .blocklist_groups
+                .insert("family".into(), vec![path.to_string_lossy().into_owned()]);
+            let policy = Policy::new(config).expect("valid group blocklist");
+            let query = proxima_dns::DnsQuery {
+                id: 1,
+                recursion_desired: true,
+                name: "group-only.example.".into(),
+                qtype: 1,
+                qclass: 1,
+            };
+            assert_eq!(
+                policy
+                    .decision(&query, Some("192.0.2.10".parse().unwrap()))
+                    .expect("scoped blocklist decision")
+                    .action,
+                Action::Nxdomain
+            );
+            assert!(
+                policy
+                    .decision(&query, Some("192.0.2.11".parse().unwrap()))
+                    .is_none()
+            );
+            assert!(policy.decision(&query, None).is_none());
+            std::fs::remove_file(path).expect("remove group blocklist");
         }
 
         #[test]
