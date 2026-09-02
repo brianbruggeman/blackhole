@@ -7535,6 +7535,13 @@ mod runtime {
                 Err(policy::PolicyError::InvalidCountryMap { reason, .. })
                     if reason.contains("exactly 64 hexadecimal digits")
             ));
+            config.map_path =
+                Some("/blackhole/this-map-must-not-be-read-for-an-invalid-pin".into());
+            assert!(matches!(
+                load_country_policy(&config),
+                Err(policy::PolicyError::InvalidCountryMap { reason, .. })
+                    if reason.contains("exactly 64 hexadecimal digits")
+            ));
             let _ = std::fs::remove_file(path);
         }
 
