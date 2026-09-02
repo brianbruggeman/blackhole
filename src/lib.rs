@@ -7751,9 +7751,13 @@ mod runtime {
                             "enabled": identity.enabled,
                             "query_log_enabled": identity.query_log_enabled,
                             "statistics_enabled": identity.statistics_enabled,
+                            "cache_enabled": identity.cache_enabled,
                             "filtering_enabled": identity.filtering_enabled,
                             "default_action": identity.default_action.map(action_label),
                             "upstream": identity.upstream,
+                            "max_queries_per_second": identity.max_queries_per_second,
+                            "max_response_bytes_per_second": identity.max_response_bytes_per_second,
+                            "max_inflight_requests": identity.max_inflight_requests,
                             "clients": identity.clients.len(),
                             "client_cidrs": identity.client_cidrs.len(),
                         })
