@@ -225,8 +225,9 @@ map. Local files may use `max_age_secs`; that bound also applies when a
 last-good snapshot is used after a failed refresh, so stale recovery fails
 closed. Hosted refreshes use Proxima's bounded 30-second timeout for connection,
 response headers, and the complete response body, and fail closed when that
-deadline or the byte bound is exceeded. Hosted maps reject `max_age_secs` until
-a trusted remote freshness contract exists. Region and ASN selectors are explicit
+deadline or the byte bound is exceeded. When `max_age_secs` is configured for a
+hosted map, the response must provide a valid `Cache-Control: max-age` contract;
+without it the refresh fails closed. Region and ASN selectors are explicit
 operator policy over those map labels; no GeoIP database or inferred identity
 is provided. Set `country_policy.unmapped_action` to `pass` (the default),
 `observe`, or `deny` to make the treatment of clients absent from the map

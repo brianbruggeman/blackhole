@@ -1847,13 +1847,14 @@ mod runtime {
 
     fn read_remote_bytes(source: &str, max_bytes: u64) -> Result<Vec<u8>, String> {
         read_remote_bytes_with_timeout(source, max_bytes, REMOTE_SOURCE_TIMEOUT)
+            .map(|(bytes, _)| bytes)
     }
 
     fn read_remote_bytes_with_timeout(
         source: &str,
         max_bytes: u64,
         timeout: std::time::Duration,
-    ) -> Result<Vec<u8>, String> {
+    ) -> Result<(Vec<u8>, Option<u64>), String> {
         let (base, path) = http_source_parts(source).ok_or_else(|| {
             "remote source must be an absolute http:// or https:// URL".to_owned()
         })?;
@@ -1876,6 +1877,10 @@ mod runtime {
                     if !response.ok() {
                         return Err(format!("remote source returned HTTP {}", response.status()));
                     }
+                    let max_age_secs = response
+                        .headers()
+                        .get_str("cache-control")
+                        .and_then(parse_cache_control_max_age);
                     let mut stream = response.into_body().into_chunk_stream();
                     let mut contents = Vec::new();
                     while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
@@ -1890,7 +1895,7 @@ mod runtime {
                         }
                         contents.extend_from_slice(&chunk);
                     }
-                    Ok(contents)
+                    Ok((contents, max_age_secs))
                 })
             })();
             let _ = result_sender.send(result);
@@ -1898,6 +1903,15 @@ mod runtime {
         result_receiver
             .recv_timeout(timeout)
             .map_err(|_| format!("remote source timed out after {}ms", timeout.as_millis()))?
+    }
+
+    fn parse_cache_control_max_age(value: &str) -> Option<u64> {
+        value.split(',').find_map(|directive| {
+            let (name, value) = directive.trim().split_once('=')?;
+            name.trim()
+                .eq_ignore_ascii_case("max-age")
+                .then(|| value.trim().trim_matches('"').parse::<u64>().ok())?
+        })
     }
 
     fn read_remote_blocklist(source: &str) -> Result<Vec<u8>, policy::PolicyError> {
@@ -2785,18 +2799,20 @@ mod runtime {
             });
         }
         let contents = if http_source_parts(path).is_some() {
-            if config.max_age_secs.is_some() {
+            let (bytes, remote_max_age_secs) =
+                read_remote_bytes_with_timeout(path, MAX_COUNTRY_MAP_BYTES, REMOTE_SOURCE_TIMEOUT)
+                    .map_err(|reason| policy::PolicyError::InvalidCountryMap {
+                        path: path.into(),
+                        reason,
+                    })?;
+            if config.max_age_secs.is_some() && remote_max_age_secs.is_none() {
                 return Err(policy::PolicyError::InvalidCountryMap {
                     path: path.into(),
-                    reason: "max_age_secs is only supported for local map files".into(),
+                    reason:
+                        "hosted maps require Cache-Control max-age when max_age_secs is configured"
+                            .into(),
                 });
             }
-            let bytes = read_remote_bytes(path, MAX_COUNTRY_MAP_BYTES).map_err(|reason| {
-                policy::PolicyError::InvalidCountryMap {
-                    path: path.into(),
-                    reason,
-                }
-            })?;
             String::from_utf8(bytes).map_err(|error| policy::PolicyError::InvalidCountryMap {
                 path: path.into(),
                 reason: format!("remote map is not UTF-8: {error}"),
@@ -10619,7 +10635,7 @@ mod runtime {
         }
 
         #[test]
-        fn hosted_country_maps_use_proxima_http_and_reject_file_age_semantics() {
+        fn hosted_country_maps_use_proxima_http_and_enforce_freshness_contract() {
             use std::io::{Read, Write};
 
             let server = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
@@ -10637,7 +10653,7 @@ mod runtime {
                 let body = b"US 192.0.2.0/24 US-CA AS64500\n";
                 write!(
                     stream,
-                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nCache-Control: max-age=60\r\nConnection: close\r\n\r\n",
                     body.len()
                 )
                 .expect("write country map headers");
@@ -10681,11 +10697,7 @@ mod runtime {
                 .expect("recovered country policy");
             assert!(recovered.denied("192.0.2.1".parse().expect("fixture address")));
             age_bound.last_good_path = None;
-            assert!(matches!(
-                load_country_policy(&age_bound),
-                Err(policy::PolicyError::InvalidCountryMap { reason, .. })
-                    if reason.contains("only supported for local map files")
-            ));
+            assert!(load_country_policy(&age_bound).is_err());
             std::fs::remove_file(last_good).expect("remove HTTP last-good map");
         }
 
@@ -10694,6 +10706,20 @@ mod runtime {
             assert!(http_source_parts("ftp://example.test/map.txt").is_none());
             assert!(http_source_parts("file:///etc/hosts").is_none());
             assert!(http_source_parts("https://example.test/map.txt").is_some());
+        }
+
+        #[test]
+        fn hosted_freshness_contract_parses_only_cache_control_max_age() {
+            assert_eq!(
+                parse_cache_control_max_age("public, max-age=3600, immutable"),
+                Some(3600)
+            );
+            assert_eq!(
+                parse_cache_control_max_age("max-age=\"60\", must-revalidate"),
+                Some(60)
+            );
+            assert_eq!(parse_cache_control_max_age("no-cache"), None);
+            assert_eq!(parse_cache_control_max_age("max-age=invalid"), None);
         }
 
         #[test]

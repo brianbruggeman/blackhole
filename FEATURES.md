@@ -234,8 +234,8 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   identity. Region and ASN selectors are explicit map-label policy, not a
   bundled or inferred GeoIP identity. An optional freshness bound fails closed
   when the local map file is stale or its timestamp is unavailable. Hosted maps
-  are bounded and fetched through Proxima; file-age freshness is intentionally
-  rejected for hosted sources until a trusted remote freshness contract exists.
+  are bounded and fetched through Proxima; when `max_age_secs` is configured,
+  they require a valid `Cache-Control: max-age` freshness contract.
 - An optional bounded background country-map reload uses Proxima's interval
   and lifecycle primitives, publishes only changed valid maps, and preserves
   the last good snapshot after a failed refresh.
