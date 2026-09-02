@@ -23,8 +23,10 @@ use proxima_protocols::dns::{Flags, encode, parse_message};
 static NEXT_TEST_PORT: AtomicU16 = AtomicU16::new(30_000);
 
 fn test_listener_addr() -> SocketAddr {
+    let pid = std::process::id();
+    let address = Ipv4Addr::new(127, (pid >> 16) as u8, (pid >> 8) as u8, pid as u8);
     let port = NEXT_TEST_PORT.fetch_add(1, Ordering::Relaxed);
-    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)
+    SocketAddr::new(IpAddr::V4(address), port)
 }
 
 #[proxima::test]
