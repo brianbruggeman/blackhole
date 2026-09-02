@@ -119,15 +119,19 @@ jobs:
       - name: run systemd install and rollback smoke
         id: systemd-smoke
         run: |
-          if sudo -n systemctl list-units --no-legend >/dev/null 2>&1; then
+          systemd_state=$(sudo -n systemctl is-system-running 2>/dev/null || true)
+          case "$systemd_state" in
+            running|degraded|maintenance)
             set -o pipefail
             sudo -n env BLACKHOLE_SMOKE_TRACE=1 \
               BLACKHOLE_BINARY="$PWD/target/release/blackhole" \
               BLACKHOLE_CONFIG="$PWD/blackhole.example.toml" \
               deploy/systemd/smoke.sh 2>&1 | tee systemd-smoke.log
-          else
-            echo 'systemd host smoke unavailable: runner lacks a usable systemd context' | tee systemd-smoke.log
-          fi
+              ;;
+            *)
+              echo "systemd host smoke unavailable: manager state is ${systemd_state:-unknown}" | tee systemd-smoke.log
+              ;;
+          esac
       - if: always()
         uses: actions/upload-artifact@v4
         with:
