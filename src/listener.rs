@@ -12,6 +12,7 @@ use proxima_primitives::stream::{PeerInfo, StreamConnection};
 use proxima_protocols::dns::encode;
 use serde_json::Value;
 use std::future::Future;
+use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Instant;
@@ -23,26 +24,47 @@ use crate::query::{MAX_QUERY_BYTES, QueryView, valid_query_flags};
 const MAX_TCP_FRAME: usize = 4096;
 const UDP_HEADER: usize = 12;
 const TCP_PREFIX: usize = 14;
+const ORIGINAL_DESTINATION_METADATA: &str = "blackhole-original-destination";
 
 pub struct UdpProtocol {
     policy: Arc<Policy>,
+    original_destination: Option<SocketAddr>,
 }
 
 pub struct TcpProtocol {
     policy: Arc<Policy>,
+    original_destination: Option<SocketAddr>,
 }
 
 impl UdpProtocol {
     #[must_use]
     pub fn new(policy: Arc<Policy>) -> Self {
-        Self { policy }
+        Self {
+            policy,
+            original_destination: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_original_destination(mut self, destination: SocketAddr) -> Self {
+        self.original_destination = Some(destination);
+        self
     }
 }
 
 impl TcpProtocol {
     #[must_use]
     pub fn new(policy: Arc<Policy>) -> Self {
-        Self { policy }
+        Self {
+            policy,
+            original_destination: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_original_destination(mut self, destination: SocketAddr) -> Self {
+        self.original_destination = Some(destination);
+        self
     }
 }
 
@@ -56,7 +78,12 @@ fn request(
     query: proxima_dns::DnsQuery,
     tcp: bool,
     peer: Option<PeerInfo>,
+    original_destination: Option<SocketAddr>,
 ) -> proxima_dns::DnsPipeRequest {
+    let mut metadata = HeaderList::new();
+    if let Some(destination) = original_destination {
+        metadata.insert(ORIGINAL_DESTINATION_METADATA, destination.to_string());
+    }
     Request {
         method: Method::from_wire(if tcp {
             Bytes::from_static(b"DNS-TCP")
@@ -65,7 +92,7 @@ fn request(
         }),
         path: Bytes::from_static(b"/"),
         query: HeaderList::new(),
-        metadata: HeaderList::new(),
+        metadata,
         payload: query,
         stream: None,
         context: RequestContext {
@@ -92,6 +119,7 @@ async fn decide<'a>(
     packet: &'a [u8],
     peer: Option<PeerInfo>,
     tcp: bool,
+    original_destination: Option<SocketAddr>,
 ) -> Result<Option<(Vec<u8>, DecisionState<'a>)>, ProximaError> {
     let _latency = ListenerLatency {
         policy,
@@ -145,7 +173,7 @@ async fn decide<'a>(
         })?;
     }
 
-    let request = request(query.clone(), tcp, peer.clone());
+    let request = request(query.clone(), tcp, peer.clone(), original_destination);
     let answer = policy
         .call_owned(request, action)
         .await
@@ -332,7 +360,16 @@ impl AnyProtocol for UdpProtocol {
                 return Ok(());
             }
             let state = DecisionState::received(&packet);
-            if let Some((reply, state)) = decide(&self.policy, state, &packet, peer, false).await? {
+            if let Some((reply, state)) = decide(
+                &self.policy,
+                state,
+                &packet,
+                peer,
+                false,
+                self.original_destination,
+            )
+            .await?
+            {
                 stream.write_all(&reply).await.map_err(|error| {
                     self.policy.observe_failure("transport_write");
                     ProximaError::Io(error)
@@ -410,8 +447,15 @@ impl AnyProtocol for TcpProtocol {
                 } else {
                     DecisionState::received(&frame)
                 };
-                if let Some((reply, responding)) =
-                    decide(&self.policy, state, &frame, peer.clone(), true).await?
+                if let Some((reply, responding)) = decide(
+                    &self.policy,
+                    state,
+                    &frame,
+                    peer.clone(),
+                    true,
+                    self.original_destination,
+                )
+                .await?
                 {
                     let length = u16::try_from(reply.len()).map_err(|_| {
                         self.policy.observe_failure("frame_overflow");
@@ -486,6 +530,25 @@ mod tests {
     }
 
     #[test]
+    fn capture_destination_is_carried_as_request_metadata_for_both_transports() {
+        let query = proxima_dns::DnsQuery {
+            id: 7,
+            recursion_desired: true,
+            name: "example.com.".into(),
+            qtype: 1,
+            qclass: 1,
+        };
+        let destination = "192.0.2.53:53".parse().expect("destination");
+        for tcp in [false, true] {
+            let request = request(query.clone(), tcp, None, Some(destination));
+            assert_eq!(
+                request.metadata.get_str(ORIGINAL_DESTINATION_METADATA),
+                Some("192.0.2.53:53")
+            );
+        }
+    }
+
+    #[test]
     fn listener_records_the_parser_failure_cause() {
         let causes = Arc::new(Mutex::new(Vec::new()));
         let policy = Policy::new(Config::default())
@@ -498,6 +561,7 @@ mod tests {
             &[0; 11],
             None,
             false,
+            None,
         ))
         .expect("malformed input is a dropped request");
         assert!(result.is_none());
@@ -545,6 +609,7 @@ mod tests {
             &packet,
             None,
             false,
+            None,
         ))
         .expect("drop is a normal no-response result");
         assert!(result.is_none());
@@ -567,6 +632,7 @@ mod tests {
             &[0; 11],
             None,
             false,
+            None,
         ))
         .expect("malformed input is a dropped request");
         assert!(result.is_none());
@@ -592,6 +658,7 @@ mod tests {
                 &[0; 11],
                 peer.clone(),
                 false,
+                None,
             ))
             .expect("malformed input is dropped");
             assert!(result.is_none());

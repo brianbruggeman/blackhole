@@ -441,6 +441,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Explicit opt-in capture configuration wires the shared controller to the
   native platform backend, recovers ownership before install, and cleans up
   after orderly shutdown.
+- Capture-enabled UDP and TCP DNS requests carry the configured original
+  destination in the request metadata envelope consumed by the shared policy
+  pipe; the universal Proxima listener remains unchanged.
 - A hardened Linux systemd deployment unit runs the resolver as a dedicated
   service user with bounded state access and only low-port bind capability;
   a macOS launchd service runs directly as a dedicated unprivileged account

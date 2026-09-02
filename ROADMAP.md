@@ -22,12 +22,11 @@ below are future capabilities, grouped by the dependency layer they extend.
 
 ## Interception and deployment
 
-- Complete original-destination integration for the opt-in capture
-  configuration by consuming a supported Proxima listener context/raw-socket
-  capability; until that upstream seam exists, keep original-destination and
-  reply-routing metadata inside the platform adapter and do not synthesize it
-  in policy, telemetry, or recordings. The pinned Proxima revision and the
-  current upstream `main` audit expose no such listener seam yet.
+- Extend the capture adapter to populate the request metadata envelope from
+  live kernel original-destination/control data where the platform exposes it;
+  keep the envelope inside the existing universal-listener pipe and preserve
+  adapter-owned reply-routing metadata. The current configured destination
+  envelope is the safe baseline for the single-target capture plan.
 
 ## Incumbent parity and extensions
 
