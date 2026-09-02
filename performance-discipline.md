@@ -448,3 +448,22 @@ response encoding allocated as shown. Scalar remains the production arm:
 chunked scanning is slower and memchr retains a materially higher tail and
 coefficient of variation. This is a current reference row, not a
 zero-copy, high-performance, or production-grade claim.
+
+## Row 18 — lock-free snapshot publication and retirement
+
+`MEASURED` on 2026-09-01, Linux `x86_64`, rustc `1.98.0`, release build,
+source commit `3b8a8eb`, and GitHub Proxima revision `03ea2c7d`. The bounded
+`snapshot_gate` example published 256 complete immutable generations through
+`PolicyStore` and measured the process before and after the run:
+
+```text
+snapshot_samples=256 rss_before_kib=Some(2428) rss_after_kib=Some(2500)
+snapshot_reload_ns p50=241 p95=254 p99=437
+snapshot_rss_delta_kib=MEASURED 72 provenance=process-wide-rss
+```
+
+The reload timings are a single local run and are not a throughput claim. RSS
+is process-wide and includes allocator retention and unrelated runtime state;
+the 72 KiB delta is an observed bound for this workload, not a universal
+memory bound. The concurrent-reader and repeated-retirement proof tests remain
+the correctness evidence for complete generations.
