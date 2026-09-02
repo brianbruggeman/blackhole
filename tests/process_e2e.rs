@@ -55,7 +55,7 @@ fn shipped_binary_serves_udp_datagrams_and_tcp_frames() {
     let upstream_addr = upstream.local_addr().expect("upstream address");
     let upstream_thread = thread::spawn(move || {
         let mut packet = [0u8; 4096];
-        for _ in 0..2 {
+        for _ in 0..4 {
             let (length, peer) = upstream
                 .recv_from(&mut packet)
                 .expect("receive upstream query");
@@ -99,7 +99,7 @@ fn shipped_binary_serves_udp_datagrams_and_tcp_frames() {
     let mut config = NamedTempFile::new().expect("create config");
     writeln!(
         config,
-        "[server]\nlisten = \"{listener_addr}\"\n\n[policy]\ndefault_action = \"forward\"\n\n[[policy.rules]]\nid = 9001\ndomain = \"blocked.example.\"\naction = \"reject\"\n\n[[policy.rules]]\nid = 9002\ndomain = \"nxdomain.example.\"\naction = \"nxdomain\"\n\n[[policy.rules]]\nid = 9003\ndomain = \"drop.example.\"\naction = \"drop\"\n\n[upstream]\nresolver_ip = \"127.0.0.1\"\nport = {}\ntransport = \"udp\"\nquery_timeout_ms = 500\nmax_attempts = 1",
+        "[server]\nlisten = \"{listener_addr}\"\n\n[policy]\ndefault_action = \"forward\"\n\n[[policy.rules]]\nid = 9001\ndomain = \"blocked.example.\"\naction = \"reject\"\n\n[[policy.rules]]\nid = 9002\ndomain = \"nxdomain.example.\"\naction = \"nxdomain\"\n\n[[policy.rules]]\nid = 9003\ndomain = \"drop.example.\"\naction = \"drop\"\n\n[[policy.rules]]\nid = 9004\ndomain = \"pass.example.\"\naction = \"pass\"\n\n[[policy.rules]]\nid = 9005\ndomain = \"observe.example.\"\naction = \"observe\"\n\n[[policy.rules]]\nid = 9006\ndomain = \"sink.example.\"\naction = \"sink\"\n\n[[policy.rules]]\nid = 9007\ndomain = \"honeypot.example.\"\naction = \"honeypot\"\n\n[upstream]\nresolver_ip = \"127.0.0.1\"\nport = {}\ntransport = \"udp\"\nquery_timeout_ms = 500\nmax_attempts = 1",
         upstream_addr.port()
     )
     .expect("write config");
@@ -206,6 +206,42 @@ fn shipped_binary_serves_udp_datagrams_and_tcp_frames() {
     ));
     udp.set_read_timeout(Some(Duration::from_secs(3)))
         .expect("restore UDP timeout");
+
+    let sink_query = query(0x100A, "sink.example.");
+    udp.send_to(&sink_query, listener_addr)
+        .expect("send sink UDP query");
+    let (sink_length, _) = udp
+        .recv_from(&mut blocked_response)
+        .expect("receive sink UDP response");
+    let sink_message =
+        parse_message(&blocked_response[..sink_length]).expect("parse sink UDP response");
+    assert_eq!(sink_message.header.id, 0x100A);
+    assert_eq!(sink_message.header.flags.rcode(), 0);
+    assert!(sink_message.answers().next().is_none());
+
+    let honeypot_query = query(0x100B, "honeypot.example.");
+    udp.send_to(&honeypot_query, listener_addr)
+        .expect("send honeypot UDP query");
+    let (honeypot_length, _) = udp
+        .recv_from(&mut blocked_response)
+        .expect("receive honeypot UDP response");
+    let honeypot_message =
+        parse_message(&blocked_response[..honeypot_length]).expect("parse honeypot response");
+    assert_eq!(honeypot_message.header.id, 0x100B);
+    assert_eq!(honeypot_message.answers().count(), 1);
+
+    for (id, name) in [(0x100C, "pass.example."), (0x100D, "observe.example.")] {
+        let policy_query = query(id, name);
+        udp.send_to(&policy_query, listener_addr)
+            .expect("send pass-through UDP query");
+        let (policy_length, _) = udp
+            .recv_from(&mut blocked_response)
+            .expect("receive pass-through UDP response");
+        let policy_message =
+            parse_message(&blocked_response[..policy_length]).expect("parse pass-through response");
+        assert_eq!(policy_message.header.id, id);
+        assert_eq!(policy_message.answers().count(), 1);
+    }
 
     let udp_query = query(0x1001, "udp.example.");
     udp.send_to(&udp_query, listener_addr)
