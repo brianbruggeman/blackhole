@@ -33,29 +33,30 @@ const adversarialPacket = Uint8Array.from([
   0xc0, 0x0c, 0x00, 0x01, 0x00, 0x01,
 ]);
 const pointer = 65536;
-const maxPacketLength = Math.max(validPacket.length, longPacket.length, adversarialPacket.length);
-const view = new Uint8Array(memory.buffer, pointer, maxPacketLength);
+const packets = [validPacket, shortPacket, longPacket, adversarialPacket];
+const pointers = packets.map((packet, index) => {
+  const packetPointer = pointer + index * 4096;
+  new Uint8Array(memory.buffer, packetPointer, packet.length).set(packet);
+  return packetPointer;
+});
 
 function measure(packet) {
-  const packets = Array.isArray(packet) ? packet : [packet];
+  const workload = Array.isArray(packet) ? packet : [packet];
   const iterations = 10_000;
   for (let index = 0; index < 1_000; index += 1) {
-    const current = packets[index % packets.length];
-    view.fill(0);
-    view.set(current);
+    const packetIndex = packets.indexOf(workload[index % workload.length]);
     blackhole_edge_reset();
-    blackhole_edge_probe(pointer, current.length);
+    blackhole_edge_probe(pointers[packetIndex], workload[index % workload.length].length);
   }
   const samples = [];
   let checksum = 0;
   for (let sample = 0; sample < 25; sample += 1) {
     const started = process.hrtime.bigint();
     for (let index = 0; index < iterations; index += 1) {
-      const current = packets[index % packets.length];
-      view.fill(0);
-      view.set(current);
+      const current = workload[index % workload.length];
+      const packetIndex = packets.indexOf(current);
       blackhole_edge_reset();
-      checksum += blackhole_edge_probe(pointer, current.length);
+      checksum += blackhole_edge_probe(pointers[packetIndex], current.length);
     }
     samples.push(Number(process.hrtime.bigint() - started) / iterations);
   }
@@ -80,7 +81,7 @@ const workloads = new Map([
 ]);
 for (const [name, packet] of workloads) {
   const result = measure(packet);
-  console.log(`${name}_result=${blackhole_edge_probe(pointer, packet.length)}`);
+  console.log(`${name}_result=${blackhole_edge_probe(pointers[packets.indexOf(packet)], packet.length)}`);
   console.log(`${name}_p50_ns=${result.p50} ${name}_p95_ns=${result.p95} ${name}_p99_ns=${result.p99} ${name}_cov=${result.cov} ${name}_checksum=${result.checksum}`);
 }
 const mixed = [validPacket, longPacket, adversarialPacket];
@@ -90,8 +91,8 @@ console.log(`mixed_p50_ns=${mixedResult.p50} mixed_p95_ns=${mixedResult.p95} mix
 blackhole_edge_reset();
 console.log(`module_bytes=${bytes.length}`);
 console.log(`memory_bytes=${memory.buffer.byteLength}`);
-console.log(`valid_result=${blackhole_edge_probe(pointer, validPacket.length)}`);
+console.log(`valid_result=${blackhole_edge_probe(pointers[0], validPacket.length)}`);
 blackhole_edge_reset();
-console.log(`short_result=${blackhole_edge_probe(pointer, shortPacket.length)}`);
+console.log(`short_result=${blackhole_edge_probe(pointers[1], shortPacket.length)}`);
 console.log(`null_result=${blackhole_edge_probe(0, validPacket.length)}`);
-console.log(`oversized_result=${blackhole_edge_probe(pointer, 4097)}`);
+console.log(`oversized_result=${blackhole_edge_probe(pointers[0], 4097)}`);
