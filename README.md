@@ -236,6 +236,9 @@ Set `statistics_enabled = false` to exclude that client's actions from aggregate
 statistics while retaining policy enforcement, failure telemetry, and recording.
 Set `cache_enabled = false` to bypass bounded positive, negative, and stale
 response caching for that client while retaining upstream forwarding.
+Set `max_response_bytes_per_network_per_second` on an identity to override the
+encoded response-byte budget for its configured client network; absent values
+inherit the admission default.
 To assign an existing named service profile to an adapter-owned identity, add
 `service_profiles_by_identity = { family-router = ["family-blocks"] }` under
 `[policy]`. Assigned profiles apply only to those identities (while retaining

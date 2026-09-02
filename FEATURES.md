@@ -57,6 +57,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   identities without an override use the admission default.
 - Each identity may set an optional bounded encoded response-byte budget per
   second; identities without an override use the admission default.
+- Each identity may set an optional bounded encoded response-byte budget per
+  configured client network per second; identities without an override use
+  the admission default.
 - Each identity may set an optional bounded concurrent-request ceiling;
   identities without an override use the admission default.
 - Bounded Pi-hole/AdGuard-compatible blocklist ingestion from hosts/domain files

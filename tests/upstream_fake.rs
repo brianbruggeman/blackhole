@@ -386,6 +386,7 @@ async fn named_client_upstream_route_and_cache_bypass_use_proxima_exchange() {
         clients: vec!["192.0.2.10".parse().expect("client address")],
         max_queries_per_second: None,
         max_response_bytes_per_second: None,
+        max_response_bytes_per_network_per_second: None,
         max_inflight_requests: None,
         client_cidrs: Vec::new(),
     }];

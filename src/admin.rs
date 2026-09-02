@@ -2960,6 +2960,7 @@ mod tests {
             clients: vec!["192.0.2.10".parse().expect("identity address")],
             max_queries_per_second: None,
             max_response_bytes_per_second: None,
+            max_response_bytes_per_network_per_second: None,
             max_inflight_requests: None,
             client_cidrs: Vec::new(),
         }];
@@ -3197,6 +3198,7 @@ mod tests {
             clients: vec!["192.0.2.10".parse().expect("identity address")],
             max_queries_per_second: None,
             max_response_bytes_per_second: None,
+            max_response_bytes_per_network_per_second: None,
             max_inflight_requests: None,
             client_cidrs: Vec::new(),
         }];
@@ -3640,6 +3642,7 @@ mod tests {
             clients: vec!["192.0.2.10".parse().expect("client")],
             max_queries_per_second: None,
             max_response_bytes_per_second: None,
+            max_response_bytes_per_network_per_second: None,
             max_inflight_requests: None,
             client_cidrs: Vec::new(),
         }];

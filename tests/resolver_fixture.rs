@@ -172,6 +172,7 @@ async fn listener_honors_per_client_filtering_toggle() {
         clients: vec!["127.0.0.1".parse().expect("loopback client")],
         max_queries_per_second: None,
         max_response_bytes_per_second: None,
+        max_response_bytes_per_network_per_second: None,
         max_inflight_requests: None,
         client_cidrs: Vec::new(),
     }];
@@ -506,6 +507,7 @@ async fn listener_forwards_allowed_query_to_loopback_upstream() {
         clients: vec![Ipv4Addr::LOCALHOST.into()],
         max_queries_per_second: None,
         max_response_bytes_per_second: None,
+        max_response_bytes_per_network_per_second: None,
         max_inflight_requests: None,
         client_cidrs: Vec::new(),
     }];

@@ -1472,6 +1472,10 @@ mod runtime {
         /// When absent, the admission default applies.
         #[serde(default)]
         pub max_response_bytes_per_second: Option<usize>,
+        /// Optional encoded response-byte budget per configured client
+        /// network per second. When absent, the admission default applies.
+        #[serde(default)]
+        pub max_response_bytes_per_network_per_second: Option<usize>,
         /// Optional per-client concurrent request ceiling. When absent, the
         /// admission default applies to this identity's clients.
         #[serde(default)]
@@ -6840,7 +6844,12 @@ mod runtime {
                 return true;
             };
             let admission = self.admission_config();
-            let limit = admission.max_response_bytes_per_network_per_second;
+            let limit = self.client_identities.read(|identities| {
+                Self::client_identity_index(identities, client)
+                    .and_then(|index| identities.get(index))
+                    .and_then(|identity| identity.max_response_bytes_per_network_per_second)
+                    .unwrap_or(admission.max_response_bytes_per_network_per_second)
+            });
             if bytes > limit {
                 return false;
             }
@@ -8676,6 +8685,7 @@ mod runtime {
                             "upstream": identity.upstream,
                             "max_queries_per_second": identity.max_queries_per_second,
                             "max_response_bytes_per_second": identity.max_response_bytes_per_second,
+                            "max_response_bytes_per_network_per_second": identity.max_response_bytes_per_network_per_second,
                             "max_inflight_requests": identity.max_inflight_requests,
                             "clients": identity.clients.len(),
                             "client_cidrs": identity.client_cidrs.len(),
@@ -8865,6 +8875,17 @@ mod runtime {
                     name: identity.name.clone(),
                     reason: format!(
                         "max_response_bytes_per_second must be between 1 and {MAX_IDENTITY_RESPONSE_BYTES_PER_SECOND}"
+                    ),
+                });
+            }
+            if identity
+                .max_response_bytes_per_network_per_second
+                .is_some_and(|limit| limit == 0 || limit > MAX_IDENTITY_RESPONSE_BYTES_PER_SECOND)
+            {
+                return Err(policy::PolicyError::InvalidClientIdentityMap {
+                    name: identity.name.clone(),
+                    reason: format!(
+                        "max_response_bytes_per_network_per_second must be between 1 and {MAX_IDENTITY_RESPONSE_BYTES_PER_SECOND}"
                     ),
                 });
             }
@@ -10647,6 +10668,7 @@ mod runtime {
                 clients: vec!["192.0.2.10".parse().expect("client address")],
                 max_queries_per_second: None,
                 max_response_bytes_per_second: None,
+                max_response_bytes_per_network_per_second: None,
                 max_inflight_requests: None,
                 client_cidrs: Vec::new(),
             }];
@@ -10813,6 +10835,7 @@ mod runtime {
                 clients: vec!["192.0.2.10".parse().expect("client")],
                 max_queries_per_second: None,
                 max_response_bytes_per_second: None,
+                max_response_bytes_per_network_per_second: None,
                 max_inflight_requests: None,
                 client_cidrs: Vec::new(),
             }];
@@ -10870,6 +10893,7 @@ mod runtime {
                 clients: vec!["192.0.2.10".parse().expect("client")],
                 max_queries_per_second: None,
                 max_response_bytes_per_second: None,
+                max_response_bytes_per_network_per_second: None,
                 max_inflight_requests: None,
                 client_cidrs: Vec::new(),
             }];
@@ -10932,6 +10956,7 @@ mod runtime {
                 clients: vec!["192.0.2.20".parse().expect("client")],
                 max_queries_per_second: None,
                 max_response_bytes_per_second: None,
+                max_response_bytes_per_network_per_second: None,
                 max_inflight_requests: None,
                 client_cidrs: Vec::new(),
             }];
@@ -11005,6 +11030,7 @@ mod runtime {
                 clients: vec!["192.0.2.10".parse().expect("client")],
                 max_queries_per_second: None,
                 max_response_bytes_per_second: None,
+                max_response_bytes_per_network_per_second: None,
                 max_inflight_requests: None,
                 client_cidrs: Vec::new(),
             }];
@@ -11053,6 +11079,7 @@ mod runtime {
                 clients: vec!["192.0.2.10".parse().expect("client")],
                 max_queries_per_second: None,
                 max_response_bytes_per_second: None,
+                max_response_bytes_per_network_per_second: None,
                 max_inflight_requests: None,
                 client_cidrs: Vec::new(),
             }];
@@ -11114,6 +11141,7 @@ mod runtime {
                 clients: Vec::new(),
                 max_queries_per_second: None,
                 max_response_bytes_per_second: None,
+                max_response_bytes_per_network_per_second: None,
                 max_inflight_requests: None,
                 client_cidrs: vec!["192.0.2.0/24".into()],
             }];
@@ -11169,6 +11197,7 @@ mod runtime {
                 clients: vec!["192.0.2.10".parse().expect("client")],
                 max_queries_per_second: None,
                 max_response_bytes_per_second: None,
+                max_response_bytes_per_network_per_second: None,
                 max_inflight_requests: None,
                 client_cidrs: vec!["192.0.2.0/24".into(), "2001:db8::/32".into()],
             }];
@@ -11219,6 +11248,7 @@ mod runtime {
                     clients: vec!["192.0.2.10".parse().expect("client")],
                     max_queries_per_second: None,
                     max_response_bytes_per_second: None,
+                    max_response_bytes_per_network_per_second: None,
                     max_inflight_requests: None,
                     client_cidrs: vec!["192.0.2.0/24".into()],
                 },
@@ -11234,6 +11264,7 @@ mod runtime {
                     clients: Vec::new(),
                     max_queries_per_second: None,
                     max_response_bytes_per_second: None,
+                    max_response_bytes_per_network_per_second: None,
                     max_inflight_requests: None,
                     client_cidrs: vec!["192.0.2.128/25".into()],
                 },
@@ -11287,6 +11318,7 @@ mod runtime {
                     clients: vec![family],
                     max_queries_per_second: None,
                     max_response_bytes_per_second: None,
+                    max_response_bytes_per_network_per_second: None,
                     max_inflight_requests: None,
                     client_cidrs: Vec::new(),
                 }]),
@@ -11313,6 +11345,7 @@ mod runtime {
                     clients: Vec::new(),
                     max_queries_per_second: None,
                     max_response_bytes_per_second: None,
+                    max_response_bytes_per_network_per_second: None,
                     max_inflight_requests: None,
                     client_cidrs: Vec::new(),
                 }]),
@@ -12162,6 +12195,7 @@ mod runtime {
                 clients: vec![Ipv4Addr::new(192, 0, 2, 10).into()],
                 max_queries_per_second: None,
                 max_response_bytes_per_second: None,
+                max_response_bytes_per_network_per_second: None,
                 max_inflight_requests: None,
                 client_cidrs: Vec::new(),
             }];
@@ -12715,6 +12749,7 @@ mod runtime {
                 upstream: None,
                 max_queries_per_second: None,
                 max_response_bytes_per_second: None,
+                max_response_bytes_per_network_per_second: None,
                 max_inflight_requests: None,
                 clients: vec!["192.0.2.10".parse().unwrap()],
                 client_cidrs: Vec::new(),
@@ -13252,6 +13287,7 @@ mod runtime {
                 upstream: None,
                 max_queries_per_second: None,
                 max_response_bytes_per_second: None,
+                max_response_bytes_per_network_per_second: None,
                 max_inflight_requests: Some(1),
                 clients: vec!["192.0.2.10".parse().expect("client address")],
                 client_cidrs: Vec::new(),
@@ -13280,6 +13316,7 @@ mod runtime {
                 upstream: None,
                 max_queries_per_second: None,
                 max_response_bytes_per_second: None,
+                max_response_bytes_per_network_per_second: None,
                 max_inflight_requests: Some(0),
                 clients: vec!["192.0.2.10".parse().expect("client address")],
                 client_cidrs: Vec::new(),
@@ -13318,6 +13355,7 @@ mod runtime {
                 max_queries_per_second: Some(1),
                 clients: vec!["192.0.2.10".parse().expect("client")],
                 max_response_bytes_per_second: None,
+                max_response_bytes_per_network_per_second: None,
                 max_inflight_requests: None,
                 client_cidrs: Vec::new(),
             }];
@@ -13345,6 +13383,7 @@ mod runtime {
                 max_queries_per_second: Some(0),
                 clients: vec!["192.0.2.10".parse().expect("client")],
                 max_response_bytes_per_second: None,
+                max_response_bytes_per_network_per_second: None,
                 max_inflight_requests: None,
                 client_cidrs: Vec::new(),
             }];
@@ -13369,6 +13408,7 @@ mod runtime {
                 upstream: None,
                 max_queries_per_second: None,
                 max_response_bytes_per_second: Some(6),
+                max_response_bytes_per_network_per_second: None,
                 max_inflight_requests: None,
                 clients: vec!["192.0.2.12".parse().expect("client")],
                 client_cidrs: Vec::new(),
@@ -13379,6 +13419,36 @@ mod runtime {
             assert!(policy.allow_client_response_bytes(client, 6));
             assert!(policy.allow_client_response_bytes(
                 Some("192.0.2.13".parse().expect("ordinary client")),
+                100
+            ));
+        }
+
+        #[test]
+        fn client_identity_can_override_network_response_budget() {
+            let mut config = Config::default();
+            config.admission.max_response_bytes_per_network_per_second = 100;
+            config.policy.client_identities = vec![ClientIdentityConfig {
+                name: "low-bandwidth-network".into(),
+                enabled: true,
+                query_log_enabled: true,
+                statistics_enabled: true,
+                cache_enabled: true,
+                filtering_enabled: true,
+                default_action: None,
+                upstream: None,
+                max_queries_per_second: None,
+                max_response_bytes_per_second: None,
+                max_response_bytes_per_network_per_second: Some(6),
+                max_inflight_requests: None,
+                clients: vec!["192.0.2.20".parse().expect("client")],
+                client_cidrs: Vec::new(),
+            }];
+            let policy = Policy::new(config).expect("valid identity network budget");
+            let client = Some("192.0.2.20".parse().expect("client"));
+            assert!(!policy.allow_network_response_bytes(client, 7));
+            assert!(policy.allow_network_response_bytes(client, 6));
+            assert!(policy.allow_network_response_bytes(
+                Some("192.0.3.21".parse().expect("ordinary client")),
                 100
             ));
         }
@@ -14271,6 +14341,7 @@ mod runtime {
                 clients: vec!["192.0.2.10".parse().expect("client address")],
                 max_queries_per_second: None,
                 max_response_bytes_per_second: None,
+                max_response_bytes_per_network_per_second: None,
                 max_inflight_requests: None,
                 client_cidrs: Vec::new(),
             }];
