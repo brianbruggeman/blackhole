@@ -2334,9 +2334,9 @@ mod runtime {
         config: &CountryPolicyConfig,
     ) -> Result<Option<CountryPolicy>, policy::PolicyError> {
         match load_country_policy_from_source(config) {
-            Ok(policy) => {
-                if policy.is_some() {
-                    persist_country_last_good(config)?;
+            Ok((policy, contents)) => {
+                if let Some(contents) = contents.as_deref() {
+                    persist_country_last_good(config, contents)?;
                 }
                 Ok(policy)
             }
@@ -2351,22 +2351,22 @@ mod runtime {
                 fallback.map_path = Some(last_good_path.to_owned());
                 fallback.last_good_path = None;
                 fallback.max_age_secs = None;
-                load_country_policy_from_source(&fallback).map_err(|fallback_error| {
-                    policy::PolicyError::InvalidCountryMap {
+                load_country_policy_from_source(&fallback)
+                    .map(|(policy, _)| policy)
+                    .map_err(|fallback_error| policy::PolicyError::InvalidCountryMap {
                         path: last_good_path.into(),
                         reason: format!(
                             "primary source failed ({primary_error}); last-good snapshot failed ({fallback_error})"
                         ),
-                    }
-                })
+                    })
             }
         }
     }
 
-    fn persist_country_last_good(config: &CountryPolicyConfig) -> Result<(), policy::PolicyError> {
-        let Some(source) = config.map_path.as_deref() else {
-            return Ok(());
-        };
+    fn persist_country_last_good(
+        config: &CountryPolicyConfig,
+        contents: &[u8],
+    ) -> Result<(), policy::PolicyError> {
         let Some(destination) = config.last_good_path.as_deref() else {
             return Ok(());
         };
@@ -2376,26 +2376,15 @@ mod runtime {
                 reason: format!("last_good_path exceeds {MAX_COUNTRY_LAST_GOOD_PATH_BYTES} bytes"),
             });
         }
-        if http_source_parts(source).is_some() || http_source_parts(destination).is_some() {
+        if http_source_parts(destination).is_some() {
             return Err(policy::PolicyError::InvalidCountryMap {
                 path: destination.into(),
-                reason: "last_good_path requires local map paths".into(),
+                reason: "last_good_path must be a local path".into(),
             });
         }
-        if source == destination {
-            return Err(policy::PolicyError::InvalidCountryMap {
-                path: destination.into(),
-                reason: "last_good_path must differ from map_path".into(),
-            });
-        }
-        let contents =
-            std::fs::read(source).map_err(|error| policy::PolicyError::InvalidCountryMap {
-                path: source.into(),
-                reason: format!("cannot refresh last-good snapshot: {error}"),
-            })?;
         if contents.len() as u64 > MAX_COUNTRY_MAP_BYTES {
             return Err(policy::PolicyError::InvalidCountryMap {
-                path: source.into(),
+                path: destination.into(),
                 reason: format!("file exceeds {MAX_COUNTRY_MAP_BYTES} bytes"),
             });
         }
@@ -2432,7 +2421,7 @@ mod runtime {
 
     fn load_country_policy_from_source(
         config: &CountryPolicyConfig,
-    ) -> Result<Option<CountryPolicy>, policy::PolicyError> {
+    ) -> Result<(Option<CountryPolicy>, Option<Vec<u8>>), policy::PolicyError> {
         if config.map_path.is_none()
             && config.deny.is_empty()
             && config.observe.is_empty()
@@ -2441,7 +2430,7 @@ mod runtime {
             && config.deny_asns.is_empty()
             && config.observe_asns.is_empty()
         {
-            return Ok(None);
+            return Ok((None, None));
         }
         let path =
             config
@@ -2705,17 +2694,20 @@ mod runtime {
                 reason: "a mapped entry cannot be both denied and observed".into(),
             });
         }
-        Ok(Some(CountryPolicy {
-            entries,
-            source_fingerprint: source_fingerprint(contents.as_bytes()),
-            source_sha256: contents_sha256,
-            deny,
-            observe,
-            deny_regions,
-            observe_regions,
-            deny_asns,
-            observe_asns,
-        }))
+        Ok((
+            Some(CountryPolicy {
+                entries,
+                source_fingerprint: source_fingerprint(contents.as_bytes()),
+                source_sha256: contents_sha256,
+                deny,
+                observe,
+                deny_regions,
+                observe_regions,
+                deny_asns,
+                observe_asns,
+            }),
+            Some(contents.into_bytes()),
+        ))
     }
 
     fn country_map_is_fresh(
@@ -9490,8 +9482,15 @@ mod runtime {
                 stream.write_all(body).expect("write country map body");
             });
             let source = format!("http://{address}/maps/country.txt");
+            let last_good = std::env::temp_dir().join(format!(
+                "blackhole-country-http-last-good-{}-{}.txt",
+                std::process::id(),
+                1
+            ));
+            let _ = std::fs::remove_file(&last_good);
             let config = CountryPolicyConfig {
                 map_path: Some(source),
+                last_good_path: Some(last_good.to_string_lossy().into_owned()),
                 deny: vec!["US".into()],
                 ..Default::default()
             };
@@ -9500,14 +9499,32 @@ mod runtime {
                 .expect("country policy");
             assert!(loaded.denied("192.0.2.1".parse().expect("fixture address")));
             thread.join().expect("join country map fixture");
+            assert!(
+                std::fs::read_to_string(&last_good)
+                    .expect("HTTP last-good map")
+                    .contains("US 192.0.2.0/24")
+            );
+
+            let mut unavailable = config.clone();
+            unavailable.map_path = Some("http://127.0.0.1:9/unavailable.txt".into());
+            let recovered = load_country_policy(&unavailable)
+                .expect("recover hosted country map")
+                .expect("recovered country policy");
+            assert!(recovered.denied("192.0.2.1".parse().expect("fixture address")));
 
             let mut age_bound = config;
             age_bound.max_age_secs = Some(60);
+            let recovered = load_country_policy(&age_bound)
+                .expect("recover when hosted age semantics reject refresh")
+                .expect("recovered country policy");
+            assert!(recovered.denied("192.0.2.1".parse().expect("fixture address")));
+            age_bound.last_good_path = None;
             assert!(matches!(
                 load_country_policy(&age_bound),
                 Err(policy::PolicyError::InvalidCountryMap { reason, .. })
                     if reason.contains("only supported for local map files")
             ));
+            std::fs::remove_file(last_good).expect("remove HTTP last-good map");
         }
 
         #[test]
