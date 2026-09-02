@@ -30,13 +30,13 @@ below are future capabilities, grouped by the dependency layer they extend.
 
 ## Incumbent parity and extensions
 
-- Add the remaining Pi-hole/AdGuard Home policy features that fit Blackhole's
-  explicit-action model, including additional client-specific service settings
-  beyond the current identity, filtering, query-log, statistics, cache, fallback,
-  named-upstream, identity-scoped profile, identity-scoped allowlist,
-  global rate-limit-whitelist, per-identity query-rate,
-  per-identity client and network response budgets, and per-identity
-  concurrency controls.
+- Close the remaining Pi-hole/AdGuard Home parity gaps that fit Blackhole's
+  explicit-action model: client-specific ordered upstream failover, and any
+  additional client/service controls confirmed by the incumbent comparison.
+  The current baseline already covers identity filtering, query logs,
+  statistics, cache, fallback action, named upstream, scoped profiles and
+  allowlists, global rate-limit-whitelist, per-identity query rate, response
+  budgets, and concurrency controls.
 - Add a separately isolated honeypot terminal with explicit retention and
   access controls.
 
