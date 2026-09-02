@@ -7,7 +7,9 @@ on:
 
 concurrency:
   group: verify-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Main pushes are the evidence trail and must be allowed to finish; only
+  # superseded pull-request runs are safe to cancel.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   linux:
