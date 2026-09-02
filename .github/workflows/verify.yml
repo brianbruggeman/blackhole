@@ -185,14 +185,6 @@ jobs:
       - name: build capture smoke
         if: always()
         run: cargo build --locked --example capture_smoke
-      - name: run privileged capture smoke
-        if: always()
-        run: |
-          sudo -n pfctl -E
-          sudo -n target/debug/examples/capture_smoke
-      - name: build launchd release binary
-        if: always()
-        run: cargo build --locked --release --bin blackhole
       - name: record macOS privileged smoke capabilities
         if: always()
         run: |
@@ -202,6 +194,14 @@ jobs:
             launchctl version
             sudo -n launchctl print system/com.brianbruggeman.blackhole || true
           } 2>&1 | tee launchd-capabilities.log
+      - name: run privileged capture smoke
+        if: always()
+        run: |
+          sudo -n pfctl -E
+          sudo -n target/debug/examples/capture_smoke
+      - name: build launchd release binary
+        if: always()
+        run: cargo build --locked --release --bin blackhole
       - name: run launchd host install and upgrade smoke
         id: launchd-smoke
         if: always()
