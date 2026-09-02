@@ -171,6 +171,17 @@ fn shipped_binary_serves_udp_datagrams_and_tcp_frames() {
     assert_eq!(udp_message.header.id, 0x1001);
     assert_eq!(udp_message.answers().count(), 1);
 
+    let cached_query = query(0x1008, "udp.example.");
+    udp.send_to(&cached_query, listener_addr)
+        .expect("send cached UDP query");
+    let (cached_length, _) = udp
+        .recv_from(&mut udp_response)
+        .expect("receive cached UDP response");
+    let cached_message =
+        parse_message(&udp_response[..cached_length]).expect("parse cached UDP response");
+    assert_eq!(cached_message.header.id, 0x1008);
+    assert_eq!(cached_message.answers().count(), 1);
+
     let tcp_reject_query = query(0x1005, "blocked.example.");
     tcp.write_all(
         &(u16::try_from(tcp_reject_query.len())
