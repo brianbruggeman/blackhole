@@ -616,7 +616,12 @@ impl SendPipe for AdminHandler {
                     bundle.filtering_enabled,
                     bundle.disabled_blocklists.as_deref(),
                 ) {
-                    Ok(_) => Ok(Response::ok(r#"{"status":"reloaded"}"#)),
+                    Ok(crate::snapshot::ReloadState::Published) => {
+                        Ok(Response::ok(r#"{"status":"reloaded"}"#))
+                    }
+                    Ok(crate::snapshot::ReloadState::Unchanged) => {
+                        Ok(Response::ok(r#"{"status":"unchanged"}"#))
+                    }
                     Err(error) => Ok(Response::new(422).with_body(format!(
                         r#"{{"status":"error","message":{}}}"#,
                         serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
@@ -657,7 +662,12 @@ impl SendPipe for AdminHandler {
                     config.disabled_blocklists.as_deref(),
                     Some(admission),
                 ) {
-                    Ok(_) => Ok(Response::ok(r#"{"status":"reloaded"}"#)),
+                    Ok(crate::snapshot::ReloadState::Published) => {
+                        Ok(Response::ok(r#"{"status":"reloaded"}"#))
+                    }
+                    Ok(crate::snapshot::ReloadState::Unchanged) => {
+                        Ok(Response::ok(r#"{"status":"unchanged"}"#))
+                    }
                     Err(error) => Ok(Response::new(422).with_body(format!(
                         r#"{{"status":"error","message":{}}}"#,
                         serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
@@ -2488,6 +2498,17 @@ mod tests {
             .expect("policy bundle request");
         let response = block_on(handler.call(bundle)).expect("bundle response");
         assert_eq!(response.status, 200);
+        let unchanged_bundle = Request::builder()
+            .method("POST")
+            .path("/reload/policy-bundle")
+            .payload(
+                r#"{"rules":[{"id":7,"domain":"blocked.example","action":"nxdomain"}],"regex_rules":[{"id":8,"pattern":"^ads\\.","action":"drop"}],"profiles":[{"id":9,"name":"family","domains":["family.example"],"action":"reject"}],"client_groups":[],"client_identities":[{"name":"family-router","clients":["192.0.2.10"]}],"rewrites":[{"name":"router.example","ipv4":"192.0.2.1","ipv6":null,"ttl":30}]}"#,
+            )
+            .build()
+            .expect("unchanged bundle request");
+        let response = block_on(handler.call(unchanged_bundle)).expect("unchanged bundle response");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.payload.as_ref(), br#"{"status":"unchanged"}"#);
         let bundle = block_on(handler.call(request("GET", "/policy-bundle")))
             .expect("published policy bundle response");
         assert_eq!(bundle.status, 200);

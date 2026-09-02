@@ -123,7 +123,7 @@ mod runtime {
     use std::time::{Duration, Instant};
 
     use crate::policy;
-    use crate::policy::QueryContext;
+    use crate::policy::{QueryContext, ReferencePolicy};
     use crate::query::QueryView;
     use crate::snapshot::{PolicyStore, ReloadState};
     use crate::{Action, RuleConfig};
@@ -4307,6 +4307,47 @@ mod runtime {
                 .map(|rule| rule.id)
                 .collect::<BTreeSet<_>>();
             let compiled_regex = compile_regex_rules(regex_configs, rule_ids)?;
+            let next_reference = ReferencePolicy::new(&published)?;
+            let unchanged = self.reference.read(|current| current == &next_reference)
+                && self.base_rules.read(|current| current == &base)
+                && self.explicit_rules.read(|current| current == rules)
+                && self.regex_rule_configs() == regex_configs
+                && self.profiles.read(|current| current == profiles)
+                && self.client_groups.read(|current| current == client_groups)
+                && self
+                    .client_identities
+                    .read(|current| current == &client_identities)
+                && self
+                    .rewrite_configs
+                    .read(|current| current == rewrite_configs)
+                && self
+                    .country_policy_config
+                    .read(|current| current == country_config)
+                && self
+                    .country_policy
+                    .read(|current| current == &country_policy)
+                && self.blocklist_rules.read(|current| current == &replacement)
+                && self
+                    .blocklist_paths
+                    .read(|current| current == &configured_paths)
+                && self
+                    .disabled_blocklist_paths
+                    .read(|current| current == &configured_disabled.iter().cloned().collect())
+                && admission.is_none_or(|next| self.admission.read(|current| current == next))
+                && legacy_domains.is_none_or(|_| {
+                    normalized_legacy_domains
+                        .as_ref()
+                        .is_some_and(|next| self.legacy_domains.read(|current| current == next))
+                })
+                && legacy_mode.is_none_or(|next| self.legacy_mode.read(|current| current == &next))
+                && default_action
+                    .is_none_or(|next| self.default_action.read(|current| current == &next))
+                && filtering_enabled
+                    .is_none_or(|next| self.filtering_enabled.read(|current| current == &next));
+            if unchanged {
+                self.observe_reload_latency("policy_bundle_unchanged", started);
+                return Ok(ReloadState::Unchanged);
+            }
             self.reference.reload(&published)?;
             self.base_rules_control.replace(base);
             self.explicit_rules_control.replace(rules.to_vec());
