@@ -221,8 +221,10 @@ HTTP(S) `COUNTRY CIDR [REGION] [ASN]` map;
 last-good map snapshot for recovery from a failed source refresh.
 `country_policy.reload_interval_secs` enables bounded background refresh, where
 unchanged content is not republished and failed refreshes retain the last good
-map. Local files may use `max_age_secs`; hosted maps reject that option until a
-trusted remote freshness contract exists. Region and ASN selectors are explicit
+map. Local files may use `max_age_secs`; that bound also applies when a
+last-good snapshot is used after a failed refresh, so stale recovery fails
+closed. Hosted maps reject that option until a trusted remote freshness
+contract exists. Region and ASN selectors are explicit
 operator policy over those map labels; no GeoIP database or inferred identity
 is provided. Set `country_policy.unmapped_action` to `pass` (the default),
 `observe`, or `deny` to make the treatment of clients absent from the map
