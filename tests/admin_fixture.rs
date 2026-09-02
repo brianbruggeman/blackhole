@@ -79,7 +79,9 @@ async fn admin_http_listener_enforces_bearer_auth() {
         priority: 10,
         client_cidrs: Vec::new(),
         qtype: None,
+        qtypes: Vec::new(),
         qclass: None,
+        qclasses: Vec::new(),
     }];
     let policy = Arc::new(Policy::new(config).expect("default policy"));
     let handle = authenticated_handle(Arc::clone(&policy), "integration-secret".into())

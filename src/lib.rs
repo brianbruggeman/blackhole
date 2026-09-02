@@ -1359,7 +1359,11 @@ mod runtime {
         #[serde(default)]
         pub qtype: Option<u16>,
         #[serde(default)]
+        pub qtypes: Vec<u16>,
+        #[serde(default)]
         pub qclass: Option<u16>,
+        #[serde(default)]
+        pub qclasses: Vec<u16>,
     }
 
     fn default_profile_enabled() -> bool {
@@ -2479,9 +2483,9 @@ mod runtime {
                         action: profile.action,
                         priority: profile.priority,
                         qtype: profile.qtype,
-                        qtypes: Vec::new(),
+                        qtypes: profile.qtypes.clone(),
                         qclass: profile.qclass,
-                        qclasses: Vec::new(),
+                        qclasses: profile.qclasses.clone(),
                         client: scope.client,
                         client_cidr: None,
                         client_cidrs: scope.client_cidrs.clone(),
@@ -6382,6 +6386,8 @@ mod runtime {
                     "client_cidrs": profile.client_cidrs,
                     "qtype": profile.qtype,
                     "qclass": profile.qclass,
+                    "qtypes": profile.qtypes,
+                    "qclasses": profile.qclasses,
                 })).collect::<Vec<_>>(),
                 "client_groups": client_groups.iter().map(|group| serde_json::json!({
                     "name": group.name,
@@ -6518,6 +6524,8 @@ mod runtime {
                         "priority": profile.priority,
                         "qtype": profile.qtype,
                         "qclass": profile.qclass,
+                        "qtypes": profile.qtypes,
+                        "qclasses": profile.qclasses,
                         "expanded_rule_count": profile.domains.len().saturating_mul(scope_count),
                     })
                 })
@@ -7928,7 +7936,9 @@ mod runtime {
                 priority: 0,
                 client_cidrs: Vec::new(),
                 qtype: None,
+                qtypes: Vec::new(),
                 qclass: None,
+                qclasses: Vec::new(),
             };
             for _ in 0..64 {
                 assert_eq!(
@@ -8408,7 +8418,9 @@ mod runtime {
                 priority: 3,
                 client_cidrs: Vec::new(),
                 qtype: None,
+                qtypes: Vec::new(),
                 qclass: None,
+                qclasses: Vec::new(),
             }];
             let policy = Policy::new(config).expect("valid identity profile");
             let query = proxima_dns::DnsQuery {
@@ -8452,7 +8464,9 @@ mod runtime {
                 priority: 0,
                 client_cidrs: vec!["192.0.2.0/25".into()],
                 qtype: None,
+                qtypes: Vec::new(),
                 qclass: None,
+                qclasses: Vec::new(),
             }];
             let policy = Policy::new(config).expect("valid combined profile");
             let query = proxima_dns::DnsQuery {
@@ -9474,8 +9488,10 @@ mod runtime {
                 client_identity: None,
                 priority: 10,
                 client_cidrs: vec!["192.0.2.0/24".into()],
-                qtype: Some(1),
-                qclass: Some(1),
+                qtype: None,
+                qtypes: vec![1, 28],
+                qclass: None,
+                qclasses: vec![1],
             }];
             let policy = Policy::new(config).expect("valid service profile");
             let query = proxima_dns::DnsQuery {
@@ -9500,6 +9516,14 @@ mod runtime {
             assert!(policy.decision(&query, None).is_none());
             let mut wrong_type = query.clone();
             wrong_type.qtype = 28;
+            assert_eq!(
+                policy
+                    .decision(&wrong_type, Some("192.0.2.53".parse().unwrap()))
+                    .expect("second profile qtype")
+                    .action,
+                Action::Nxdomain
+            );
+            wrong_type.qtype = 15;
             assert!(
                 policy
                     .decision(&wrong_type, Some("192.0.2.53".parse().unwrap()))
@@ -9528,7 +9552,9 @@ mod runtime {
                 priority: 10,
                 client_cidrs: Vec::new(),
                 qtype: None,
+                qtypes: Vec::new(),
                 qclass: None,
+                qclasses: Vec::new(),
             }];
             let policy = Policy::new(config).expect("valid disabled profile");
             let answer = policy
@@ -9575,7 +9601,9 @@ mod runtime {
                 priority: 10,
                 client_cidrs: Vec::new(),
                 qtype: None,
+                qtypes: Vec::new(),
                 qclass: None,
+                qclasses: Vec::new(),
             }];
             let policy = Policy::new(config).expect("valid client groups");
             let query = proxima_dns::DnsQuery {
@@ -9621,7 +9649,9 @@ mod runtime {
                 priority: 10,
                 client_cidrs: Vec::new(),
                 qtype: None,
+                qtypes: Vec::new(),
                 qclass: None,
+                qclasses: Vec::new(),
             }];
             let policy = Policy::new(config).expect("valid disabled client group");
             let query = proxima_dns::DnsQuery {
@@ -9664,7 +9694,9 @@ mod runtime {
                 priority: 0,
                 client_cidrs: Vec::new(),
                 qtype: None,
+                qtypes: Vec::new(),
                 qclass: None,
+                qclasses: Vec::new(),
             }];
             let policy = Policy::new(config).expect("valid exact client group");
             let query = proxima_dns::DnsQuery {
@@ -9709,7 +9741,9 @@ mod runtime {
                 priority: 0,
                 client_cidrs: Vec::new(),
                 qtype: None,
+                qtypes: Vec::new(),
                 qclass: None,
+                qclasses: Vec::new(),
             }];
             assert!(matches!(
                 Policy::new(unknown),
@@ -9734,7 +9768,9 @@ mod runtime {
                 priority: 0,
                 client_cidrs: vec!["198.51.100.0/24".into()],
                 qtype: None,
+                qtypes: Vec::new(),
                 qclass: None,
+                qclasses: Vec::new(),
             }];
             assert!(matches!(
                 Policy::new(ambiguous),
@@ -9772,7 +9808,9 @@ mod runtime {
                     priority: 0,
                     client_cidrs: Vec::new(),
                     qtype: None,
+                    qtypes: Vec::new(),
                     qclass: None,
+                    qclasses: Vec::new(),
                 },
                 ServiceProfileConfig {
                     id: 2,
@@ -9785,7 +9823,9 @@ mod runtime {
                     priority: 0,
                     client_cidrs: Vec::new(),
                     qtype: None,
+                    qtypes: Vec::new(),
                     qclass: None,
+                    qclasses: Vec::new(),
                 },
             ];
             assert!(matches!(
@@ -9810,7 +9850,9 @@ mod runtime {
                     priority: 0,
                     client_cidrs: Vec::new(),
                     qtype: None,
+                    qtypes: Vec::new(),
                     qclass: None,
+                    qclasses: Vec::new(),
                 },
                 ServiceProfileConfig {
                     id: 200_000,
@@ -9823,7 +9865,9 @@ mod runtime {
                     priority: 0,
                     client_cidrs: Vec::new(),
                     qtype: None,
+                    qtypes: Vec::new(),
                     qclass: None,
+                    qclasses: Vec::new(),
                 },
             ];
             assert!(matches!(

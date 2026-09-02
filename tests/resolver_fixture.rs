@@ -780,7 +780,9 @@ async fn listener_enforces_service_profile_on_the_real_udp_path() {
         priority: 10,
         client_cidrs: Vec::new(),
         qtype: None,
+        qtypes: Vec::new(),
         qclass: None,
+        qclasses: Vec::new(),
     }];
     let policy = Arc::new(Policy::new(config).expect("valid profile policy"));
     let listener_addr = test_listener_addr();

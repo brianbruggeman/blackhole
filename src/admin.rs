@@ -2246,7 +2246,9 @@ mod tests {
             priority: 10,
             client_cidrs: vec![],
             qtype: None,
+            qtypes: Vec::new(),
             qclass: None,
+            qclasses: Vec::new(),
         }];
         config.policy.client_groups = vec![crate::ClientGroupConfig {
             name: "home".into(),
@@ -2359,7 +2361,9 @@ mod tests {
             priority: 0,
             client_cidrs: Vec::new(),
             qtype: None,
+            qtypes: Vec::new(),
             qclass: None,
+            qclasses: Vec::new(),
         }];
         config.policy.client_groups = vec![crate::ClientGroupConfig {
             name: "home".into(),
@@ -2476,7 +2480,9 @@ mod tests {
             priority: 0,
             client_cidrs: Vec::new(),
             qtype: None,
+            qtypes: Vec::new(),
             qclass: None,
+            qclasses: Vec::new(),
         }];
         config.policy.client_identities = vec![crate::ClientIdentityConfig {
             name: "family-router".into(),
