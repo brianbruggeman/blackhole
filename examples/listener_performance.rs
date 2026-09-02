@@ -15,11 +15,59 @@ use proxima::{Listener, ListenerBuilderEntry, ProximaError, Request, Response, S
 use proxima_net::prime::{PrimeDatagramFactory, PrimeTcpUpstream};
 use proxima_primitives::stream::{DatagramFactory, DatagramSocket, StreamUpstreamExt};
 use proxima_protocols::dns::{encode, parse_message};
+use std::alloc::{GlobalAlloc, Layout, System};
 use std::future::poll_fn;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 const SAMPLES: usize = 1_000;
+
+struct CountingAllocator;
+
+static ALLOCS: AtomicU64 = AtomicU64::new(0);
+static ALLOC_BYTES: AtomicU64 = AtomicU64::new(0);
+
+unsafe impl GlobalAlloc for CountingAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        ALLOCS.fetch_add(1, Ordering::Relaxed);
+        ALLOC_BYTES.fetch_add(layout.size() as u64, Ordering::Relaxed);
+        unsafe { System.alloc(layout) }
+    }
+
+    unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
+        unsafe { System.dealloc(pointer, layout) };
+    }
+
+    unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, size: usize) -> *mut u8 {
+        ALLOCS.fetch_add(1, Ordering::Relaxed);
+        ALLOC_BYTES.fetch_add(size.saturating_sub(layout.size()) as u64, Ordering::Relaxed);
+        unsafe { System.realloc(pointer, layout, size) }
+    }
+}
+
+#[global_allocator]
+static ALLOCATOR: CountingAllocator = CountingAllocator;
+
+#[derive(Clone, Copy)]
+struct AllocationSnapshot {
+    count: u64,
+    bytes: u64,
+}
+
+fn allocation_snapshot() -> AllocationSnapshot {
+    AllocationSnapshot {
+        count: ALLOCS.load(Ordering::Relaxed),
+        bytes: ALLOC_BYTES.load(Ordering::Relaxed),
+    }
+}
+
+fn allocation_delta(before: AllocationSnapshot, after: AllocationSnapshot) -> AllocationSnapshot {
+    AllocationSnapshot {
+        count: after.count.saturating_sub(before.count),
+        bytes: after.bytes.saturating_sub(before.bytes),
+    }
+}
 
 struct Passthrough;
 
@@ -104,6 +152,7 @@ async fn main() -> Result<(), ProximaError> {
         exchange(&mut *client, listener_addr, &query, id).await?;
     }
     let clock_ticks = clock_ticks_per_second();
+    let udp_allocations_before = allocation_snapshot();
     let before_cpu = process_cpu_ticks();
     let before = Instant::now();
     let single_request_start = Instant::now();
@@ -125,6 +174,7 @@ async fn main() -> Result<(), ProximaError> {
     let elapsed_ns = before.elapsed().as_nanos();
     let after_cpu = process_cpu_ticks();
     let rss = rss_kib();
+    let udp_allocations = allocation_delta(udp_allocations_before, allocation_snapshot());
 
     samples.sort_unstable();
     let sum: u128 = samples.iter().sum();
@@ -161,6 +211,10 @@ async fn main() -> Result<(), ProximaError> {
         rss,
         load_average()
     );
+    println!(
+        "listener_udp_allocations=MEASURED count={} bytes={} n={SAMPLES}",
+        udp_allocations.count, udp_allocations.bytes
+    );
     assert_eq!(errors, 0, "real-client listener errors must be zero");
 
     let tcp_upstream = PrimeTcpUpstream::new(listener_addr);
@@ -168,6 +222,7 @@ async fn main() -> Result<(), ProximaError> {
     let mut tcp_samples = Vec::with_capacity(SAMPLES);
     let mut tcp_errors = 0_usize;
     let mut tcp_single_request_ns = 0;
+    let tcp_allocations_before = allocation_snapshot();
     let tcp_before = Instant::now();
     for id in 0..SAMPLES as u16 {
         let start = Instant::now();
@@ -181,6 +236,7 @@ async fn main() -> Result<(), ProximaError> {
         tcp_samples.push(elapsed);
     }
     let tcp_elapsed_ns = tcp_before.elapsed().as_nanos();
+    let tcp_allocations = allocation_delta(tcp_allocations_before, allocation_snapshot());
     tcp_samples.sort_unstable();
     let tcp_sum: u128 = tcp_samples.iter().sum();
     let tcp_mean = tcp_sum as f64 / tcp_samples.len() as f64;
@@ -207,6 +263,10 @@ async fn main() -> Result<(), ProximaError> {
     );
     println!(
         "listener_tcp_throughput_ops_s=DERIVED {tcp_throughput:.2} errors=MEASURED {tcp_errors}"
+    );
+    println!(
+        "listener_tcp_allocations=MEASURED count={} bytes={} n={SAMPLES}",
+        tcp_allocations.count, tcp_allocations.bytes
     );
     assert_eq!(
         tcp_errors, 0,
