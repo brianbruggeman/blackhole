@@ -754,6 +754,45 @@ mod tests {
     }
 
     #[test]
+    fn startup_restores_global_incident_without_a_client_key() {
+        let directory = temporary_path("restore-global");
+        std::fs::create_dir(&directory).expect("temporary directory");
+        let path = directory.join("incidents.jsonl");
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_millis() as u64;
+        let event = proxima::RecordingEvent {
+            id: proxima::InteractionId::new(),
+            ts_ms: now_ms,
+            parent: None,
+            event: proxima::ProtocolEvent::Custom {
+                kind: "blackhole.ddos_incident".into(),
+                payload: serde_json::json!({
+                    "scope":"global",
+                    "cause":"global_rate_overflow",
+                    "response":"temporary_global_blacklist",
+                    "expires_at_ms":now_ms + 60_000,
+                }),
+            },
+        };
+        let mut line =
+            proxima::recording::jsonl::encode_jsonl_line(event).expect("encode global incident");
+        line.push(b'\n');
+        std::fs::write(&path, line).expect("write global incident recording");
+        let mut config = Config::default();
+        config.admission.ddos.max_global_abuse_violations = 2;
+        let policy = Policy::new(config).expect("valid global abuse policy");
+        let restored = futures::executor::block_on(restore_persisted_abuse(&policy, &path, 4_096))
+            .expect("restore global incident recording");
+        assert_eq!(restored, 1);
+        let status: serde_json::Value =
+            serde_json::from_str(&policy.admin_admission_status()).expect("admission status");
+        assert_eq!(status["global_breaker_open"], true);
+        std::fs::remove_dir_all(directory).expect("remove temporary directory");
+    }
+
+    #[test]
     fn startup_replays_incident_revocation_after_an_incident() {
         let directory = temporary_path("restore-revoke");
         std::fs::create_dir(&directory).expect("temporary directory");

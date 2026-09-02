@@ -66,7 +66,10 @@ wire decoding, response-ID mismatch, I/O, and configuration failures; an
 unknown future Proxima error remains `upstream_error`.
 
 When `admission.ddos.persist_incidents` is enabled, the same Proxima JSONL
-destination also records authenticated operator denylist mutations. The
+destination records client, network, and global breaker openings without
+retaining client keys for global events, and startup restores active incidents
+until their bounded expiry. It also records authenticated operator denylist
+mutations. The
 bounded `add` and `remove` events replay in file order during startup; an
 unavailable recording sink rejects the live mutation and leaves the prior
 admission snapshot active.
