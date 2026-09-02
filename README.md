@@ -250,6 +250,8 @@ It also provides bounded `GET /profiles`, `GET /client-groups`, and
 query-decision inspection at `GET /logs` and deletion at `POST /logs/clear` when
 enabled. `POST /logs/clear-durable` deletes the configured durable recording and
 bounded rotations only after regular-file preflight and post-delete verification.
+`POST /reload/privacy/redaction` atomically selects `"metadata"` or
+`"action_only"` for future decision events without restarting the resolver.
 `POST /reload/profiles` atomically replaces the profile and client-group
 tables from a bounded JSON object with `profiles` and `client_groups` arrays.
 `POST /reload/profiles/upsert` replaces or adds profiles by stable ID while

@@ -3876,6 +3876,24 @@ mod runtime {
             ReloadState::Published
         }
 
+        /// Atomically change the fields retained in decision events. The
+        /// setting is published through the same lock-free live cell used by
+        /// request readers; recording destinations and transports stay intact.
+        pub fn set_query_recording_redaction(
+            &self,
+            redaction: QueryRecordingRedaction,
+        ) -> ReloadState {
+            let started = Instant::now();
+            if *self.query_recording_redaction.snapshot() == redaction {
+                self.observe_reload_latency("recording_redaction_unchanged", started);
+                return ReloadState::Unchanged;
+            }
+            self.query_recording_redaction_control.replace(redaction);
+            self.policy_generation.fetch_add(1, Ordering::Relaxed);
+            self.observe_reload_latency("recording_redaction", started);
+            ReloadState::Published
+        }
+
         /// Reload the policy-bearing portions of a configuration file. The
         /// listener, transport, storage, capture, and process-capacity
         /// settings remain startup-only and must not change underneath the

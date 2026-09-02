@@ -100,7 +100,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <h2>Policy bundle</h2><textarea id="policy-bundle" rows="12" cols="80">loading…</textarea>
 <h2>Blocklists</h2><textarea id="blocklist-sources"></textarea><button id="replace-blocklists">Replace</button><button id="add-blocklists">Add</button><button id="remove-blocklists">Remove</button><button id="reload-blocklists">Reload</button><div id="blocklist-controls"></div><pre id="blocklists"></pre>
 <h2>Country</h2><textarea id="country-editor" rows="8" cols="80"></textarea><button id="replace-country">Replace country policy</button><pre id="country-status"></pre>
-<h2>Privacy</h2><pre id="privacy-status"></pre>
+<h2>Privacy</h2><pre id="privacy-status"></pre><select id="r"><option value="metadata">metadata</option><option value="action_only">action only</option></select><button id="s">Apply</button>
 <h2>Rules</h2><textarea id="rule-editor" rows="8" cols="80"></textarea><button id="upsert-rules">Upsert domain rules</button><textarea id="regex-editor" rows="8" cols="80"></textarea><button id="upsert-regex">Upsert regex rules</button><pre id="rules"></pre>
 <h2>Profiles</h2><textarea id="profile-editor" rows="8" cols="80"></textarea><button id="upsert-profiles">Upsert profiles</button><div id="profile-controls"></div><pre id="profiles"></pre>
 <h2>Groups</h2><textarea id="group-editor" rows="8" cols="80"></textarea><button id="upsert-groups">Upsert groups</button><div id="group-controls"></div><pre id="groups"></pre>
@@ -175,6 +175,7 @@ const replaceRewrites = () => {
 const refresh = () => Promise.all([load('/status','#status'), load('/stats','#stats'), load('/admission/status','#admission-status'), load('/abuse/status','#abuse-status'), load('/abuse/incidents','#abuse-incidents'), load('/abuse/denylist','#denylist-config'), load('/policy-bundle','#policy-bundle'), load('/blocklists','#blocklists'), load('/country/status','#country-status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/client-identities','#identities'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
 document.querySelector('#clear-logs').onclick = () => operate('/logs/clear', {method:'POST'}).then(refresh);
 document.querySelector('#clear-durable-logs').onclick = () => operate('/logs/clear-durable', {method:'POST'}).then(refresh);
+document.querySelector('#s').onclick = () => send('/reload/privacy/redaction', document.querySelector('#r').value);
 document.querySelector('#clear-stats').onclick = () => operate('/stats/clear', {method:'POST'}).then(refresh);
 document.querySelector('#clear-cache').onclick = () => operate('/cache/clear', {method:'POST'}).then(refresh);
 document.querySelector('#clear-abuse').onclick = () => operate('/abuse/clear', {method:'POST'}).then(refresh);
@@ -820,6 +821,29 @@ impl SendPipe for AdminHandler {
                     serde_json::to_string(&error).unwrap_or_else(|_| "null".into())
                 ))),
             },
+            ("POST", "/reload/privacy/redaction") => {
+                if request.payload.len() > 64 {
+                    return Ok(Response::new(413));
+                }
+                let redaction = match serde_json::from_slice::<crate::QueryRecordingRedaction>(
+                    &request.payload,
+                ) {
+                    Ok(redaction) => redaction,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                Ok(Response::ok(
+                    match self.policy.set_query_recording_redaction(redaction) {
+                        crate::snapshot::ReloadState::Published => "{\"status\":\"reloaded\"}",
+                        crate::snapshot::ReloadState::Unchanged => "{\"status\":\"unchanged\"}",
+                    },
+                ))
+            }
             ("POST", "/reload/blocklists") => match self.policy.reload_blocklists_if_changed() {
                 Ok(crate::snapshot::ReloadState::Published) => {
                     Ok(Response::ok("{\"status\":\"reloaded\"}"))
@@ -1177,6 +1201,7 @@ impl SendPipe for AdminHandler {
                 | "/cache/clear"
                 | "/logs/clear"
                 | "/logs/clear-durable"
+                | "/reload/privacy/redaction"
                 | "/reload/blocklists"
                 | "/reload/blocklists/replace"
                 | "/reload/blocklists/add"
@@ -3164,6 +3189,40 @@ mod tests {
         assert_eq!(reload.status, 200);
         assert_eq!(
             reload.payload,
+            Bytes::from_static(b"{\"status\":\"unchanged\"}")
+        );
+    }
+
+    #[test]
+    fn recording_redaction_route_publishes_and_reports_unchanged() {
+        let policy = Arc::new(Policy::new(crate::Config::default()).expect("default policy"));
+        let handler = AdminHandler::new(Arc::clone(&policy));
+        let change = Request::builder()
+            .method("POST")
+            .path("/reload/privacy/redaction")
+            .payload(r#""action_only""#)
+            .build()
+            .expect("redaction request");
+        assert_eq!(
+            block_on(handler.call(change))
+                .expect("change response")
+                .status,
+            200
+        );
+        let status: serde_json::Value =
+            serde_json::from_str(&policy.admin_privacy_status()).expect("privacy status");
+        assert_eq!(status["query_recording_redaction"], "action_only");
+
+        let unchanged = Request::builder()
+            .method("POST")
+            .path("/reload/privacy/redaction")
+            .payload(r#""action_only""#)
+            .build()
+            .expect("unchanged redaction request");
+        assert_eq!(
+            block_on(handler.call(unchanged))
+                .expect("unchanged response")
+                .payload,
             Bytes::from_static(b"{\"status\":\"unchanged\"}")
         );
     }
