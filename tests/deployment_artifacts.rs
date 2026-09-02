@@ -144,7 +144,7 @@ fn systemd_state_and_installer_are_scoped() {
         "install -d -o \"$blackhole_uid\" -g \"$blackhole_gid\" -m 0750 \"$state_target\"",
         "systemd-tmpfiles --create /etc/tmpfiles.d/blackhole.conf",
         "systemctl daemon-reload",
-        "if [ -z \"$root\" ] && [ \"$init\" = systemd ]",
+        "if [ -n \"$install_root\" ]; then",
         "BLACKHOLE_INSTALL_ROOT",
         "root_path()",
         "install -d -o 0 -g 0 -m 0755 \"$(root_path /usr/local/bin)\"",
