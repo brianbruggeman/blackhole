@@ -226,6 +226,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Country maps may use a bounded, atomically refreshed local last-good
   snapshot. Failed local or hosted refreshes recover the last validated bytes
   without publishing a partial map or retaining query data.
+- Unmapped country clients have explicit `pass`, `observe`, or `deny` handling;
+  `pass` remains the compatibility default and the choice is included in the
+  validated live policy snapshot.
 - Runtime policy configuration mirrors for domain rules, profiles, client
   groups, rewrites, country policy, and blocklist sources use Proxima's
   lock-free `Live` snapshots; the remaining reload coordinator lock is

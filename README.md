@@ -197,8 +197,9 @@ unchanged content is not republished and failed refreshes retain the last good
 map. Local files may use `max_age_secs`; hosted maps reject that option until a
 trusted remote freshness contract exists. Region and ASN selectors are explicit
 operator policy over those map labels; no GeoIP database or inferred identity
-is provided. Classification remains an explicit policy signal, not
-authentication.
+is provided. Set `country_policy.unmapped_action` to `pass` (the default),
+`observe`, or `deny` to make the treatment of clients absent from the map
+explicit. Classification remains an explicit policy signal, not authentication.
 Profiles may name bounded client groups with `groups = ["family", "guest"]`;
 each group supplies exact IPv4/IPv6 client addresses and/or CIDRs, and a
 profile may target multiple groups.
