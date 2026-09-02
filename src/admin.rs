@@ -2346,6 +2346,15 @@ mod tests {
         let bundle: serde_json::Value = serde_json::from_slice(&bundle.payload).expect("bundle");
         assert_eq!(bundle["country_policy"]["deny"], serde_json::json!(["US"]));
         std::fs::remove_file(path).expect("remove country map");
+        let status = block_on(handler.call(request("GET", "/country/status")))
+            .expect("missing country status response");
+        let status: serde_json::Value = serde_json::from_slice(&status.payload).expect("status");
+        assert_eq!(status["source_status"], "missing");
+        assert_eq!(status["freshness_valid"], false);
+        let bundle = block_on(handler.call(request("GET", "/policy-bundle")))
+            .expect("policy bundle after missing source");
+        let bundle: serde_json::Value = serde_json::from_slice(&bundle.payload).expect("bundle");
+        assert_eq!(bundle["country_policy"]["deny"], serde_json::json!(["US"]));
     }
 
     #[test]

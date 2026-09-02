@@ -312,6 +312,11 @@ limits; it does not expose recording paths, names, clients, or payloads. When
 `privacy.query_recording_rotation_enabled = true`, startup rotates an oversized
 Proxima JSONL decision log into a bounded number of numbered generations and
 verifies deletion of the exact oldest generation before opening the active file.
+`GET /country/status` exposes bounded map lifecycle metadata: source kind and
+state, source age for local files, freshness validity under `max_age_secs`,
+entry count, and content fingerprints. It never exposes the configured path,
+map rows, or client addresses; a missing or unreadable local source is reported
+without replacing the last good published snapshot.
 For deterministic offline inspection, run `blackhole --replay recording.jsonl`.
 To remove a durable decision recording, run `blackhole --delete-recording
 recording.jsonl`; this deletes only the exact file and its bounded `.1` through
