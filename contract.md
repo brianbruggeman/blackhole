@@ -21,6 +21,9 @@ any other action takes precedence over the rewrite.
 Named service profiles are configuration shorthand for bounded sets of policy
 rules. Their generated rules participate in the same domain, client, qtype,
 qclass, priority, and action precedence contract as explicit rules.
+Explicit domain and regex rules may use bounded `qtypes` and `qclasses` sets;
+the legacy singular fields are equivalent one-value sets. A singular field
+must be included in its corresponding set when both forms are supplied.
 
 Client groups are named, bounded sets of IPv4/IPv6 CIDRs. A service profile
 may name one or more groups; the compiler expands the profile into one

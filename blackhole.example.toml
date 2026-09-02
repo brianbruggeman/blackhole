@@ -87,6 +87,8 @@ priority = 10
 # Optional DNS filters; each is ranked independently with the client scope.
 # qtype = 1
 # qclass = 1
+# qtypes = [1, 28]
+# qclasses = [1, 3]
 
 # Optional bounded regular-expression rule. Expressions match the normalized
 # DNS name without its trailing root dot; explicit domain rules win first.
@@ -95,6 +97,8 @@ id = 50000
 pattern = "(^|\\.)tracking[0-9]*\\.example$"
 action = "nxdomain"
 priority = 10
+# qtypes = [1, 28]
+# qclasses = [1]
 
 [upstream]
 # IP literal only; no hostname lookup is performed.

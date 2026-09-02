@@ -13,13 +13,13 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - TOML configuration with bounded file size and fail-fast parsing.
 - Legacy domain matching with `ignore`, `nxdomain`, and `honeypot` modes.
 - Rule-table matching with explicit actions, stable rule identity, priority,
-  exact/deep-wildcard specificity, exact-client and CIDR network scopes, qtype,
-  and qclass filters.
+  exact/deep-wildcard specificity, exact-client and CIDR network scopes, and
+  independently ranked singular or bounded qtype/qclass selector sets.
 - Unsupported IDNA/Unicode rule names are rejected explicitly; the resolver
   currently accepts ASCII DNS names only.
 - Bounded regular-expression policy rules with startup compilation limits,
-  qtype/qclass/exact-client/CIDR-client filters, deterministic priority, and
-  explicit domain-rule precedence.
+  singular or bounded qtype/qclass/exact-client/CIDR-client filters,
+  deterministic priority, and explicit domain-rule precedence.
 - Rule-table authority when rules are configured; legacy settings do not
   silently take over.
 - Atomic operator control to temporarily disable all filtering while retaining

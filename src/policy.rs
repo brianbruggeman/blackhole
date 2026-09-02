@@ -9,6 +9,7 @@ pub const MAX_RULES: usize = 100_000;
 pub const MAX_DOMAIN_BYTES: usize = 253;
 pub const MAX_CLIENT_CIDRS: usize = 64;
 pub const MAX_CLIENT_IDENTITY_BYTES: usize = 128;
+pub const MAX_QUERY_SELECTORS: usize = 16;
 
 /// Actions understood by the reference matcher. Rendering belongs to the
 /// transport edge and is deliberately not part of this module.
@@ -33,8 +34,18 @@ pub struct RuleConfig {
     pub action: Action,
     #[serde(default)]
     pub priority: i32,
+    /// Compatibility shorthand for a single qtype selector. When `qtypes`
+    /// is non-empty, both selectors must agree and the set is used.
     pub qtype: Option<u16>,
+    /// Bounded qtype selectors; an empty set preserves the `qtype` shorthand.
+    #[serde(default)]
+    pub qtypes: Vec<u16>,
+    /// Compatibility shorthand for a single qclass selector. When
+    /// `qclasses` is non-empty, both selectors must agree and the set is used.
     pub qclass: Option<u16>,
+    /// Bounded qclass selectors; an empty set preserves the `qclass` shorthand.
+    #[serde(default)]
+    pub qclasses: Vec<u16>,
     pub client: Option<IpAddr>,
     #[serde(default)]
     pub client_cidr: Option<String>,
@@ -68,6 +79,7 @@ pub enum PolicyError {
     InvalidWildcard { id: u32, domain: String },
     InvalidClientCidr { id: u32, value: String },
     InvalidClientIdentity { id: u32, value: String },
+    InvalidQuerySelectors { id: u32, reason: String },
     InvalidClientIdentityMap { name: String, reason: String },
     DuplicateRule { id: u32 },
     TooManyRules { max: usize },
@@ -106,6 +118,9 @@ impl core::fmt::Display for PolicyError {
                     formatter,
                     "rule {id} has an invalid client identity: {value}"
                 )
+            }
+            Self::InvalidQuerySelectors { id, reason } => {
+                write!(formatter, "rule {id} has invalid query selectors: {reason}")
             }
             Self::InvalidClientIdentityMap { name, reason } => {
                 write!(formatter, "invalid client identity {name}: {reason}")
@@ -151,7 +166,9 @@ struct Rule {
     action: Action,
     priority: i32,
     qtype: Option<u16>,
+    qtypes: Vec<u16>,
     qclass: Option<u16>,
+    qclasses: Vec<u16>,
     client: Option<IpAddr>,
     client_identity: Option<String>,
     client_networks: Vec<IpNetwork>,
@@ -226,6 +243,43 @@ pub struct ReferencePolicy {
 pub struct IndexedPolicy {
     rules: Vec<Rule>,
     buckets: BTreeMap<String, Vec<usize>>,
+}
+
+pub(crate) fn effective_query_selectors(
+    id: u32,
+    single: Option<u16>,
+    many: &[u16],
+    kind: &str,
+) -> Result<Vec<u16>, PolicyError> {
+    if many.len() > MAX_QUERY_SELECTORS {
+        return Err(PolicyError::InvalidQuerySelectors {
+            id,
+            reason: format!("{kind} selector count exceeds {MAX_QUERY_SELECTORS}"),
+        });
+    }
+    if many.contains(&0) || single == Some(0) {
+        return Err(PolicyError::InvalidQuerySelectors {
+            id,
+            reason: format!("{kind} selector value must be non-zero"),
+        });
+    }
+    if let Some(single) = single
+        && !many.is_empty()
+        && !many.contains(&single)
+    {
+        return Err(PolicyError::InvalidQuerySelectors {
+            id,
+            reason: format!("{kind} and {kind}s selectors disagree"),
+        });
+    }
+    let mut selectors = if many.is_empty() {
+        single.into_iter().collect()
+    } else {
+        many.to_vec()
+    };
+    selectors.sort_unstable();
+    selectors.dedup();
+    Ok(selectors)
 }
 
 impl ReferencePolicy {
@@ -335,13 +389,19 @@ impl ReferencePolicy {
                     value: config.client_identity.clone().unwrap_or_default(),
                 });
             }
+            let qtypes =
+                effective_query_selectors(config.id, config.qtype, &config.qtypes, "qtype")?;
+            let qclasses =
+                effective_query_selectors(config.id, config.qclass, &config.qclasses, "qclass")?;
             rules.push(Rule {
                 id: config.id,
                 domain,
                 action: config.action,
                 priority: config.priority,
                 qtype: config.qtype,
+                qtypes,
                 qclass: config.qclass,
+                qclasses,
                 client: config.client,
                 client_networks,
                 client_identity,
@@ -431,8 +491,8 @@ impl Rule {
             name == self.domain
         };
         name_matches
-            && self.qtype.is_none_or(|qtype| qtype == query.qtype)
-            && self.qclass.is_none_or(|qclass| qclass == query.qclass)
+            && (self.qtypes.is_empty() || self.qtypes.contains(&query.qtype))
+            && (self.qclasses.is_empty() || self.qclasses.contains(&query.qclass))
             && self
                 .client
                 .is_none_or(|client| Some(client) == query.client)
@@ -456,8 +516,8 @@ impl Rule {
             self.priority,
             self.domain_specificity(),
             self.client_specificity(),
-            u8::from(self.qclass.is_some()),
-            u8::from(self.qtype.is_some()),
+            u8::from(!self.qclasses.is_empty()),
+            u8::from(!self.qtypes.is_empty()),
             self.id,
         )
     }
@@ -504,7 +564,9 @@ mod tests {
             action,
             priority: 0,
             qtype: None,
+            qtypes: Vec::new(),
             qclass: None,
+            qclasses: Vec::new(),
             client: None,
             client_cidr: None,
             client_cidrs: Vec::new(),
@@ -854,6 +916,84 @@ mod tests {
                 .rule_id,
             2
         );
+    }
+
+    #[test]
+    fn bounded_query_selector_sets_match_and_preserve_shorthand() {
+        let mut set = rule(1, "example", Action::Reject);
+        set.qtypes = vec![28, 1, 28];
+        set.qclasses = vec![1, 3];
+        let policy = ReferencePolicy::new(&[set]).unwrap();
+
+        for (qtype, qclass) in [(1, 1), (28, 3)] {
+            assert_eq!(
+                policy.decide(QueryContext {
+                    name: "example",
+                    qtype,
+                    qclass,
+                    client: None,
+                    client_identity: None,
+                }),
+                Some(Decision {
+                    rule_id: 1,
+                    action: Action::Reject,
+                })
+            );
+        }
+        assert!(
+            policy
+                .decide(QueryContext {
+                    name: "example",
+                    qtype: 15,
+                    qclass: 1,
+                    client: None,
+                    client_identity: None,
+                })
+                .is_none()
+        );
+
+        let mut shorthand = rule(2, "shorthand", Action::Drop);
+        shorthand.qtype = Some(28);
+        shorthand.qclass = Some(3);
+        assert_eq!(
+            ReferencePolicy::new(&[shorthand])
+                .unwrap()
+                .decide(QueryContext {
+                    name: "shorthand",
+                    qtype: 28,
+                    qclass: 3,
+                    client: None,
+                    client_identity: None,
+                })
+                .unwrap()
+                .action,
+            Action::Drop
+        );
+    }
+
+    #[test]
+    fn query_selector_sets_fail_closed_when_invalid() {
+        let mut zero = rule(1, "example", Action::Drop);
+        zero.qtypes = vec![0];
+        assert!(matches!(
+            ReferencePolicy::new(&[zero]),
+            Err(PolicyError::InvalidQuerySelectors { id: 1, .. })
+        ));
+
+        let mut too_many = rule(2, "example", Action::Drop);
+        too_many.qclasses = (1..=MAX_QUERY_SELECTORS as u16 + 1).collect();
+        assert!(matches!(
+            ReferencePolicy::new(&[too_many]),
+            Err(PolicyError::InvalidQuerySelectors { id: 2, .. })
+        ));
+
+        let mut conflicting = rule(3, "example", Action::Drop);
+        conflicting.qtype = Some(1);
+        conflicting.qtypes = vec![28];
+        assert!(matches!(
+            ReferencePolicy::new(&[conflicting]),
+            Err(PolicyError::InvalidQuerySelectors { id: 3, .. })
+        ));
     }
 
     #[test]
