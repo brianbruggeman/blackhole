@@ -53,7 +53,8 @@ jobs:
           sh -n deploy/package/smoke-archive.sh
       - name: build release packages
         run: |
-          cargo build --locked --release --features std --bin blackhole
+          timeout --signal=TERM --kill-after=30s 12m \
+            cargo build --locked --release --features std --bin blackhole
           mkdir -p dist
           deploy/package/build.sh target/release/blackhole dist
           BLACKHOLE_DEB_VERSION=0.0.9 deploy/package/build-deb.sh target/release/blackhole dist
