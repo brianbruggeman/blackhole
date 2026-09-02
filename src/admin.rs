@@ -2043,7 +2043,7 @@ mod tests {
         let reload = Request::builder()
             .method("POST")
             .path("/reload/client-identities")
-            .payload(r#"[{"name":"family-router","enabled":false,"clients":["192.0.2.10"],"client_cidrs":["192.0.2.0/24"]}]"#)
+            .payload(r#"[{"name":"family-router","enabled":false,"clients":["192.0.2.10"],"client_cidrs":["192.0.2.0/24"],"cache_enabled":false,"max_queries_per_second":7,"max_response_bytes_per_second":4096,"max_inflight_requests":2}]"#)
             .build()
             .expect("identity reload request");
         let response = block_on(handler.call(reload)).expect("identity reload response");
@@ -2052,7 +2052,7 @@ mod tests {
         let unchanged = Request::builder()
             .method("POST")
             .path("/reload/client-identities")
-            .payload(r#"[{"name":"family-router","enabled":false,"clients":["192.0.2.10"],"client_cidrs":["192.0.2.0/24"]}]"#)
+            .payload(r#"[{"name":"family-router","enabled":false,"clients":["192.0.2.10"],"client_cidrs":["192.0.2.0/24"],"cache_enabled":false,"max_queries_per_second":7,"max_response_bytes_per_second":4096,"max_inflight_requests":2}]"#)
             .build()
             .expect("unchanged identity reload request");
         let response = block_on(handler.call(unchanged)).expect("unchanged identity response");
@@ -2067,6 +2067,13 @@ mod tests {
         assert_eq!(status["client_identities"][0]["name"], "family-router");
         assert_eq!(status["client_identities"][0]["enabled"], false);
         assert_eq!(status["client_identities"][0]["client_cidrs"], 1);
+        assert_eq!(status["client_identities"][0]["cache_enabled"], false);
+        assert_eq!(status["client_identities"][0]["max_queries_per_second"], 7);
+        assert_eq!(
+            status["client_identities"][0]["max_response_bytes_per_second"],
+            4096
+        );
+        assert_eq!(status["client_identities"][0]["max_inflight_requests"], 2);
 
         let upsert = Request::builder()
             .method("POST")
