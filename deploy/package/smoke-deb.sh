@@ -45,7 +45,7 @@ export DPKG_ROOT="$root"
 
 phase() { printf 'debian-smoke: %s\n' "$1"; }
 
-dpkg_args="--admindir=$root/var/lib/dpkg --instdir=$root"
+dpkg_args="--root=$root"
 
 mkdir -p "$root/etc" "$root/var/lib/dpkg" "$root/var/log"
 printf 'Package: blackhole\nStatus: install ok installed\n' > "$root/var/lib/dpkg/status"
