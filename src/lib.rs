@@ -3596,18 +3596,11 @@ mod runtime {
             Ok(published)
         }
 
-        /// Reload the configured blocklist files and publish their rules as
-        /// one immutable snapshot alongside the current explicit rules.
-        /// Files are read and validated before the live snapshot is touched,
-        /// so an unreadable or malformed update keeps the last good generation.
+        /// Reload the configured blocklist files and publish only changed
+        /// rules as one immutable snapshot alongside the current explicit
+        /// rules. Files are read and validated before publication.
         pub fn reload_blocklists(&self) -> Result<ReloadState, policy::PolicyError> {
-            let paths = self.blocklist_paths.snapshot().as_ref().clone();
-            let disabled = self.disabled_blocklist_paths.snapshot().as_ref().clone();
-            let active = paths
-                .into_iter()
-                .filter(|path| !disabled.contains(path))
-                .collect::<Vec<_>>();
-            self.replace_active_blocklist_rules(&active)
+            self.reload_blocklists_if_changed()
         }
 
         /// Replace the configured blocklist source paths and publish their
@@ -3774,14 +3767,6 @@ mod runtime {
                 .replace(BTreeSet::new());
             self.blocklist_paths_control.replace(paths.to_vec());
             Ok(result)
-        }
-
-        fn replace_active_blocklist_rules(
-            &self,
-            paths: &[String],
-        ) -> Result<ReloadState, policy::PolicyError> {
-            let _reload = self.reload_lock.write().expect("reload lock");
-            self.replace_active_blocklist_rules_locked(paths, Instant::now(), "blocklists")
         }
 
         fn replace_active_blocklist_rules_locked(
@@ -7640,6 +7625,7 @@ mod runtime {
 
             std::fs::write(&path, "new.example\n").expect("write replacement blocklist");
             assert_eq!(policy.reload_blocklists(), Ok(ReloadState::Published));
+            assert_eq!(policy.reload_blocklists(), Ok(ReloadState::Unchanged));
             assert_eq!(policy.evaluate(&query("old.example.")).unwrap().rcode, 0);
             assert_eq!(policy.evaluate(&query("new.example.")).unwrap().rcode, 3);
 
