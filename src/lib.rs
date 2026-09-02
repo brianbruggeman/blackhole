@@ -5590,6 +5590,7 @@ mod runtime {
             let started = Instant::now();
             let next = validate_client_identities(identities)?;
             self.validate_identity_upstreams(&next)?;
+            validate_regex_identity_references(&self.regex_rule_configs(), &next)?;
             if self.client_identities.read(|current| current == &next) {
                 self.observe_reload_latency("client_identities_unchanged", started);
                 return Ok(ReloadState::Unchanged);
@@ -5641,6 +5642,7 @@ mod runtime {
             }
             let next = validate_client_identities(&next)?;
             self.validate_identity_upstreams(&next)?;
+            validate_regex_identity_references(&self.regex_rule_configs(), &next)?;
             let replacement = load_blocklists_with_groups(
                 self.blocklist_paths.snapshot().as_ref(),
                 self.disabled_blocklist_paths.snapshot().as_ref(),
@@ -5685,6 +5687,7 @@ mod runtime {
                     reason: "no requested identity exists".into(),
                 });
             }
+            validate_regex_identity_references(&self.regex_rule_configs(), &next)?;
             let replacement = load_blocklists_with_groups(
                 self.blocklist_paths.snapshot().as_ref(),
                 self.disabled_blocklist_paths.snapshot().as_ref(),
@@ -11674,6 +11677,22 @@ mod runtime {
         #[test]
         fn client_identity_reload_publishes_a_complete_lock_free_snapshot() {
             let mut config = Config::default();
+            config.policy.client_identities = vec![ClientIdentityConfig {
+                name: "family-router".into(),
+                enabled: true,
+                query_log_enabled: true,
+                statistics_enabled: true,
+                cache_enabled: true,
+                filtering_enabled: true,
+                default_action: None,
+                upstream: None,
+                clients: vec!["192.0.2.11".parse().expect("client address")],
+                max_queries_per_second: None,
+                max_response_bytes_per_second: None,
+                max_response_bytes_per_network_per_second: None,
+                max_inflight_requests: None,
+                client_cidrs: Vec::new(),
+            }];
             config.policy.rules = vec![RuleConfig {
                 enabled: true,
                 id: 4,
@@ -11686,6 +11705,20 @@ mod runtime {
                 qclasses: Vec::new(),
                 client: None,
                 client_cidr: None,
+                client_cidrs: Vec::new(),
+                client_identity: Some("family-router".into()),
+            }];
+            config.policy.regex_rules = vec![RegexRuleConfig {
+                enabled: true,
+                id: 90,
+                pattern: "regex-identity.example".into(),
+                action: Action::Reject,
+                priority: 0,
+                qtype: None,
+                qtypes: Vec::new(),
+                qclass: None,
+                qclasses: Vec::new(),
+                client: None,
                 client_cidrs: Vec::new(),
                 client_identity: Some("family-router".into()),
             }];
@@ -11728,6 +11761,25 @@ mod runtime {
                 policy.action_for_view_with_client(view, Some(guest)),
                 Action::Pass
             );
+            assert!(matches!(
+                policy.reload_client_identities(&[ClientIdentityConfig {
+                    name: "family-router".into(),
+                    enabled: false,
+                    query_log_enabled: true,
+                    statistics_enabled: true,
+                    cache_enabled: true,
+                    filtering_enabled: true,
+                    default_action: None,
+                    upstream: None,
+                    clients: vec![family],
+                    max_queries_per_second: None,
+                    max_response_bytes_per_second: None,
+                    max_response_bytes_per_network_per_second: None,
+                    max_inflight_requests: None,
+                    client_cidrs: Vec::new(),
+                }]),
+                Err(policy::PolicyError::InvalidRegex { id: 90, .. })
+            ));
             assert_eq!(
                 policy.reload_client_identities(&[ClientIdentityConfig {
                     name: "family-router".into(),
