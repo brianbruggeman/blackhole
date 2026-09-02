@@ -155,6 +155,9 @@ max_outstanding = 64
 breaker_failures = 3
 # Keep the circuit open for this long before allowing a probe.
 breaker_cooldown_secs = 30
+# Optional ordered failover through named upstreams. The primary above is
+# tried first; transport/wire failures advance to the next name.
+# upstream_fallbacks = ["family"]
 
 # Optional named upstreams. An identity can select one with upstream = "name".
 # Every named route uses the same bounded Proxima DNS exchange and transport

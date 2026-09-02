@@ -132,6 +132,10 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   its own existing Proxima `DnsClientUpstream`, permit bound, circuit breaker,
   transport, and cache namespace; clients without a route use the default
   upstream.
+- The default route can use an ordered, bounded `upstream_fallbacks` list of
+  named endpoints after transport or wire failures; valid DNS error answers do
+  not trigger failover, and every endpoint retains its own Proxima permit pool
+  and circuit breaker.
 - Bounded conditional-forwarding routes can send PTR queries, or all queries
   below an explicit local suffix, for selected client CIDRs or enabled client
   identities to named upstreams; identity and CIDR selectors compose as an

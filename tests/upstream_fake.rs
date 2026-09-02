@@ -420,6 +420,69 @@ async fn fake_upstream_success_flows_through_policy() {
 }
 
 #[proxima::test]
+async fn failed_default_upstream_uses_ordered_named_fallback() {
+    let mut config = Config::default();
+    config.policy.rules = vec![RuleConfig {
+        enabled: true,
+        id: 1,
+        domain: "example.com".into(),
+        action: Action::Forward,
+        priority: 0,
+        qtype: None,
+        qtypes: Vec::new(),
+        qclass: None,
+        qclasses: Vec::new(),
+        client: None,
+        client_cidr: None,
+        client_cidrs: Vec::new(),
+        client_identity: None,
+    }];
+    let upstream = UpstreamConfig {
+        resolver_ip: resolver_addr().ip().to_string(),
+        port: resolver_addr().port(),
+        query_timeout_ms: 10,
+        max_attempts: 1,
+        ..UpstreamConfig::default()
+    };
+    config.upstream = Some(upstream.clone());
+    config.upstreams.insert("backup".into(), upstream.clone());
+    config.upstream_fallbacks = vec!["backup".into()];
+    let primary_socket = FakeSocket::new(ReplyMode::Timeout);
+    let backup_socket = FakeSocket::new(ReplyMode::Valid);
+    let policy = Policy::new(config)
+        .expect("valid fallback config")
+        .with_upstream(
+            Arc::new(FakeFactory {
+                socket: primary_socket,
+            }),
+            DnsResolverConfig::builder()
+                .resolver_ip(upstream.resolver_ip.clone())
+                .port(upstream.port)
+                .query_timeout_ms(upstream.query_timeout_ms)
+                .max_attempts(upstream.max_attempts)
+                .build(),
+            upstream.max_outstanding,
+        )
+        .with_named_upstream(
+            "backup",
+            Arc::new(FakeFactory {
+                socket: backup_socket,
+            }),
+            DnsResolverConfig::builder()
+                .resolver_ip(upstream.resolver_ip)
+                .port(upstream.port)
+                .query_timeout_ms(upstream.query_timeout_ms)
+                .max_attempts(upstream.max_attempts)
+                .build(),
+            upstream.max_outstanding,
+        )
+        .expect("attach fallback upstream");
+    let answer = policy.call(request()).await.expect("fallback answer");
+    assert_eq!(answer.payload.rcode, 0);
+    assert_eq!(answer.payload.records.len(), 1);
+}
+
+#[proxima::test]
 async fn fake_upstream_blocked_cname_target_applies_policy_before_cache() {
     let (policy, socket) = policy(ReplyMode::CnameChain);
     let client = "192.0.2.10".parse().expect("client address");

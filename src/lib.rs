@@ -163,6 +163,11 @@ mod runtime {
         pub honeypot: HoneypotConfig,
         #[serde(default)]
         pub upstream: Option<UpstreamConfig>,
+        /// Ordered named upstreams used after the default upstream returns a
+        /// transport or wire failure. Valid DNS error answers are not failed
+        /// over, and the list is bounded at policy construction.
+        #[serde(default)]
+        pub upstream_fallbacks: Vec<String>,
         /// Optional named upstreams selected by client identities. The
         /// default upstream remains the fallback for clients without a route.
         #[serde(default)]
@@ -4012,6 +4017,7 @@ mod runtime {
         global_rate_limit_whitelist_control: LiveControl<Vec<policy::IpNetwork>>,
         upstream: Option<DnsClientUpstream>,
         upstream_slots: Option<Arc<AtomicPermitPool>>,
+        upstream_fallbacks: Vec<String>,
         named_upstreams: BTreeMap<String, NamedUpstream>,
         conditional_forwards: Vec<ConditionalForward>,
         cache: Live<DnsCache>,
@@ -4508,6 +4514,7 @@ mod runtime {
             let (regex_rules, regex_rules_control) = live(regex_rules);
             let (query_recording_redaction, query_recording_redaction_control) =
                 live(config.privacy.query_recording_redaction);
+            let upstream_fallbacks = config.upstream_fallbacks.clone();
             let policy = Self {
                 config,
                 hosts_rewrites,
@@ -4574,6 +4581,7 @@ mod runtime {
                 global_rate_limit_whitelist_control,
                 upstream: None,
                 upstream_slots: None,
+                upstream_fallbacks,
                 named_upstreams: BTreeMap::new(),
                 conditional_forwards,
                 cache,
@@ -5860,6 +5868,7 @@ mod runtime {
                 || next.admin != current.admin
                 || next.honeypot != current.honeypot
                 || next.upstream != current.upstream
+                || next.upstream_fallbacks != current.upstream_fallbacks
                 || next.upstreams != current.upstreams
                 || next.policy.conditional_forwards != current.policy.conditional_forwards
                 || next.policy.allowlist != current.policy.allowlist
@@ -7087,6 +7096,13 @@ mod runtime {
         }
 
         fn validate_named_upstreams(&self) -> Result<(), policy::PolicyError> {
+            if self.config.upstream_fallbacks.len() > MAX_NAMED_UPSTREAMS {
+                return Err(policy::PolicyError::InvalidUpstream {
+                    reason: format!(
+                        "at most {MAX_NAMED_UPSTREAMS} default upstream fallbacks are allowed"
+                    ),
+                });
+            }
             if self.config.upstreams.len() > MAX_NAMED_UPSTREAMS {
                 return Err(policy::PolicyError::InvalidUpstream {
                     reason: format!("at most {MAX_NAMED_UPSTREAMS} named upstreams are allowed"),
@@ -7107,6 +7123,13 @@ mod runtime {
                     });
                 }
                 self.validate_upstream(upstream)?;
+            }
+            for name in &self.config.upstream_fallbacks {
+                if name.is_empty() || !self.config.upstreams.contains_key(name) {
+                    return Err(policy::PolicyError::InvalidUpstream {
+                        reason: format!("unknown default upstream fallback {name:?}"),
+                    });
+                }
             }
             self.client_identities
                 .read(|identities| self.validate_identity_upstreams(identities))
@@ -10020,13 +10043,47 @@ mod runtime {
                         "upstream circuit breaker is open",
                     )));
                 }
-                let response = upstream
+                let mut response_breaker = breaker;
+                let mut response = upstream
                     .query_with_metadata(&query.name, query.qtype, query.qclass)
                     .await;
+                if response.is_err() {
+                    breaker.on_failure(self.breaker_now_nanos());
+                    if route_name.is_none() {
+                        for fallback_name in &self.upstream_fallbacks {
+                            let Some(route) = self.named_upstreams.get(fallback_name) else {
+                                continue;
+                            };
+                            let Some(fallback_slot) = route.slots.try_acquire() else {
+                                self.observe_failure("upstream_overflow");
+                                continue;
+                            };
+                            if !route.breaker.allow(self.breaker_now_nanos()) {
+                                drop(fallback_slot);
+                                continue;
+                            }
+                            let candidate = route
+                                .upstream
+                                .query_with_metadata(&query.name, query.qtype, query.qclass)
+                                .await;
+                            match candidate {
+                                Ok(candidate) => {
+                                    response = Ok(candidate);
+                                    response_breaker = &route.breaker;
+                                    break;
+                                }
+                                Err(error) => {
+                                    route.breaker.on_failure(self.breaker_now_nanos());
+                                    response = Err(error);
+                                }
+                            }
+                        }
+                    }
+                }
                 let answer = match response {
                     Ok(response) => {
                         if let Err(cause) = self.validate_upstream_response(&query, &response) {
-                            breaker.on_failure(self.breaker_now_nanos());
+                            response_breaker.on_failure(self.breaker_now_nanos());
                             self.observe_failure(cause);
                             self.observe_for_client(forwarding_action, client);
                             return Ok(DnsPipeReply::typed(200, server_failure_answer()));
@@ -10044,7 +10101,7 @@ mod runtime {
                                 return Ok(DnsPipeReply::typed(200, answer));
                             }
                         }
-                        breaker.on_success();
+                        response_breaker.on_success();
                         if cache_enabled && matches!(answer.rcode, 0 | 3) {
                             self.observe_cache_ttl(&answer);
                             self.cache_insert(key.clone(), answer.clone(), Instant::now());
@@ -10052,7 +10109,6 @@ mod runtime {
                         answer
                     }
                     Err(error) => {
-                        breaker.on_failure(self.breaker_now_nanos());
                         if cache_enabled && let Some(answer) = self.cache_stale(&key) {
                             self.observe_cache("stale_hit");
                             self.observe_for_client(forwarding_action, client);
@@ -11875,6 +11931,13 @@ mod runtime {
 
         #[test]
         fn named_upstream_routes_are_bounded_and_referenced() {
+            let mut unknown_fallback = Config::default();
+            unknown_fallback.upstream_fallbacks = vec!["missing".into()];
+            assert!(matches!(
+                Policy::new(unknown_fallback),
+                Err(policy::PolicyError::InvalidUpstream { .. })
+            ));
+
             let mut invalid = Config::default();
             invalid.upstreams.insert(
                 "family".into(),

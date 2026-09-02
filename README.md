@@ -307,6 +307,11 @@ Proxima's GitHub HTTP/TLS pipe adapters. `transport = "doq"` uses
 DNS-over-QUIC through Proxima's existing QUIC stream adapter and requires the
 opt-in `doq` feature; the default Prime build remains QUIC-free.
 
+The default route may also set `upstream_fallbacks = ["name"]` to try an
+ordered list of named upstreams after transport or wire failures. Valid DNS
+error answers are not retried, and each fallback keeps its own bounded
+outstanding-query pool and circuit breaker.
+
 Proxima is consumed from GitHub. Prime is the default runtime and executable
 path. Proxima's HTTP listener currently brings a small Tokio dependency into
 the default graph for its UDS support; use the opt-in `tokio-compat` feature
