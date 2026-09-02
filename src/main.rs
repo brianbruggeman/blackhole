@@ -104,6 +104,26 @@ fn validate_query_recording_path(path: &str) -> Result<(), ProximaError> {
 }
 
 #[cfg(feature = "std")]
+fn sync_recording_parent(path: &Path) -> Result<(), ProximaError> {
+    #[cfg(unix)]
+    {
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        std::fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| {
+                ProximaError::Record(format!(
+                    "sync query recording parent {}: {error}",
+                    parent.display()
+                ))
+            })?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "std")]
 fn delete_query_recording(path: &Path) -> Result<usize, ProximaError> {
     let path_string = path
         .to_str()
@@ -144,6 +164,9 @@ fn delete_query_recording(path: &Path) -> Result<usize, ProximaError> {
                 )));
             }
         }
+    }
+    if removed != 0 {
+        sync_recording_parent(path)?;
     }
     for target in &targets {
         match std::fs::metadata(target) {
@@ -235,6 +258,7 @@ fn rotate_query_recording(
             first.display()
         ))
     })?;
+    sync_recording_parent(path)?;
     Ok(())
 }
 
