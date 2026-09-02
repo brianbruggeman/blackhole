@@ -1900,9 +1900,16 @@ mod runtime {
             })();
             let _ = result_sender.send(result);
         });
-        result_receiver
-            .recv_timeout(timeout)
-            .map_err(|_| format!("remote source timed out after {}ms", timeout.as_millis()))?
+        match result_receiver.recv_timeout(timeout) {
+            Ok(result) => result,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(format!(
+                "remote source timed out after {}ms",
+                timeout.as_millis()
+            )),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                Err("remote source worker panicked".to_owned())
+            }
+        }
     }
 
     fn parse_cache_control_max_age(value: &str) -> Option<u64> {
