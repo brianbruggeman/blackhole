@@ -7607,6 +7607,10 @@ mod runtime {
             let admission: serde_json::Value =
                 serde_json::from_str(&policy.admin_admission_status()).expect("admission");
             assert_eq!(admission["max_queries_per_second"], 7);
+            assert_eq!(policy.reload_config(&next), Ok(ReloadState::Unchanged));
+            let status: serde_json::Value =
+                serde_json::from_str(&policy.admin_policy_status()).expect("status");
+            assert_eq!(status["policy_generation"], 2);
 
             let mut invalid = next.clone();
             invalid.server.listen = "0.0.0.0:53".into();
