@@ -386,6 +386,81 @@ fn shipped_binary_serves_udp_datagrams_and_tcp_frames() {
 }
 
 #[test]
+fn shipped_binary_serves_hosts_file_rewrites_over_udp_and_tcp() {
+    let hosts = NamedTempFile::new().expect("create hosts file");
+    std::fs::write(
+        hosts.path(),
+        "# router records\n192.0.2.10 router.home.arpa\n2001:db8::10 router.home.arpa\n",
+    )
+    .expect("write hosts file");
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("reserve listener port");
+    let listener_addr = listener.local_addr().expect("listener address");
+    drop(listener);
+    let mut config = NamedTempFile::new().expect("create config");
+    writeln!(
+        config,
+        "[server]\nlisten = \"{listener_addr}\"\n\n[policy]\nhosts_path = \"{}\"",
+        hosts.path().display()
+    )
+    .expect("write config");
+
+    let _child = ChildGuard(
+        Command::new(env!("CARGO_BIN_EXE_blackhole"))
+            .arg(config.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("start shipped blackhole binary"),
+    );
+    drop(wait_for_tcp(listener_addr));
+
+    let udp = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind UDP client");
+    udp.set_read_timeout(Some(Duration::from_secs(3)))
+        .expect("set UDP timeout");
+    udp.send_to(&query(0x6101, "router.home.arpa."), listener_addr)
+        .expect("send hosts UDP query");
+    let mut response = [0u8; 4096];
+    let (length, _) = udp
+        .recv_from(&mut response)
+        .expect("receive hosts UDP response");
+    let message = parse_message(&response[..length]).expect("parse hosts UDP response");
+    let answer = message
+        .answers()
+        .next()
+        .expect("hosts UDP answer")
+        .expect("valid hosts UDP answer");
+    assert_eq!(
+        answer.rdata,
+        proxima_protocols::dns::RData::A(Ipv4Addr::new(192, 0, 2, 10))
+    );
+
+    let mut tcp = wait_for_tcp(listener_addr);
+    tcp.set_read_timeout(Some(Duration::from_secs(3)))
+        .expect("set TCP timeout");
+    let tcp_query = query(0x6102, "router.home.arpa.");
+    tcp.write_all(&(tcp_query.len() as u16).to_be_bytes())
+        .expect("write hosts TCP length");
+    tcp.write_all(&tcp_query).expect("write hosts TCP query");
+    let mut frame_length = [0u8; 2];
+    tcp.read_exact(&mut frame_length)
+        .expect("read hosts TCP length");
+    let mut tcp_response = vec![0; usize::from(u16::from_be_bytes(frame_length))];
+    tcp.read_exact(&mut tcp_response)
+        .expect("read hosts TCP response");
+    let message = parse_message(&tcp_response).expect("parse hosts TCP response");
+    let answer = message
+        .answers()
+        .next()
+        .expect("hosts TCP answer")
+        .expect("valid hosts TCP answer");
+    assert_eq!(
+        answer.rdata,
+        proxima_protocols::dns::RData::A(Ipv4Addr::new(192, 0, 2, 10))
+    );
+}
+
+#[test]
 fn shipped_binary_applies_a_configured_blocklist_and_exception() {
     let upstream = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind upstream");
     upstream
