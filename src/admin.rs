@@ -107,6 +107,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <h2>Abuse controls</h2><textarea id="abuse-revoke"></textarea><button id="revoke-abuse">Revoke</button><button id="approve-abuse">Approve</button>
 <h2>Incidents</h2><p><button id="export-abuse">Export durable</button></p><pre id="abuse-incidents"></pre>
 <h2>Policy bundle</h2><textarea id="policy-bundle" rows="12" cols="80">loading…</textarea><button id="validate-bundle">Validate bundle</button>
+<h2>Policy preview</h2><textarea id="policy-preview" rows="4" cols="80">{"name":"example.","qtype":1,"qclass":1}</textarea><button id="preview-policy">Preview</button><pre id="policy-preview-result"></pre>
 <h2>Blocklists</h2><textarea id="blocklist-sources"></textarea><button id="replace-blocklists">Replace</button><button id="add-blocklists">Add</button><button id="remove-blocklists">Remove</button><button id="reload-blocklists">Reload</button><div id="blocklist-controls"></div><pre id="blocklists"></pre>
 <h2>Country</h2><textarea id="country-editor" rows="8" cols="80"></textarea><button id="replace-country">Replace country policy</button><pre id="country-status"></pre>
 <h2>Privacy</h2><pre id="privacy-status"></pre><select id="r"><option value="metadata">metadata</option><option value="action_only">action only</option></select><button id="s">Apply</button>
@@ -219,7 +220,14 @@ const replaceRewrites = () => {
   try { return operate('/reload/rewrites', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#rewrite-editor').value}).then(refresh); }
   catch (error) { document.querySelector('#operation-status').textContent = `/reload/rewrites: ${error.message}`; return Promise.reject(error); }
 };
+const previewPolicy = () => {
+  try {
+    return operate('/policy/preview', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#policy-preview').value})
+      .then(value => { document.querySelector('#policy-preview-result').textContent = JSON.stringify(value, null, 2); });
+  } catch (error) { document.querySelector('#operation-status').textContent = `/policy/preview: ${error.message}`; return Promise.reject(error); }
+};
 const refresh = () => Promise.all([load('/status','#status'), load('/stats','#stats'), load('/admission/status','#admission-status'), load('/abuse/status','#abuse-status'), load('/abuse/incidents','#abuse-incidents'), load('/abuse/denylist','#denylist-config'), load('/policy-bundle','#policy-bundle'), load('/blocklists','#blocklists'), load('/country/status','#country-status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/client-identities','#identities'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
+document.querySelector('#preview-policy').onclick = previewPolicy;
 document.querySelector('#clear-logs').onclick = () => operate('/logs/clear', {method:'POST'}).then(refresh);
 document.querySelector('#clear-durable-logs').onclick = () => operate('/logs/clear-durable', {method:'POST'}).then(refresh);
 document.querySelector('#s').onclick = () => send('/reload/privacy/redaction', document.querySelector('#r').value);
@@ -1633,6 +1641,8 @@ mod tests {
             b"group-editor".as_slice(),
             b"identity-editor".as_slice(),
             b"validate-bundle".as_slice(),
+            b"policy-preview".as_slice(),
+            b"preview-policy".as_slice(),
             b"upsert-profiles".as_slice(),
             b"upsert-groups".as_slice(),
             b"upsert-identities".as_slice(),
