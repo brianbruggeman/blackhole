@@ -4334,6 +4334,7 @@ mod runtime {
                 || next.admin != current.admin
                 || next.honeypot != current.honeypot
                 || next.upstream != current.upstream
+                || next.upstreams != current.upstreams
                 || next.cache != current.cache
                 || next.security != current.security
                 || startup_privacy != current.privacy

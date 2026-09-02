@@ -347,6 +347,11 @@ cooldowns, and incident-persistence flag; it never exposes breaker keys.
 `GET /status` also reports the bounded upstream circuit-breaker state
 (`closed`, `open`, or `half_open`) so operators can distinguish an idle
 resolver from one fail-closed by upstream health.
+Named upstreams are configured under `[upstreams.<name>]`; an enabled client
+identity may set `upstream = "<name>"` to use that route. Named routes are
+startup-only, independently bounded, and use the same Proxima DNS exchange,
+transport validation, cache isolation, and circuit-breaker behavior as the
+default upstream.
 For deterministic offline inspection, run `blackhole --replay recording.jsonl`.
 To remove a durable decision recording, run `blackhole --delete-recording
 recording.jsonl`; this deletes only the exact file and its bounded `.1` through
