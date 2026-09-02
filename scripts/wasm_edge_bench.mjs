@@ -46,23 +46,19 @@ const pointers = packets.map((packet, index) => {
   return packetPointer;
 });
 
-function measure(packet) {
-  const workload = Array.isArray(packet) ? packet : [packet];
+function measureProbe(probe) {
   const iterations = 10_000;
   for (let index = 0; index < 1_000; index += 1) {
-    const packetIndex = packets.indexOf(workload[index % workload.length]);
     blackhole_edge_reset();
-    blackhole_edge_probe(pointers[packetIndex], workload[index % workload.length].length);
+    probe(index);
   }
   const samples = [];
   let checksum = 0;
   for (let sample = 0; sample < 25; sample += 1) {
     const started = process.hrtime.bigint();
     for (let index = 0; index < iterations; index += 1) {
-      const current = workload[index % workload.length];
-      const packetIndex = packets.indexOf(current);
       blackhole_edge_reset();
-      checksum += blackhole_edge_probe(pointers[packetIndex], current.length);
+      checksum += probe(index);
     }
     samples.push(Number(process.hrtime.bigint() - started) / iterations);
   }
@@ -77,6 +73,15 @@ function measure(packet) {
     cov: Math.sqrt(variance) / mean,
     checksum,
   };
+}
+
+function measure(packet) {
+  const workload = Array.isArray(packet) ? packet : [packet];
+  return measureProbe((index) => {
+    const current = workload[index % workload.length];
+    const packetIndex = packets.indexOf(current);
+    return blackhole_edge_probe(pointers[packetIndex], current.length);
+  });
 }
 
 const workloads = new Map([
@@ -94,6 +99,15 @@ for (const [name, packet] of workloads) {
 const mixed = [validPacket, longPacket, maximumPacket, adversarialPacket];
 const mixedResult = measure(mixed);
 console.log(`mixed_p50_ns=${mixedResult.p50} mixed_p95_ns=${mixedResult.p95} mixed_p99_ns=${mixedResult.p99} mixed_cov=${mixedResult.cov} mixed_checksum=${mixedResult.checksum}`);
+
+const boundedFailureWorkloads = new Map([
+  ["null", () => blackhole_edge_probe(0, validPacket.length)],
+  ["oversized", () => blackhole_edge_probe(pointers[0], 4097)],
+]);
+for (const [name, probe] of boundedFailureWorkloads) {
+  const result = measureProbe(probe);
+  console.log(`${name}_p50_ns=${result.p50} ${name}_p95_ns=${result.p95} ${name}_p99_ns=${result.p99} ${name}_cov=${result.cov} ${name}_checksum=${result.checksum}`);
+}
 
 blackhole_edge_reset();
 console.log(`module_bytes=${bytes.length}`);
