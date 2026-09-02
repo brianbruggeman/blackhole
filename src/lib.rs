@@ -1824,6 +1824,7 @@ mod runtime {
     const MAX_BLOCKLIST_PATHS: usize = 4096;
     const MAX_BLOCKLIST_PATH_BYTES: usize = 4096;
     const MAX_BLOCKLIST_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
+    const REMOTE_SOURCE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
     fn http_source_parts(source: &str) -> Option<(&str, &str)> {
         if !source.starts_with("http://") && !source.starts_with("https://") {
@@ -1845,14 +1846,25 @@ mod runtime {
     }
 
     fn read_remote_bytes(source: &str, max_bytes: u64) -> Result<Vec<u8>, String> {
+        read_remote_bytes_with_timeout(source, max_bytes, REMOTE_SOURCE_TIMEOUT)
+    }
+
+    fn read_remote_bytes_with_timeout(
+        source: &str,
+        max_bytes: u64,
+        timeout: std::time::Duration,
+    ) -> Result<Vec<u8>, String> {
         let (base, path) = http_source_parts(source).ok_or_else(|| {
             "remote source must be an absolute http:// or https:// URL".to_owned()
         })?;
         let base = base.to_owned();
         let path = path.to_owned();
         std::thread::spawn(move || {
-            let client = Client::http(base)
-                .map_err(|error| format!("create Proxima HTTP client: {error}"))?;
+            let client = Client::from_value(serde_json::json!({
+                "http": base,
+                "timeout": format!("{}ms", timeout.as_millis()),
+            }))
+            .map_err(|error| format!("create Proxima HTTP client: {error}"))?;
             futures::executor::block_on(async move {
                 let response = client
                     .get(path)
@@ -10563,6 +10575,36 @@ mod runtime {
             let rules = load_blocklists(&[source]).expect("load hosted blocklist");
             assert!(rules.iter().any(|rule| rule.domain == "remote.example"));
             thread.join().expect("join blocklist fixture");
+        }
+
+        #[test]
+        fn hosted_sources_time_out_when_upstream_stays_silent() {
+            use std::io::Read;
+
+            let server = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+                .expect("bind silent source fixture");
+            let address = server.local_addr().expect("silent source fixture address");
+            let thread = std::thread::spawn(move || {
+                let (mut stream, _) = server.accept().expect("accept silent source request");
+                let mut request = [0_u8; 2048];
+                let _ = stream
+                    .read(&mut request)
+                    .expect("read silent source request");
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            });
+
+            let source = format!("http://{address}/silent.txt");
+            let result = read_remote_bytes_with_timeout(
+                &source,
+                MAX_BLOCKLIST_BYTES,
+                std::time::Duration::from_millis(50),
+            );
+            let error = result.expect_err("silent hosted source must time out");
+            assert!(
+                error.to_ascii_lowercase().contains("timeout"),
+                "expected a Proxima timeout: {error}"
+            );
+            thread.join().expect("join silent source fixture");
         }
 
         #[test]
