@@ -1,6 +1,6 @@
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -34,6 +34,15 @@ fn wait_for_tcp(addr: SocketAddr) -> TcpStream {
             "blackhole TCP listener did not start"
         );
         thread::sleep(Duration::from_millis(20));
+    }
+}
+
+struct ChildGuard(Child);
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
     }
 }
 
@@ -95,13 +104,15 @@ fn shipped_binary_serves_udp_datagrams_and_tcp_frames() {
     )
     .expect("write config");
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_blackhole"))
-        .arg(config.path())
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("start shipped blackhole binary");
+    let _child = ChildGuard(
+        Command::new(env!("CARGO_BIN_EXE_blackhole"))
+            .arg(config.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("start shipped blackhole binary"),
+    );
 
     let mut tcp = wait_for_tcp(listener_addr);
     tcp.set_read_timeout(Some(Duration::from_secs(3)))
@@ -174,7 +185,5 @@ fn shipped_binary_serves_udp_datagrams_and_tcp_frames() {
     assert_eq!(tcp_message.header.id, 0x1002);
     assert_eq!(tcp_message.answers().count(), 1);
 
-    child.kill().expect("stop shipped binary");
-    child.wait().expect("reap shipped binary");
     upstream_thread.join().expect("reap upstream");
 }
