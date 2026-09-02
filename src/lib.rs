@@ -6310,11 +6310,22 @@ mod runtime {
 
         /// Return bounded abuse-state metadata without exposing client keys.
         pub(crate) fn admin_abuse_status(&self) -> String {
+            let admission = self.admission_config();
             serde_json::json!({
                 "client_entries": self.client_abuse.len(),
                 "network_entries": self.network_abuse.len(),
                 "client_state_capacity": MAX_CLIENT_RATE_ENTRIES,
                 "network_state_capacity": MAX_CLIENT_RATE_ENTRIES,
+                "client_violation_threshold": admission.max_client_abuse_violations,
+                "client_window_secs": admission.client_abuse_window_secs,
+                "client_cooldown_secs": admission.client_abuse_cooldown_secs,
+                "network_violation_threshold": admission.max_network_abuse_violations,
+                "network_window_secs": admission.network_abuse_window_secs,
+                "network_cooldown_secs": admission.network_abuse_cooldown_secs,
+                "global_violation_threshold": admission.ddos.max_global_abuse_violations,
+                "global_window_secs": admission.ddos.global_abuse_window_secs,
+                "global_cooldown_secs": admission.ddos.global_abuse_cooldown_secs,
+                "incident_persistence": admission.ddos.persist_incidents,
                 "automatic_blacklist": "temporary_cooldown",
                 "keys": "not_exposed",
             })

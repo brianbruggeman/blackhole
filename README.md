@@ -317,6 +317,9 @@ state, source age for local files, freshness validity under `max_age_secs`,
 entry count, and content fingerprints. It never exposes the configured path,
 map rows, or client addresses; a missing or unreadable local source is reported
 without replacing the last good published snapshot.
+`GET /abuse/status` reports bounded live breaker occupancy together with the
+configured client, network, and global violation thresholds, windows,
+cooldowns, and incident-persistence flag; it never exposes breaker keys.
 For deterministic offline inspection, run `blackhole --replay recording.jsonl`.
 To remove a durable decision recording, run `blackhole --delete-recording
 recording.jsonl`; this deletes only the exact file and its bounded `.1` through

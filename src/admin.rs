@@ -1682,6 +1682,16 @@ mod tests {
             serde_json::from_slice(&abuse_status.payload).expect("abuse status JSON");
         assert_eq!(abuse_status["client_entries"], 0);
         assert_eq!(abuse_status["network_entries"], 0);
+        assert_eq!(abuse_status["client_violation_threshold"], 8);
+        assert_eq!(abuse_status["client_window_secs"], 10);
+        assert_eq!(abuse_status["client_cooldown_secs"], 30);
+        assert_eq!(abuse_status["network_violation_threshold"], 32);
+        assert_eq!(abuse_status["network_window_secs"], 10);
+        assert_eq!(abuse_status["network_cooldown_secs"], 30);
+        assert_eq!(abuse_status["global_violation_threshold"], 0);
+        assert_eq!(abuse_status["global_window_secs"], 10);
+        assert_eq!(abuse_status["global_cooldown_secs"], 30);
+        assert_eq!(abuse_status["incident_persistence"], false);
         assert_eq!(abuse_status["automatic_blacklist"], "temporary_cooldown");
         let incidents =
             block_on(handler.call(request("GET", "/abuse/incidents"))).expect("incidents");
