@@ -968,6 +968,16 @@ impl CaptureGuard {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl Drop for CaptureGuard {
+    fn drop(&mut self) {
+        // Startup can fail after capture installation but before the main
+        // shutdown path is reached. The controller's cleanup is idempotent
+        // after an explicit shutdown and remains ownership-checked.
+        let _ = self.cleanup();
+    }
+}
+
 #[cfg(feature = "std")]
 struct AnyHandler;
 
