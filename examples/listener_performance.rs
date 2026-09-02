@@ -67,6 +67,7 @@ async fn main() -> Result<(), ProximaError> {
         ipv6: None,
         cname: None,
         ptr: None,
+        txt: None,
         ttl: 30,
     }];
     let policy = std::sync::Arc::new(

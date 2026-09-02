@@ -3554,6 +3554,7 @@ mod tests {
             ipv6: None,
             cname: None,
             ptr: None,
+            txt: None,
             ttl: 30,
         }];
         config.policy.rules = vec![crate::RuleConfig {

@@ -809,6 +809,7 @@ async fn listener_serves_local_rewrite_on_the_real_udp_path() {
             ipv6: None,
             cname: None,
             ptr: None,
+            txt: None,
             ttl: 30,
         },
         RewriteConfig {
@@ -817,6 +818,7 @@ async fn listener_serves_local_rewrite_on_the_real_udp_path() {
             ipv6: None,
             cname: None,
             ptr: Some("router.home.arpa".into()),
+            txt: None,
             ttl: 45,
         },
     ];

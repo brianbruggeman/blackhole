@@ -53,7 +53,7 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Blocklist sources can be assigned to named client groups; assigned sources
   are excluded from the unscoped rule set and expand into bounded exact-client
   or CIDR-scoped rules, with disabled groups producing no active rules.
-- Bounded local A/AAAA/CNAME/PTR rewrites with exact and one-label wildcard
+- Bounded local A/AAAA/CNAME/PTR/TXT rewrites with exact and one-label wildcard
   matching, explicit policy precedence, and fail-closed validation for
   malformed, duplicate, mixed-record, or oversized configuration.
 - Named service-blocking profiles compile into the authoritative rule table,

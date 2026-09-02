@@ -1402,6 +1402,9 @@ mod runtime {
         pub cname: Option<String>,
         #[serde(default)]
         pub ptr: Option<String>,
+        /// One bounded DNS TXT character-string payload (at most 255 bytes).
+        #[serde(default)]
+        pub txt: Option<String>,
         #[serde(default = "default_ttl")]
         pub ttl: u32,
     }
@@ -2731,6 +2734,7 @@ mod runtime {
                 && config.ipv6.is_none()
                 && config.cname.is_none()
                 && config.ptr.is_none()
+                && config.txt.is_none()
             {
                 return Err(policy::PolicyError::InvalidRewrite {
                     name: config.name.clone(),
@@ -2739,6 +2743,7 @@ mod runtime {
             }
             if config.cname.is_some()
                 && (config.ipv4.is_some() || config.ipv6.is_some() || config.ptr.is_some())
+                || config.cname.is_some() && config.txt.is_some()
             {
                 return Err(policy::PolicyError::InvalidRewrite {
                     name: config.name.clone(),
@@ -2812,7 +2817,11 @@ mod runtime {
                 );
             }
             if let Some(target) = config.ptr.as_deref() {
-                if config.ipv4.is_some() || config.ipv6.is_some() || config.cname.is_some() {
+                if config.ipv4.is_some()
+                    || config.ipv6.is_some()
+                    || config.cname.is_some()
+                    || config.txt.is_some()
+                {
                     return Err(policy::PolicyError::InvalidRewrite {
                         name: config.name.clone(),
                         reason: "ptr cannot be combined with another rewrite record".into(),
@@ -2832,7 +2841,7 @@ mod runtime {
                         reason: "ptr exceeds DNS wire limits".into(),
                     }
                 })?;
-                let key = (name, 12);
+                let key = (name.clone(), 12);
                 if entries.contains_key(&key) {
                     return Err(policy::PolicyError::InvalidRewrite {
                         name: config.name.clone(),
@@ -2842,8 +2851,46 @@ mod runtime {
                 entries.insert(
                     key,
                     DnsAnswer::ok(vec![DnsAnswerRecord {
-                        name: record_name,
+                        name: record_name.clone(),
                         rtype: 12,
+                        rclass: 1,
+                        ttl: config.ttl,
+                        rdata,
+                    }]),
+                );
+            }
+            if let Some(value) = config.txt.as_deref() {
+                if config.ipv4.is_some()
+                    || config.ipv6.is_some()
+                    || config.cname.is_some()
+                    || config.ptr.is_some()
+                {
+                    return Err(policy::PolicyError::InvalidRewrite {
+                        name: config.name.clone(),
+                        reason: "txt cannot be combined with another rewrite record".into(),
+                    });
+                }
+                if value.is_empty() || value.len() > 255 || !value.is_ascii() {
+                    return Err(policy::PolicyError::InvalidRewrite {
+                        name: config.name.clone(),
+                        reason: "txt must be non-empty ASCII of at most 255 bytes".into(),
+                    });
+                }
+                let key = (name, 16);
+                if entries.contains_key(&key) {
+                    return Err(policy::PolicyError::InvalidRewrite {
+                        name: config.name.clone(),
+                        reason: "duplicate TXT rewrite".into(),
+                    });
+                }
+                let mut rdata = Vec::with_capacity(value.len() + 1);
+                rdata.push(value.len() as u8);
+                rdata.extend_from_slice(value.as_bytes());
+                entries.insert(
+                    key,
+                    DnsAnswer::ok(vec![DnsAnswerRecord {
+                        name: record_name,
+                        rtype: 16,
                         rclass: 1,
                         ttl: config.ttl,
                         rdata,
@@ -10442,6 +10489,7 @@ mod runtime {
                     ipv6: Some(Ipv6Addr::LOCALHOST),
                     cname: None,
                     ptr: None,
+                    txt: None,
                     ttl: 30,
                 },
                 RewriteConfig {
@@ -10450,6 +10498,7 @@ mod runtime {
                     ipv6: None,
                     cname: None,
                     ptr: None,
+                    txt: None,
                     ttl: 30,
                 },
             ];
@@ -10506,6 +10555,7 @@ mod runtime {
                 ipv6: None,
                 cname: Some("router.home.arpa".into()),
                 ptr: None,
+                txt: None,
                 ttl: 45,
             }];
             let policy = Policy::new(config).expect("valid CNAME rewrite");
@@ -10541,6 +10591,7 @@ mod runtime {
                 ipv6: None,
                 cname: Some("router.home.arpa".into()),
                 ptr: None,
+                txt: None,
                 ttl: 30,
             }];
             assert!(matches!(
@@ -10558,6 +10609,7 @@ mod runtime {
                 ipv6: None,
                 cname: None,
                 ptr: Some("router.home.arpa".into()),
+                txt: None,
                 ttl: 45,
             }];
             let policy = Policy::new(config).expect("valid PTR rewrite");
@@ -10593,10 +10645,57 @@ mod runtime {
                 ipv6: None,
                 cname: None,
                 ptr: Some("router.home.arpa".into()),
+                txt: None,
                 ttl: 30,
             }];
             assert!(matches!(
                 Policy::new(mixed),
+                Err(policy::PolicyError::InvalidRewrite { .. })
+            ));
+        }
+
+        #[test]
+        fn local_txt_rewrite_encodes_one_character_string_and_bounds_payload() {
+            let mut config = Config::default();
+            config.policy.rewrites = vec![RewriteConfig {
+                name: "service.home.arpa".into(),
+                ipv4: None,
+                ipv6: None,
+                cname: None,
+                ptr: None,
+                txt: Some("v=blackhole1".into()),
+                ttl: 30,
+            }];
+            let policy = Policy::new(config).expect("valid TXT rewrite");
+            let answer = policy
+                .evaluate(&proxima_dns::DnsQuery {
+                    id: 1,
+                    recursion_desired: true,
+                    name: "service.home.arpa.".into(),
+                    qtype: 16,
+                    qclass: 1,
+                })
+                .expect("TXT answer");
+            assert_eq!(answer.records[0].rtype, 16);
+            assert_eq!(
+                answer.records[0].rdata,
+                [
+                    12, b'v', b'=', b'b', b'l', b'a', b'c', b'k', b'h', b'o', b'l', b'e', b'1'
+                ]
+            );
+
+            let mut oversized = Config::default();
+            oversized.policy.rewrites = vec![RewriteConfig {
+                name: "oversized.home.arpa".into(),
+                ipv4: None,
+                ipv6: None,
+                cname: None,
+                ptr: None,
+                txt: Some("x".repeat(256)),
+                ttl: 30,
+            }];
+            assert!(matches!(
+                Policy::new(oversized),
                 Err(policy::PolicyError::InvalidRewrite { .. })
             ));
         }
@@ -10611,6 +10710,7 @@ mod runtime {
                     ipv6: None,
                     cname: None,
                     ptr: None,
+                    txt: None,
                     ttl: 30,
                 },
                 RewriteConfig {
@@ -10619,6 +10719,7 @@ mod runtime {
                     ipv6: None,
                     cname: None,
                     ptr: None,
+                    txt: None,
                     ttl: 40,
                 },
             ];
@@ -10655,6 +10756,7 @@ mod runtime {
                 ipv6: None,
                 cname: None,
                 ptr: None,
+                txt: None,
                 ttl: 30,
             }];
             assert!(matches!(
@@ -10670,6 +10772,7 @@ mod runtime {
                     ipv6: None,
                     cname: None,
                     ptr: None,
+                    txt: None,
                     ttl: 30,
                 }];
                 assert!(
@@ -10694,6 +10797,7 @@ mod runtime {
                     ipv6: None,
                     cname: None,
                     ptr: None,
+                    txt: None,
                     ttl: 30,
                 }];
                 assert!(
@@ -10713,6 +10817,7 @@ mod runtime {
                     ipv6: None,
                     cname: None,
                     ptr: None,
+                    txt: None,
                     ttl: 30,
                 })
                 .collect();

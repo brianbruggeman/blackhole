@@ -55,7 +55,7 @@ blocklist_reload_interval_secs = 0
 # [policy.blocklist_groups]
 # family = ["/etc/blackhole/family-blocklist.txt"]
 
-# Optional local DNS rewrites. A rewrite answers matching A/AAAA/CNAME queries
+# Optional local DNS rewrites. A rewrite answers matching A/AAAA/CNAME/PTR/TXT queries
 # when the selected policy action is pass or observe. Set exactly one record
 # family; names may begin with '*.' for a one-label wildcard, and an explicit
 # rule action wins.
