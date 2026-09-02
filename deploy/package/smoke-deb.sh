@@ -1,6 +1,8 @@
 #!/bin/sh
 set -eu
 
+export DEBIAN_FRONTEND=noninteractive
+
 if [ "${BLACKHOLE_SMOKE_TRACE:-}" = 1 ]; then
     set -x
 fi
@@ -46,7 +48,7 @@ cp /etc/passwd /etc/group /etc/shadow "$root/etc/"
 phase 'unpack initial package'
 dpkg --root="$root" --unpack "$package"
 phase 'configure initial package'
-dpkg --root="$root" --configure blackhole
+dpkg --root="$root" --force-confold --configure blackhole
 
 old_version=$(dpkg-deb --field "$package" Version)
 new_version=$(dpkg-deb --field "$upgrade_package" Version)
@@ -66,7 +68,7 @@ printf 'operator-policy = "retain-me"\n' > "$root/etc/blackhole/blackhole.toml"
 phase 'unpack upgrade package'
 dpkg --root="$root" --force-confold --unpack "$upgrade_package"
 phase 'configure upgrade package'
-dpkg --root="$root" --configure blackhole
+dpkg --root="$root" --force-confold --configure blackhole
 phase 'verify installed package'
 grep -Fx 'operator-policy = "retain-me"' "$root/etc/blackhole/blackhole.toml" >/dev/null
 
