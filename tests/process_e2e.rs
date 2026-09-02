@@ -1416,6 +1416,27 @@ fn shipped_binary_loads_a_remote_country_map_through_proxima_http() {
     let message = parse_message(&response[..length]).expect("parse remote country response");
     assert_eq!(message.header.id, 0x5500);
     assert_eq!(message.header.flags.rcode(), 5);
+
+    let mut tcp = TcpStream::connect(listener_addr).expect("connect remote country TCP client");
+    tcp.set_read_timeout(Some(Duration::from_secs(3)))
+        .expect("set remote country TCP timeout");
+    let tcp_query = query(0x5501, "remote-country.example.");
+    let tcp_length = u16::try_from(tcp_query.len()).expect("remote country TCP query fits");
+    tcp.write_all(&tcp_length.to_be_bytes())
+        .expect("write remote country TCP query length");
+    tcp.write_all(&tcp_query)
+        .expect("write remote country TCP query");
+    let mut tcp_response_length = [0u8; 2];
+    tcp.read_exact(&mut tcp_response_length)
+        .expect("read remote country TCP response length");
+    let tcp_response_length = usize::from(u16::from_be_bytes(tcp_response_length));
+    let mut tcp_response = vec![0u8; tcp_response_length];
+    tcp.read_exact(&mut tcp_response)
+        .expect("read remote country TCP response");
+    let tcp_message = parse_message(&tcp_response).expect("parse remote country TCP response");
+    assert_eq!(tcp_message.header.id, 0x5501);
+    assert_eq!(tcp_message.header.flags.rcode(), 5);
+
     let request = map_thread.join().expect("reap country map server");
     assert!(
         request.contains("/country.txt"),
