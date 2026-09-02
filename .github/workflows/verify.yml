@@ -23,6 +23,18 @@ jobs:
         with:
           targets: thumbv7m-none-eabi
       - uses: Swatinem/rust-cache@v2
+      - name: record Linux provenance
+        run: |
+          {
+            echo "source_commit=$GITHUB_SHA"
+            rustc -vV
+            cargo -vV
+            uname -a
+            echo "cargo_lock_sha256=$(sha256sum Cargo.lock | awk '{print $1}')"
+            echo "source_tree_sha256=$(git ls-files -z | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
+            echo "fuzz_corpus_files=$(find fuzz/corpus/query_view -type f | wc -l)"
+            echo "fuzz_corpus_sha256=$(find fuzz/corpus/query_view -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
+          } > linux-provenance.txt
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - run: cargo check --locked --all-targets
@@ -116,7 +128,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: blackhole-linux-capabilities-${{ github.sha }}
-          path: systemd-capabilities.log
+          path: |
+            systemd-capabilities.log
+            linux-provenance.txt
       - name: run systemd install and rollback smoke
         id: systemd-smoke
         # The smoke is disposable host evidence. Hosted runners may expose a
@@ -142,7 +156,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: blackhole-linux-smoke-${{ github.sha }}
-          path: systemd-smoke.log
+          path: |
+            systemd-smoke.log
+            linux-provenance.txt
       - name: report systemd smoke failure
         if: ${{ always() && steps.systemd-smoke.outcome == 'failure' }}
         run: |
@@ -167,7 +183,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: blackhole-debian-smoke-${{ github.sha }}
-          path: debian-smoke.log
+          path: |
+            debian-smoke.log
+            linux-provenance.txt
       - name: report Debian package smoke failure
         if: ${{ always() && steps.debian-smoke.outcome == 'failure' }}
         run: |

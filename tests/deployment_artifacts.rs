@@ -247,6 +247,29 @@ fn workflow_reports_platform_smoke_failures() {
     assert!(workflow.contains("always() && steps.systemd-smoke.outcome == 'failure'"));
 }
 
+#[test]
+fn linux_diagnostic_artifacts_include_job_provenance() {
+    let workflow = fs::read_to_string(VERIFY_WORKFLOW).expect("read verification workflow");
+    let linux = workflow.find("  linux:").expect("Linux verification job");
+    let macos = workflow.find("  macos:").expect("macOS verification job");
+    let linux = &workflow[linux..macos];
+    assert!(linux.contains("name: record Linux provenance"));
+    for artifact in [
+        "blackhole-linux-capabilities-",
+        "blackhole-linux-smoke-",
+        "blackhole-debian-smoke-",
+    ] {
+        let start = linux.find(artifact).expect("Linux diagnostic artifact");
+        let end = linux[start..]
+            .find("      -")
+            .map_or(linux.len(), |offset| start + offset);
+        assert!(
+            linux[start..end].contains("linux-provenance.txt"),
+            "{artifact} lacks provenance"
+        );
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn installers_are_executable() {
