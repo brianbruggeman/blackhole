@@ -192,6 +192,7 @@ jobs:
             echo "runner=$(sw_vers -productVersion) $(uname -a)"
             sudo -n id
             launchctl version
+            sudo -n pfctl -s info || true
             sudo -n launchctl print system/com.brianbruggeman.blackhole || true
           } 2>&1 | tee launchd-capabilities.log
       - name: run privileged capture smoke
