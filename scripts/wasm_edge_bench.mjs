@@ -22,6 +22,12 @@ const validPacket = Uint8Array.from([
   0x03, 0x77, 0x77, 0x77, 0x07, 0x65, 0x78, 0x61, 0x6d, 0x70, 0x6c, 0x65,
   0x00, 0x00, 0x01, 0x00, 0x01,
 ]);
+const maximumNameLabels = ["a".repeat(63), "b".repeat(63), "c".repeat(63), "d".repeat(61)];
+const maximumPacket = Uint8Array.from([
+  0x12, 0x35, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  ...maximumNameLabels.flatMap((label) => [label.length, ...new TextEncoder().encode(label)]),
+  0x00, 0x00, 0x01, 0x00, 0x01,
+]);
 const shortPacket = validPacket.slice(0, 11);
 const longPacket = Uint8Array.from([
   0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -33,7 +39,7 @@ const adversarialPacket = Uint8Array.from([
   0xc0, 0x0c, 0x00, 0x01, 0x00, 0x01,
 ]);
 const pointer = 65536;
-const packets = [validPacket, shortPacket, longPacket, adversarialPacket];
+const packets = [validPacket, shortPacket, longPacket, maximumPacket, adversarialPacket];
 const pointers = packets.map((packet, index) => {
   const packetPointer = pointer + index * 4096;
   new Uint8Array(memory.buffer, packetPointer, packet.length).set(packet);
@@ -77,6 +83,7 @@ const workloads = new Map([
   ["valid", validPacket],
   ["short", shortPacket],
   ["long", longPacket],
+  ["maximum", maximumPacket],
   ["adversarial", adversarialPacket],
 ]);
 for (const [name, packet] of workloads) {
@@ -84,7 +91,7 @@ for (const [name, packet] of workloads) {
   console.log(`${name}_result=${blackhole_edge_probe(pointers[packets.indexOf(packet)], packet.length)}`);
   console.log(`${name}_p50_ns=${result.p50} ${name}_p95_ns=${result.p95} ${name}_p99_ns=${result.p99} ${name}_cov=${result.cov} ${name}_checksum=${result.checksum}`);
 }
-const mixed = [validPacket, longPacket, adversarialPacket];
+const mixed = [validPacket, longPacket, maximumPacket, adversarialPacket];
 const mixedResult = measure(mixed);
 console.log(`mixed_p50_ns=${mixedResult.p50} mixed_p95_ns=${mixedResult.p95} mixed_p99_ns=${mixedResult.p99} mixed_cov=${mixedResult.cov} mixed_checksum=${mixedResult.checksum}`);
 
