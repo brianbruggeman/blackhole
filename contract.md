@@ -60,6 +60,12 @@ count and verifies deletion of the exact oldest generation. Its encoded size is 
 `privacy.query_recording_max_bytes`; operators must configure rotation and deletion
 before enabling it.
 
+The authenticated `POST /policy/preview` control-plane route is a dry-run of
+the live policy matcher. It accepts an ASCII DNS name, non-zero qtype and
+qclass, and an optional client address, and returns the selected action and
+matched rule ID. It does not execute rewrites or forwarding, increment
+decision counters, emit recording events, or retain the supplied address.
+
 Upstream transport failures are observed before they are returned through the
 existing Proxima telemetry stream. Their bounded causes distinguish timeout,
 wire decoding, response-ID mismatch, I/O, and configuration failures; an

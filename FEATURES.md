@@ -238,6 +238,10 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   blocklist-source, profile, group, and country-entry counts without source
   paths, query names, credentials, client identities, or packet payloads; its
   monotonic policy generation advances once per successful publication.
+- Authenticated bounded `POST /policy/preview` dry-runs the live matcher for
+  an operator-supplied ASCII name, qtype, qclass, and optional client address;
+  it reports the selected action and rule ID without executing DNS, consulting
+  upstream, changing counters, or retaining the supplied address.
 - The same policy status projection reports the live legacy-domain count,
   legacy mode, and default action without exposing legacy domain names.
 - The authenticated control plane can also remove domain rules by stable ID;

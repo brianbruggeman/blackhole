@@ -6544,6 +6544,57 @@ mod runtime {
             .to_string()
         }
 
+        /// Preview the action selected by the live policy without executing a
+        /// DNS request, changing counters, consulting upstream, or retaining
+        /// the supplied client address. This is an authenticated operator
+        /// control-plane diagnostic for rule and selector workflows.
+        pub(crate) fn admin_policy_preview(
+            &self,
+            name: &str,
+            qtype: u16,
+            qclass: u16,
+            client: Option<std::net::IpAddr>,
+        ) -> Result<String, String> {
+            if qtype == 0 || qclass == 0 {
+                return Err("qtype and qclass must be non-zero".into());
+            }
+            let name = normalize(name);
+            if !valid_dns_name(&name) {
+                return Err("name must be an ASCII DNS name".into());
+            }
+            let mut wire = Vec::new();
+            proxima_protocols::dns::encode::encode_query(
+                0,
+                true,
+                proxima_protocols::dns::encode::EncodeQuestion {
+                    name: &name,
+                    qtype,
+                    qclass,
+                },
+                &mut wire,
+            )
+            .map_err(|error| error.to_string())?;
+            let view = crate::query::QueryView::parse(&wire).map_err(|error| error.to_string())?;
+            let action = self.action_for_view_with_client(view, client);
+            let matched_rule_id =
+                if self.rules_configured.load(Ordering::Acquire) && !self.deny_client(client) {
+                    self.decision(&view.to_owned(), client)
+                        .map(|decision| decision.rule_id)
+                } else {
+                    None
+                };
+            Ok(serde_json::json!({
+                "name": name,
+                "qtype": qtype,
+                "qclass": qclass,
+                "action": action_label(action),
+                "matched_rule_id": matched_rule_id,
+                "filtering_enabled": *self.filtering_enabled.snapshot(),
+                "rules_configured": self.rules_configured.load(Ordering::Acquire),
+            })
+            .to_string())
+        }
+
         /// Return the authenticated operator's bounded blocklist source
         /// configuration and loaded rule count. This is configuration
         /// inspection, not query telemetry; it never returns source contents.

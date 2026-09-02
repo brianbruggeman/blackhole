@@ -39,6 +39,15 @@ struct FilteringUpdate {
 }
 
 #[derive(Debug, serde::Deserialize)]
+struct PolicyPreview {
+    name: String,
+    qtype: u16,
+    qclass: u16,
+    #[serde(default)]
+    client: Option<IpAddr>,
+}
+
+#[derive(Debug, serde::Deserialize)]
 struct ProfileUpsert {
     profiles: Vec<ServiceProfileConfig>,
 }
@@ -540,6 +549,33 @@ impl SendPipe for AdminHandler {
                 }
             }
             ("GET", "/policy/status") => Ok(Response::ok(self.policy.admin_policy_status())),
+            ("POST", "/policy/preview") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let preview = match serde_json::from_slice::<PolicyPreview>(&request.payload) {
+                    Ok(preview) => preview,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                match self.policy.admin_policy_preview(
+                    &preview.name,
+                    preview.qtype,
+                    preview.qclass,
+                    preview.client,
+                ) {
+                    Ok(result) => Ok(Response::ok(result)),
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
             ("POST", "/reload/filtering") => {
                 if request.payload.len() > MAX_POLICY_BODY_BYTES {
                     return Ok(Response::new(413));
@@ -1322,6 +1358,7 @@ impl SendPipe for AdminHandler {
                 | "/country/status"
                 | "/reload/country/replace"
                 | "/policy/status"
+                | "/policy/preview"
                 | "/blocklists"
                 | "/policy-bundle"
                 | "/privacy/status"
@@ -1857,6 +1894,49 @@ mod tests {
         let abuse_status: serde_json::Value =
             serde_json::from_slice(&abuse_status.payload).expect("open abuse status JSON");
         assert_eq!(abuse_status["global_breaker_open"], true);
+    }
+
+    #[test]
+    fn policy_preview_reports_selected_rule_without_executing_dns() {
+        let mut config = crate::Config::default();
+        config.policy.rules = vec![RuleConfig {
+            enabled: true,
+            id: 41,
+            domain: "blocked.example".into(),
+            action: crate::Action::Reject,
+            priority: 7,
+            qtype: Some(1),
+            qtypes: Vec::new(),
+            qclass: None,
+            qclasses: Vec::new(),
+            client: Some("192.0.2.10".parse().expect("client")),
+            client_cidr: None,
+            client_cidrs: Vec::new(),
+            client_identity: None,
+        }];
+        let handler = AdminHandler::new(Arc::new(Policy::new(config).expect("preview policy")));
+        let request = Request::builder()
+            .method("POST")
+            .path("/policy/preview")
+            .payload(r#"{"name":"blocked.example.","qtype":1,"qclass":1,"client":"192.0.2.10"}"#)
+            .build()
+            .expect("preview request");
+        let response = block_on(handler.call(request)).expect("preview response");
+        assert_eq!(response.status, 200);
+        let preview: serde_json::Value =
+            serde_json::from_slice(&response.payload).expect("preview JSON");
+        assert_eq!(preview["action"], "reject");
+        assert_eq!(preview["matched_rule_id"], 41);
+        assert_eq!(preview["name"], "blocked.example");
+
+        let invalid = Request::builder()
+            .method("POST")
+            .path("/policy/preview")
+            .payload(r#"{"name":"bad name","qtype":1,"qclass":1}"#)
+            .build()
+            .expect("invalid preview request");
+        let response = block_on(handler.call(invalid)).expect("invalid preview response");
+        assert_eq!(response.status, 422);
     }
 
     #[test]

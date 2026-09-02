@@ -227,6 +227,8 @@ publishing the complete bundle. The same routes are available as
 authenticated `GET /health`, `GET /status`, bounded `GET /admission/status`,
 `GET /country/status`,
 `GET /policy/status`,
+`POST /policy/preview` (an authenticated dry-run for a name, qtype, qclass,
+and optional client address),
 `GET /abuse/denylist`,
 `GET /policy-bundle`,
 `GET /rules`, `GET /logs`,
