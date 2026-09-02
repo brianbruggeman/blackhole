@@ -11,7 +11,7 @@ use proxima::{ProximaError, Request, Response, SendPipe};
 
 use crate::{
     AdmissionConfig, ClientGroupConfig, ClientIdentityConfig, CountryPolicyConfig, Mode, Policy,
-    RegexRuleConfig, RewriteConfig, RuleConfig, ServiceProfileConfig,
+    RegexRuleConfig, RewriteConfig, RewriteSelector, RuleConfig, ServiceProfileConfig,
 };
 
 const MAX_POLICY_BODY_BYTES: usize = 64 * 1024;
@@ -1486,6 +1486,29 @@ impl SendPipe for AdminHandler {
                     ))),
                 }
             }
+            ("POST", "/reload/rewrites/remove-scoped") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let selectors =
+                    match serde_json::from_slice::<Vec<RewriteSelector>>(&request.payload) {
+                        Ok(selectors) => selectors,
+                        Err(error) => {
+                            return Ok(Response::new(400).with_body(format!(
+                                "{{\"status\":\"error\",\"message\":{}}}",
+                                serde_json::to_string(&error.to_string())
+                                    .unwrap_or_else(|_| "null".into())
+                            )));
+                        }
+                    };
+                match self.policy.remove_rewrites_scoped(&selectors) {
+                    Ok(_) => Ok(Response::ok("{\"status\":\"removed\"}")),
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
             (
                 _,
                 "/"
@@ -1557,7 +1580,8 @@ impl SendPipe for AdminHandler {
                 | "/validate/regex"
                 | "/reload/rewrites"
                 | "/reload/rewrites/upsert"
-                | "/reload/rewrites/remove",
+                | "/reload/rewrites/remove"
+                | "/reload/rewrites/remove-scoped",
             ) => Ok(Response::new(405)),
             _ => Ok(Response::not_found()),
         }
@@ -3934,6 +3958,23 @@ mod tests {
         );
         let answer = policy.evaluate(&query).expect("rewrite retained");
         assert_eq!(answer.records[0].rdata, vec![198, 51, 100, 1]);
+
+        let scoped_remove = Request::builder()
+            .method("POST")
+            .path("/reload/rewrites/remove-scoped")
+            .payload(r#"[{"name":"router.example","client_identity":"family-router"}]"#)
+            .build()
+            .expect("scoped rewrite removal request");
+        assert_eq!(
+            block_on(handler.call(scoped_remove))
+                .expect("scoped removal response")
+                .status,
+            200
+        );
+        let listed = block_on(handler.call(request("GET", "/rewrites"))).expect("rewrite list");
+        let listed: serde_json::Value =
+            serde_json::from_slice(&listed.payload).expect("rewrite list JSON");
+        assert_eq!(listed["total"], 2);
 
         let remove = Request::builder()
             .method("POST")

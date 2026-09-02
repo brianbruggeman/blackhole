@@ -1492,6 +1492,13 @@ mod runtime {
     }
 
     #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+    pub struct RewriteSelector {
+        pub name: String,
+        #[serde(default)]
+        pub client_identity: Option<String>,
+    }
+
+    #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
     pub struct ServiceProfileConfig {
         pub id: u32,
         pub name: String,
@@ -5479,6 +5486,50 @@ mod runtime {
                 });
             }
             self.publish_rewrites_locked(&next, "rewrites_remove", started)
+        }
+
+        /// Remove local rewrites by normalized DNS name and optional client identity.
+        /// Unknown selectors fail without changing the published rewrite table.
+        pub fn remove_rewrites_scoped(
+            &self,
+            selectors: &[RewriteSelector],
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
+            let started = Instant::now();
+            if selectors.is_empty() {
+                return Err(policy::PolicyError::InvalidRewrite {
+                    name: "<rewrite-removal>".into(),
+                    reason: "at least one rewrite selector is required".into(),
+                });
+            }
+            let mut requested = BTreeSet::new();
+            for selector in selectors {
+                let name = normalize(&selector.name);
+                if name.is_empty() {
+                    return Err(policy::PolicyError::InvalidRewrite {
+                        name: "<rewrite-removal>".into(),
+                        reason: "rewrite names must be non-empty".into(),
+                    });
+                }
+                if !requested.insert((selector.client_identity.clone(), name)) {
+                    return Err(policy::PolicyError::InvalidRewrite {
+                        name: selector.name.clone(),
+                        reason: "rewrite selector must be unique within a removal".into(),
+                    });
+                }
+            }
+            let current = self.rewrite_configs.snapshot().as_ref().clone();
+            let mut next = current.clone();
+            next.retain(|rewrite| {
+                !requested.contains(&(rewrite.client_identity.clone(), normalize(&rewrite.name)))
+            });
+            if next.len() == current.len() {
+                return Err(policy::PolicyError::InvalidRewrite {
+                    name: "<rewrite-removal>".into(),
+                    reason: "no requested rewrite exists".into(),
+                });
+            }
+            self.publish_rewrites_locked(&next, "rewrites_remove_scoped", started)
         }
 
         /// Atomically replace the complete local rewrite table. Invalid

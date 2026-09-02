@@ -347,9 +347,11 @@ publishing partial state; each mapping can be disabled while retaining its
 metadata, may select a default action for unmatched queries, and invalid or
 unknown updates fail closed.
 `POST /reload/rewrites/upsert` replaces or adds local A/AAAA/CNAME/PTR/TXT rewrites by
-normalized DNS name, while `POST /reload/rewrites/remove` removes named
-rewrites atomically; `POST /reload/rewrites` replaces the complete rewrite
-table. Invalid and unknown updates fail without publication.
+identity and normalized DNS name, while `POST /reload/rewrites/remove` removes all
+identity variants of named rewrites atomically. `POST /reload/rewrites/remove-scoped`
+accepts selectors such as `[{"name":"router.example","client_identity":"family-router"}]`
+to remove only the selected variant; `POST /reload/rewrites` replaces the complete
+rewrite table. Invalid and unknown updates fail without publication.
 `POST /reload/policy-bundle` replaces the domain, regex, profile, client-group,
 client-identity,
 local-rewrite, and country-policy tables as one validated snapshot while
