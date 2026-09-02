@@ -413,6 +413,20 @@ async fn restore_persisted_abuse(
         if kind != "blackhole.ddos_incident" && kind != "blackhole.ddos_revoke" {
             continue;
         }
+        if kind == "blackhole.ddos_incident"
+            && payload.get("scope").and_then(serde_json::Value::as_str) == Some("global")
+        {
+            let Some(expires_at_ms) = payload
+                .get("expires_at_ms")
+                .and_then(serde_json::Value::as_u64)
+            else {
+                continue;
+            };
+            if policy.restore_global_abuse_incident(expires_at_ms, now_ms) {
+                restored = restored.saturating_add(1);
+            }
+            continue;
+        }
         let clients = if let Some(values) = payload.get("clients") {
             let values = values.as_array().ok_or_else(|| {
                 ProximaError::Record("abuse recording revoke clients is not an array".into())
@@ -458,18 +472,6 @@ async fn restore_persisted_abuse(
         if kind == "blackhole.ddos_revoke" {
             for client in clients {
                 policy.revoke_abuse_incident(client);
-            }
-            continue;
-        }
-        if payload.get("scope").and_then(serde_json::Value::as_str) == Some("global") {
-            let Some(expires_at_ms) = payload
-                .get("expires_at_ms")
-                .and_then(serde_json::Value::as_u64)
-            else {
-                continue;
-            };
-            if policy.restore_global_abuse_incident(expires_at_ms, now_ms) {
-                restored = restored.saturating_add(1);
             }
             continue;
         }
