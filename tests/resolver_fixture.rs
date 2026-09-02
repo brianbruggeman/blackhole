@@ -821,6 +821,15 @@ async fn listener_serves_local_rewrite_on_the_real_udp_path() {
             txt: None,
             ttl: 45,
         },
+        RewriteConfig {
+            name: "service.home.arpa".into(),
+            ipv4: None,
+            ipv6: None,
+            cname: None,
+            ptr: None,
+            txt: Some("v=blackhole1".into()),
+            ttl: 30,
+        },
     ];
     let policy = Arc::new(Policy::new(config).expect("valid rewrite policy"));
     let listener_addr = test_listener_addr();
@@ -901,6 +910,42 @@ async fn listener_serves_local_rewrite_on_the_real_udp_path() {
         }
         other => panic!("expected PTR answer, got {other:?}"),
     }
+
+    query.clear();
+    encode::encode_query(
+        0x4323,
+        true,
+        encode::EncodeQuestion {
+            name: "service.home.arpa.",
+            qtype: 16,
+            qclass: 1,
+        },
+        &mut query,
+    )
+    .expect("encode TXT rewrite query");
+    std::future::poll_fn(|cx| client.poll_send_to(cx, &query, listener_addr))
+        .await
+        .expect("send TXT rewrite query");
+    let (len, _) = std::future::poll_fn(|cx| client.poll_recv_from(cx, &mut response))
+        .await
+        .expect("receive TXT rewrite response");
+    let message = parse_message(&response[..len]).expect("parse TXT rewrite response");
+    let answer = message
+        .answers()
+        .next()
+        .expect("TXT rewrite answer present")
+        .expect("valid TXT rewrite answer");
+    assert_eq!(message.header.id, 0x4323);
+    assert_eq!(message.header.flags.rcode(), 0);
+    assert_eq!(
+        answer.rdata,
+        proxima_protocols::dns::RData::Raw {
+            rtype: 16,
+            bytes: &[
+                12, b'v', b'=', b'b', b'l', b'a', b'c', b'k', b'h', b'o', b'l', b'e', b'1'
+            ]
+        }
+    );
     server.stop();
 }
 
