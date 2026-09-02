@@ -105,7 +105,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <h2>Profiles</h2><textarea id="profile-editor" rows="8" cols="80"></textarea><button id="upsert-profiles">Upsert profiles</button><div id="profile-controls"></div><pre id="profiles"></pre>
 <h2>Groups</h2><textarea id="group-editor" rows="8" cols="80"></textarea><button id="upsert-groups">Upsert groups</button><div id="group-controls"></div><pre id="groups"></pre>
 <h2>Identities</h2><textarea id="identity-editor" rows="8" cols="80"></textarea><button id="upsert-identities">Upsert identities</button><div id="identity-controls"></div><pre id="identities"></pre>
-<h2>Rewrites</h2><textarea id="rewrite-editor" rows="8" cols="80"></textarea><button id="replace-rewrites">Replace rewrites</button><pre id="rewrites"></pre>
+<h2>Rewrites</h2><textarea id="rewrite-editor" rows="8" cols="80"></textarea><button id="upsert-rewrites">Upsert rewrites</button><button id="replace-rewrites">Replace rewrites</button><div id="rewrite-controls"></div><pre id="rewrites"></pre>
 <h2>Privacy log</h2><pre id="logs"></pre>
 <script>
 const load = (path, target) => fetch(path).then(response => response.json()).then(value => {
@@ -160,6 +160,17 @@ const load = (path, target) => fetch(path).then(response => response.json()).the
     document.querySelector('#rule-editor').value = JSON.stringify(value.rules || [], null, 2);
     document.querySelector('#regex-editor').value = JSON.stringify(value.regex_rules || [], null, 2);
   }
+  if (path === '/rewrites') {
+    const controls = document.querySelector('#rewrite-controls');
+    controls.replaceChildren();
+    for (const item of value.rewrites || []) {
+      const remove = document.createElement('button');
+      remove.textContent = `Remove rewrite ${item.name}`;
+      remove.onclick = () => send('/reload/rewrites/remove', [item.name]);
+      controls.append(remove, document.createTextNode(' '));
+    }
+    document.querySelector('#rewrite-editor').value = JSON.stringify(value.rewrites || [], null, 2);
+  }
   if (path === '/policy-bundle') document.querySelector(target).value = JSON.stringify(value, null, 2);
   else if (path === '/abuse/denylist') document.querySelector(target).value = JSON.stringify(value, null, 2);
   else document.querySelector(target).textContent = JSON.stringify(value, null, 2);
@@ -208,6 +219,7 @@ document.querySelector('#upsert-groups').onclick = () => edit('#group-editor', '
 document.querySelector('#upsert-identities').onclick = () => edit('#identity-editor', '/reload/client-identities/upsert', 'client_identities');
 document.querySelector('#replace-country').onclick = replaceCountry;
 document.querySelector('#replace-rewrites').onclick = replaceRewrites;
+document.querySelector('#upsert-rewrites').onclick = () => edit('#rewrite-editor', '/reload/rewrites/upsert', 'rewrites');
 document.querySelector('#upsert-rules').onclick = () => editArray('#rule-editor', '/reload/policy/upsert');
 document.querySelector('#validate-rules').onclick = () => editArray('#rule-editor', '/validate/policy');
 document.querySelector('#validate-regex').onclick = () => editArray('#regex-editor', '/validate/regex');
@@ -1544,6 +1556,8 @@ mod tests {
             b"country-editor".as_slice(),
             b"replace-country".as_slice(),
             b"rewrite-editor".as_slice(),
+            b"rewrite-controls".as_slice(),
+            b"upsert-rewrites".as_slice(),
             b"replace-rewrites".as_slice(),
             b"rule-editor".as_slice(),
             b"regex-editor".as_slice(),
