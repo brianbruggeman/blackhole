@@ -895,6 +895,7 @@ mod runtime {
         entries: Vec<CountryEntry>,
         source_fingerprint: u64,
         source_sha256: String,
+        last_good_active: bool,
         unmapped_action: CountryUnmappedAction,
         deny: BTreeSet<String>,
         observe: BTreeSet<String>,
@@ -2544,7 +2545,12 @@ mod runtime {
                 fallback.last_good_path = None;
                 fallback.max_age_secs = None;
                 load_country_policy_from_source(&fallback)
-                    .map(|(policy, _)| policy)
+                    .map(|(mut policy, _)| {
+                        if let Some(policy) = policy.as_mut() {
+                            policy.last_good_active = true;
+                        }
+                        policy
+                    })
                     .map_err(|fallback_error| policy::PolicyError::InvalidCountryMap {
                         path: last_good_path.into(),
                         reason: format!(
@@ -2904,6 +2910,7 @@ mod runtime {
                 entries,
                 source_fingerprint: source_fingerprint(contents.as_bytes()),
                 source_sha256: contents_sha256,
+                last_good_active: false,
                 unmapped_action: config.unmapped_action,
                 deny,
                 observe,
@@ -8316,6 +8323,13 @@ mod runtime {
             serde_json::json!({
                 "map_configured": policy.is_some(),
                 "source_kind": source_kind,
+                "active_source": policy.as_ref().map_or("none", |value| {
+                    if value.last_good_active {
+                        "last_good"
+                    } else {
+                        "primary"
+                    }
+                }),
                 "source_status": source_status,
                 "source_age_secs": source_age_secs,
                 "freshness_valid": freshness_valid,
@@ -11887,7 +11901,7 @@ mod runtime {
             );
 
             std::fs::write(&source, "not a country map\n").expect("corrupt country source");
-            assert_eq!(policy.reload_country_policy(), Ok(ReloadState::Unchanged));
+            assert_eq!(policy.reload_country_policy(), Ok(ReloadState::Published));
             let country_policy = policy
                 .country_policy
                 .snapshot()
@@ -11895,6 +11909,10 @@ mod runtime {
                 .clone()
                 .expect("recovered country policy");
             assert!(country_policy.denied("192.0.2.10".parse().expect("client address")));
+            let status: serde_json::Value =
+                serde_json::from_str(&policy.admin_country_status()).expect("country status");
+            assert_eq!(status["active_source"], "last_good");
+            assert_eq!(policy.reload_country_policy(), Ok(ReloadState::Unchanged));
             std::fs::remove_file(source).expect("remove country source");
             std::fs::remove_file(last_good).expect("remove last-good map");
         }
