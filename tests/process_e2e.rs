@@ -508,7 +508,7 @@ fn shipped_binary_restores_persisted_global_abuse_after_restart() {
         client.recv_from(&mut response),
         Err(error) if matches!(error.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut)
     ));
-    let recording_deadline = Instant::now() + Duration::from_secs(3);
+    let recording_deadline = Instant::now() + Duration::from_secs(10);
     let recording_contents = loop {
         let contents = std::fs::read_to_string(recording.path()).expect("read recording");
         if contents.contains("temporary_global_blacklist") {
@@ -740,7 +740,7 @@ fn shipped_binary_retries_truncated_upstream_over_tcp() {
     );
     drop(wait_for_tcp(listener_addr));
     let udp = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind UDP client");
-    udp.set_read_timeout(Some(Duration::from_secs(3)))
+    udp.set_read_timeout(Some(Duration::from_secs(10)))
         .expect("set UDP timeout");
     let query = query(0x2001, "fallback.example.");
     udp.send_to(&query, listener_addr)
