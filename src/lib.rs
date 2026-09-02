@@ -6266,10 +6266,13 @@ mod runtime {
                                 .duration_since(modified)
                                 .ok()
                                 .map(|duration| duration.as_secs());
-                            let fresh = config
-                                .max_age_secs
-                                .map_or(Some(true), |max_age| age.map(|age| age <= max_age));
-                            ("ok", age, fresh)
+                            let fresh = match (config.max_age_secs, age) {
+                                (_, None) => Some(false),
+                                (None, Some(_)) => Some(true),
+                                (Some(max_age), Some(age)) => Some(age <= max_age),
+                            };
+                            let status = age.map_or("clock_skew", |_| "ok");
+                            (status, age, fresh)
                         }
                         Err(_) => ("unreadable", None, Some(false)),
                     },
