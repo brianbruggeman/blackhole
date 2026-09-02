@@ -490,6 +490,34 @@ impl SendPipe for AdminHandler {
                     ))),
                 }
             }
+            ("POST", "/abuse/rate-limit-whitelist/add")
+            | ("POST", "/abuse/rate-limit-whitelist/remove") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let cidrs = match serde_json::from_slice::<Vec<String>>(&request.payload) {
+                    Ok(cidrs) => cidrs,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                let result = if path.ends_with("/add") {
+                    self.policy.add_global_rate_limit_whitelist_cidrs(&cidrs)
+                } else {
+                    self.policy.remove_global_rate_limit_whitelist_cidrs(&cidrs)
+                };
+                match result {
+                    Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
             ("POST", "/reload/admission") => {
                 if request.payload.len() > MAX_POLICY_BODY_BYTES {
                     return Ok(Response::new(413));
@@ -1402,6 +1430,8 @@ impl SendPipe for AdminHandler {
                 | "/abuse/incidents/approve"
                 | "/abuse/denylist/add"
                 | "/abuse/denylist/remove"
+                | "/abuse/rate-limit-whitelist/add"
+                | "/abuse/rate-limit-whitelist/remove"
                 | "/reload/admission"
                 | "/reload/admission/denylist"
                 | "/country/status"
@@ -2175,6 +2205,51 @@ mod tests {
             serde_json::from_slice::<Vec<String>>(&exported.payload).expect("export JSON"),
             vec!["2001:db8:42::/48"]
         );
+    }
+
+    #[test]
+    fn global_rate_limit_whitelist_can_be_added_and_removed_atomically() {
+        let handler = AdminHandler::new(Arc::new(
+            Policy::new(crate::Config::default()).expect("default policy"),
+        ));
+        let add = Request::builder()
+            .method("POST")
+            .path("/abuse/rate-limit-whitelist/add")
+            .payload(r#"["192.0.2.10/32","2001:db8:42::/48"]"#)
+            .build()
+            .expect("valid whitelist add");
+        let response = block_on(handler.call(add)).expect("add response");
+        assert_eq!(response.status, 200);
+        let status = block_on(handler.call(request("GET", "/admission/status")))
+            .expect("admission status response");
+        let status: serde_json::Value = serde_json::from_slice(&status.payload).expect("status");
+        assert_eq!(status["global_rate_limit_whitelist_cidr_count"], 2);
+
+        let remove = Request::builder()
+            .method("POST")
+            .path("/abuse/rate-limit-whitelist/remove")
+            .payload(r#"["192.0.2.10/32"]"#)
+            .build()
+            .expect("valid whitelist removal");
+        let response = block_on(handler.call(remove)).expect("remove response");
+        assert_eq!(response.status, 200);
+        let status = block_on(handler.call(request("GET", "/admission/status")))
+            .expect("admission status response");
+        let status: serde_json::Value = serde_json::from_slice(&status.payload).expect("status");
+        assert_eq!(status["global_rate_limit_whitelist_cidr_count"], 1);
+
+        let invalid = Request::builder()
+            .method("POST")
+            .path("/abuse/rate-limit-whitelist/add")
+            .payload(r#"["not-a-cidr"]"#)
+            .build()
+            .expect("invalid whitelist add");
+        let response = block_on(handler.call(invalid)).expect("invalid response");
+        assert_eq!(response.status, 422);
+        let status = block_on(handler.call(request("GET", "/admission/status")))
+            .expect("admission status response");
+        let status: serde_json::Value = serde_json::from_slice(&status.payload).expect("status");
+        assert_eq!(status["global_rate_limit_whitelist_cidr_count"], 1);
     }
 
     #[test]

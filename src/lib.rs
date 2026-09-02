@@ -3851,6 +3851,37 @@ mod runtime {
             self.reload_admission(&admission)
         }
 
+        /// Add trusted networks to the global rate-limit whitelist. This
+        /// affects only the global ceiling; all client, network, response,
+        /// and abuse limits remain enforced.
+        pub fn add_global_rate_limit_whitelist_cidrs(
+            &self,
+            additions: &[String],
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let mut admission = self.admission_config();
+            for cidr in additions {
+                if !admission.global_rate_limit_whitelist_cidrs.contains(cidr) {
+                    admission
+                        .global_rate_limit_whitelist_cidrs
+                        .push(cidr.clone());
+                }
+            }
+            self.reload_admission(&admission)
+        }
+
+        /// Revoke trusted networks from the global rate-limit whitelist.
+        /// Removing an unknown entry is idempotent and safe for retries.
+        pub fn remove_global_rate_limit_whitelist_cidrs(
+            &self,
+            removals: &[String],
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let mut admission = self.admission_config();
+            admission
+                .global_rate_limit_whitelist_cidrs
+                .retain(|cidr| !removals.iter().any(|removal| removal == cidr));
+            self.reload_admission(&admission)
+        }
+
         /// Replace only the live denylist during startup recovery. All other
         /// admission settings remain untouched and the normal validation path
         /// still guards the bounded CIDR set.

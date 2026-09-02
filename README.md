@@ -92,6 +92,10 @@ Authenticated operators can export it at `GET /abuse/denylist`, add bounded
 entries with `POST /abuse/denylist/add`, and revoke entries with
 `POST /abuse/denylist/remove`; these operations publish through the same
 atomic admission snapshot and are safe to retry.
+The global rate-limit whitelist is similarly manageable through authenticated
+`POST /abuse/rate-limit-whitelist/add` and `/abuse/rate-limit-whitelist/remove`
+with bounded JSON CIDR arrays; it changes only the global ceiling exemption
+and is safe to retry.
 Set `[admission.ddos].persist_incidents = true` to persist temporary-blacklist
 events through the bounded Proxima recording sink; client, network, and global
 breaker markers are restored after restart until their configured expiry, and
@@ -257,6 +261,8 @@ in-flight capacity remains startup-only), bounded
 the configured client CIDRs), bounded
 `POST /abuse/denylist/add` and `/abuse/denylist/remove` (atomic bounded
 operator-managed additions and revocations), bounded
+`POST /abuse/rate-limit-whitelist/add` and `/abuse/rate-limit-whitelist/remove`
+(atomic bounded global-ceiling exemptions), bounded
 `POST /abuse/revoke` (atomic bounded temporary-incident revocation), bounded
 `POST /abuse/global/revoke` (durable global-breaker revocation), bounded
 `POST /abuse/incidents/approve` (atomic exact-client incident approval into the
