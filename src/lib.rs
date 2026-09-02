@@ -2837,6 +2837,16 @@ mod runtime {
                             .into(),
                 });
             }
+            if let (Some(configured), Some(advertised)) = (config.max_age_secs, remote_max_age_secs)
+                && advertised > configured
+            {
+                return Err(policy::PolicyError::InvalidCountryMap {
+                    path: path.into(),
+                    reason: format!(
+                        "hosted map Cache-Control max-age {advertised}s exceeds configured {configured}s freshness bound"
+                    ),
+                });
+            }
             String::from_utf8(bytes).map_err(|error| policy::PolicyError::InvalidCountryMap {
                 path: path.into(),
                 reason: format!("remote map is not UTF-8: {error}"),
@@ -11023,6 +11033,37 @@ mod runtime {
             assert!(http_source_parts("ftp://example.test/map.txt").is_none());
             assert!(http_source_parts("file:///etc/hosts").is_none());
             assert!(http_source_parts("https://example.test/map.txt").is_some());
+        }
+
+        #[test]
+        fn hosted_country_map_rejects_a_cache_window_above_the_configured_bound() {
+            use std::io::Write;
+
+            let server = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+                .expect("bind max-age fixture");
+            let address = server.local_addr().expect("max-age fixture address");
+            let thread = std::thread::spawn(move || {
+                let (mut stream, _) = server.accept().expect("accept max-age request");
+                let _ = read_http_request(&mut stream);
+                let body = b"US 192.0.2.0/24\n";
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nCache-Control: max-age=60\r\nConnection: close\r\n\r\n",
+                    body.len()
+                )
+                .expect("write max-age headers");
+                stream.write_all(body).expect("write max-age body");
+            });
+            let config = CountryPolicyConfig {
+                map_path: Some(format!("http://{address}/country.txt")),
+                max_age_secs: Some(30),
+                deny: vec!["US".into()],
+                ..Default::default()
+            };
+            let error = load_country_policy(&config)
+                .expect_err("advertised freshness wider than policy must fail closed");
+            assert!(error.to_string().contains("exceeds configured 30s"));
+            thread.join().expect("join max-age fixture");
         }
 
         #[test]
