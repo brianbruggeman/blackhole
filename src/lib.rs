@@ -7595,6 +7595,7 @@ mod runtime {
                 "profiles": profiles.len(),
                 "client_groups": client_groups.len(),
                 "identity_rules": identity_rules,
+                "allowlist_domains": self.config.policy.allowlist.len(),
                 "conditional_forwards": self.config.policy.conditional_forwards.len(),
                 "country_entries": country_policy.as_ref().as_ref().map_or(0, |policy| policy.entries.len()),
                 "country_deny_rules": country_policy.as_ref().as_ref().map_or(0, |policy| policy.deny.len()),
@@ -9078,6 +9079,9 @@ mod runtime {
                 client_identity: None,
             };
             policy.reload_rules(&[replacement]).expect("reload rules");
+            let status: serde_json::Value =
+                serde_json::from_str(&policy.admin_policy_status()).expect("policy status");
+            assert_eq!(status["allowlist_domains"], 1);
             assert_eq!(
                 policy
                     .evaluate(&query("deep.safe.example."))
