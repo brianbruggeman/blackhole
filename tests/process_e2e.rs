@@ -470,6 +470,66 @@ fn shipped_binary_applies_a_configured_blocklist_and_exception() {
 }
 
 #[test]
+fn shipped_binary_reloads_a_blocklist_while_serving_queries() {
+    let blocklist = NamedTempFile::new().expect("create blocklist");
+    std::fs::write(blocklist.path(), "||initial.example^\n").expect("write initial blocklist");
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("reserve listener port");
+    let listener_addr = listener.local_addr().expect("listener address");
+    drop(listener);
+    let mut config = NamedTempFile::new().expect("create config");
+    writeln!(
+        config,
+        "[server]\nlisten = \"{listener_addr}\"\n\n[policy]\ndefault_action = \"pass\"\nblocklists = [\"{}\"]\nblocklist_reload_interval_secs = 1",
+        blocklist.path().display()
+    )
+    .expect("write config");
+
+    let _child = ChildGuard(
+        Command::new(env!("CARGO_BIN_EXE_blackhole"))
+            .arg(config.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("start shipped blackhole binary"),
+    );
+    drop(wait_for_tcp(listener_addr));
+
+    let client = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind UDP client");
+    client
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .expect("set UDP timeout");
+    let mut response = [0u8; 4096];
+    client
+        .send_to(&query(0x5300, "initial.example."), listener_addr)
+        .expect("send initial blocked query");
+    let (length, _) = client
+        .recv_from(&mut response)
+        .expect("receive initial blocked response");
+    let initial = parse_message(&response[..length]).expect("parse initial blocked response");
+    assert_eq!(initial.header.flags.rcode(), 3);
+
+    std::fs::write(blocklist.path(), "||reloaded.example^\n").expect("replace blocklist");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        client
+            .send_to(&query(0x5301, "reloaded.example."), listener_addr)
+            .expect("send reloaded query");
+        if let Ok((length, _)) = client.recv_from(&mut response)
+            && let Ok(message) = parse_message(&response[..length])
+            && message.header.flags.rcode() == 3
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "blocklist reload was not observed"
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[test]
 fn shipped_binary_serves_ipv6_udp_datagrams_and_tcp_frames() {
     let listener = TcpListener::bind((Ipv6Addr::LOCALHOST, 0)).expect("reserve IPv6 listener port");
     let listener_addr = listener.local_addr().expect("IPv6 listener address");
