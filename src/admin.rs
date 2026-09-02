@@ -90,6 +90,8 @@ struct PolicyBundle {
     #[serde(default)]
     client_identities: Vec<ClientIdentityConfig>,
     #[serde(default)]
+    allowlist_by_identity: std::collections::BTreeMap<String, Vec<String>>,
+    #[serde(default)]
     rewrites: Vec<RewriteConfig>,
     #[serde(default)]
     country_policy: CountryPolicyConfig,
@@ -796,6 +798,7 @@ impl SendPipe for AdminHandler {
                         &bundle.profiles,
                         &bundle.client_groups,
                         &bundle.client_identities,
+                        &bundle.allowlist_by_identity,
                         &bundle.rewrites,
                         &bundle.country_policy,
                         bundle.blocklists.as_deref(),
@@ -833,6 +836,7 @@ impl SendPipe for AdminHandler {
                     &bundle.profiles,
                     &bundle.client_groups,
                     &bundle.client_identities,
+                    &bundle.allowlist_by_identity,
                     &bundle.rewrites,
                     &bundle.country_policy,
                     bundle.blocklists.as_deref(),
@@ -878,6 +882,7 @@ impl SendPipe for AdminHandler {
                     &config.profiles,
                     &config.client_groups,
                     &config.client_identities,
+                    &config.allowlist_by_identity,
                     &config.rewrites,
                     &config.country_policy,
                     config.blocklists.as_deref(),

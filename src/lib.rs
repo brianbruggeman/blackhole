@@ -4085,6 +4085,7 @@ mod runtime {
             profiles: &[ServiceProfileConfig],
             client_groups: &[ClientGroupConfig],
             client_identities: &[ClientIdentityConfig],
+            allowlist_by_identity: &BTreeMap<String, Vec<String>>,
             rewrite_configs: &[RewriteConfig],
             country_config: &CountryPolicyConfig,
             blocklist_paths: Option<&[String]>,
@@ -4105,7 +4106,7 @@ mod runtime {
             let mut generated = compile_profiles(profiles, client_groups)?;
             generated.extend(compile_allowlist_tables(
                 self.allowlist.snapshot().as_ref(),
-                self.allowlist_by_identity.snapshot().as_ref(),
+                allowlist_by_identity,
             )?);
             let _ = validate_client_identities(client_identities)?;
             let _ = compile_rewrites(rewrite_configs)?;
@@ -5116,6 +5117,7 @@ mod runtime {
                 &next.policy.profiles,
                 &next.policy.client_groups,
                 &next.policy.client_identities,
+                &next.policy.allowlist_by_identity,
                 &next.policy.rewrites,
                 &next.country_policy,
                 Some(&next.policy.blocklists),
@@ -5472,6 +5474,7 @@ mod runtime {
                 profiles,
                 client_groups,
                 &[],
+                self.allowlist_by_identity.snapshot().as_ref(),
                 rewrite_configs,
                 country_config,
                 blocklist_paths,
@@ -5493,6 +5496,7 @@ mod runtime {
             profiles: &[ServiceProfileConfig],
             client_groups: &[ClientGroupConfig],
             client_identities: &[ClientIdentityConfig],
+            allowlist_by_identity: &BTreeMap<String, Vec<String>>,
             rewrite_configs: &[RewriteConfig],
             country_config: &CountryPolicyConfig,
             blocklist_paths: Option<&[String]>,
@@ -5508,6 +5512,7 @@ mod runtime {
                 profiles,
                 client_groups,
                 client_identities,
+                allowlist_by_identity,
                 rewrite_configs,
                 country_config,
                 blocklist_paths,
@@ -5530,6 +5535,7 @@ mod runtime {
             profiles: &[ServiceProfileConfig],
             client_groups: &[ClientGroupConfig],
             client_identities: &[ClientIdentityConfig],
+            allowlist_by_identity: &BTreeMap<String, Vec<String>>,
             rewrite_configs: &[RewriteConfig],
             country_config: &CountryPolicyConfig,
             blocklist_paths: Option<&[String]>,
@@ -5550,7 +5556,7 @@ mod runtime {
             let mut generated = compile_profiles(profiles, client_groups)?;
             generated.extend(compile_allowlist_tables(
                 self.allowlist.snapshot().as_ref(),
-                self.allowlist_by_identity.snapshot().as_ref(),
+                allowlist_by_identity,
             )?);
             let client_identities = validate_client_identities(client_identities)?;
             self.validate_identity_upstreams(&client_identities)?;
@@ -5596,6 +5602,9 @@ mod runtime {
                     .client_identities
                     .read(|current| current == &client_identities)
                 && self
+                    .allowlist_by_identity
+                    .read(|current| current == allowlist_by_identity)
+                && self
                     .rewrite_configs
                     .read(|current| current == rewrite_configs)
                 && self
@@ -5633,6 +5642,8 @@ mod runtime {
             self.profiles_control.replace(profiles.to_vec());
             self.client_groups_control.replace(client_groups.to_vec());
             self.client_identity_control.replace(client_identities);
+            self.allowlist_by_identity_control
+                .replace(allowlist_by_identity.clone());
             self.rewrite_control.replace(rewrites);
             self.rewrite_configs_control
                 .replace(rewrite_configs.to_vec());
@@ -9599,7 +9610,7 @@ mod runtime {
             );
             assert_eq!(
                 policy.admin_allowlist(),
-                r#"{"count":1,"domains":["blocked.example"],"policy_generation":2}"#
+                r#"{"by_identity":{},"count":1,"domains":["blocked.example"],"policy_generation":2,"scoped_count":0}"#
             );
             assert!(policy.replace_allowlist(&["bad domain".into()]).is_err());
             assert_eq!(policy.allowlist.read(|current| current.clone()), domains);
@@ -10585,6 +10596,63 @@ mod runtime {
                 serde_json::from_str(&policy.admin_policy_status()).expect("policy status");
             assert_eq!(status["identity_rules"], 1);
             assert!(!status.to_string().contains("family-router"));
+        }
+
+        #[test]
+        fn identity_allowlist_overrides_global_blocklist() {
+            let mut config = Config::default();
+            config.policy.client_identities = vec![ClientIdentityConfig {
+                name: "family-router".into(),
+                enabled: true,
+                query_log_enabled: true,
+                statistics_enabled: true,
+                cache_enabled: true,
+                filtering_enabled: true,
+                default_action: Some(Action::Nxdomain),
+                upstream: None,
+                clients: vec!["192.0.2.10".parse().expect("client")],
+                max_queries_per_second: None,
+                max_response_bytes_per_second: None,
+                max_inflight_requests: None,
+                client_cidrs: Vec::new(),
+            }];
+            config.policy.rules = vec![RuleConfig {
+                enabled: true,
+                id: 20,
+                domain: "safe.example".into(),
+                action: Action::Nxdomain,
+                priority: 0,
+                qtype: None,
+                qtypes: Vec::new(),
+                qclass: None,
+                qclasses: Vec::new(),
+                client: None,
+                client_cidr: None,
+                client_cidrs: Vec::new(),
+                client_identity: None,
+            }];
+            config
+                .policy
+                .allowlist_by_identity
+                .insert("family-router".into(), vec!["safe.example".into()]);
+            let policy = Policy::new(config).expect("valid identity allowlist");
+            let packet = [
+                0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 4, b's', b'a', b'f', b'e', 7, b'e', b'x', b'a',
+                b'm', b'p', b'l', b'e', 0, 0, 1, 0, 1,
+            ];
+            let view = QueryView::parse(&packet).expect("valid query");
+            assert_eq!(
+                policy.action_for_view_with_client_identity(
+                    view,
+                    Some("192.0.2.10".parse().unwrap()),
+                    Some("family-router"),
+                ),
+                Action::Pass
+            );
+            assert_eq!(
+                policy.action_for_view_with_client(view, Some("192.0.2.11".parse().unwrap())),
+                Action::Nxdomain
+            );
         }
 
         #[test]
