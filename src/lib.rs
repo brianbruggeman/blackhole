@@ -3044,7 +3044,6 @@ mod runtime {
         groups: &[ClientGroupConfig],
         assignments: &BTreeMap<String, Vec<String>>,
     ) -> Result<Vec<RuleConfig>, policy::PolicyError> {
-        let mut rules = compile_profiles(profiles, groups)?;
         if assignments.len() > MAX_IDENTITY_PROFILE_ASSIGNMENTS {
             return Err(policy::PolicyError::InvalidProfile {
                 name: "<identity assignments>".into(),
@@ -3057,6 +3056,16 @@ mod runtime {
             .iter()
             .map(|profile| (profile.name.to_ascii_lowercase(), profile))
             .collect::<BTreeMap<_, _>>();
+        let assigned_profiles = assignments
+            .values()
+            .flat_map(|names| names.iter().map(|name| name.to_ascii_lowercase()))
+            .collect::<BTreeSet<_>>();
+        let unassigned_profiles = profiles
+            .iter()
+            .filter(|profile| !assigned_profiles.contains(&profile.name.to_ascii_lowercase()))
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut rules = compile_profiles(&unassigned_profiles, groups)?;
         let mut next_id = IDENTITY_PROFILE_RULE_BASE;
         for (identity, names) in assignments {
             if identity.trim().is_empty()
@@ -5250,6 +5259,8 @@ mod runtime {
                 || next.upstreams != current.upstreams
                 || next.policy.conditional_forwards != current.policy.conditional_forwards
                 || next.policy.allowlist != current.policy.allowlist
+                || next.policy.service_profiles_by_identity
+                    != current.policy.service_profiles_by_identity
                 || next.cache != current.cache
                 || next.security != current.security
                 || startup_privacy != current.privacy
@@ -8478,6 +8489,7 @@ mod runtime {
                     "clients": identity.clients,
                     "client_cidrs": identity.client_cidrs,
                 })).collect::<Vec<_>>(),
+                "service_profiles_by_identity": self.service_profiles_by_identity,
                 "rewrites": rewrites.iter().map(|rewrite| serde_json::json!({
                     "name": rewrite.name,
                     "ipv4": rewrite.ipv4,
@@ -11050,7 +11062,7 @@ mod runtime {
                 enabled: true,
                 domains: vec!["identity.example".into()],
                 action: Action::Reject,
-                groups: Vec::new(),
+                groups: vec!["family-network".into()],
                 client_identity: Some("family-router".into()),
                 priority: 3,
                 client_cidrs: Vec::new(),
@@ -11058,6 +11070,12 @@ mod runtime {
                 qtypes: Vec::new(),
                 qclass: None,
                 qclasses: Vec::new(),
+            }];
+            config.policy.client_groups = vec![ClientGroupConfig {
+                name: "family-network".into(),
+                enabled: true,
+                client_addresses: Vec::new(),
+                client_cidrs: vec!["192.0.2.0/24".into()],
             }];
             let policy = Policy::new(config).expect("valid identity profile");
             let query = proxima_dns::DnsQuery {
@@ -12673,6 +12691,71 @@ mod runtime {
             assert!(
                 policy
                     .decision(&query, Some("203.0.113.53".parse().unwrap()))
+                    .is_none()
+            );
+        }
+
+        #[test]
+        fn identity_service_profile_assignments_apply_existing_profile_rules() {
+            let mut config = Config::default();
+            config.policy.client_groups = vec![ClientGroupConfig {
+                name: "family-network".into(),
+                enabled: true,
+                client_addresses: Vec::new(),
+                client_cidrs: vec!["192.0.2.0/24".into()],
+            }];
+            config.policy.client_identities = vec![ClientIdentityConfig {
+                name: "family-router".into(),
+                enabled: true,
+                query_log_enabled: true,
+                statistics_enabled: true,
+                cache_enabled: true,
+                filtering_enabled: true,
+                default_action: None,
+                upstream: None,
+                max_queries_per_second: None,
+                max_response_bytes_per_second: None,
+                max_inflight_requests: None,
+                clients: vec!["192.0.2.10".parse().unwrap()],
+                client_cidrs: Vec::new(),
+            }];
+            config.policy.profiles = vec![ServiceProfileConfig {
+                id: 52_000,
+                name: "family-blocks".into(),
+                enabled: true,
+                domains: vec!["ads.example".into()],
+                action: Action::Nxdomain,
+                groups: vec!["family-network".into()],
+                client_identity: None,
+                priority: 10,
+                client_cidrs: Vec::new(),
+                qtype: None,
+                qtypes: Vec::new(),
+                qclass: None,
+                qclasses: Vec::new(),
+            }];
+            config
+                .policy
+                .service_profiles_by_identity
+                .insert("family-router".into(), vec!["family-blocks".into()]);
+            let policy = Policy::new(config).expect("valid identity profile assignment");
+            let query = proxima_dns::DnsQuery {
+                id: 7,
+                recursion_desired: true,
+                name: "ads.example.".into(),
+                qtype: 1,
+                qclass: 1,
+            };
+            assert_eq!(
+                policy
+                    .decision(&query, Some("192.0.2.10".parse().unwrap()))
+                    .expect("identity-scoped profile decision")
+                    .action,
+                Action::Nxdomain
+            );
+            assert!(
+                policy
+                    .decision(&query, Some("192.0.2.11".parse().unwrap()))
                     .is_none()
             );
         }

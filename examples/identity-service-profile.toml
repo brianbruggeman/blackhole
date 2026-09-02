@@ -1,0 +1,16 @@
+# Assign one existing service profile to an adapter-owned client identity.
+# Merge these sections into the deployment's normal configuration.
+
+[policy]
+service_profiles_by_identity = { family-router = ["family-blocks"] }
+
+[[policy.client_identities]]
+name = "family-router"
+clients = ["192.0.2.10"]
+
+[[policy.profiles]]
+id = 52000
+name = "family-blocks"
+domains = ["ads.example"]
+action = "nxdomain"
+priority = 10
