@@ -116,6 +116,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <h2>Policy preview</h2><textarea id="policy-preview" rows="4" cols="80">{"name":"example.","qtype":1,"qclass":1}</textarea><button id="preview-policy">Preview</button><pre id="policy-preview-result"></pre>
 <h2>Blocklists</h2><textarea id="blocklist-sources"></textarea><button id="replace-blocklists">Replace</button><button id="add-blocklists">Add</button><button id="remove-blocklists">Remove</button><button id="reload-blocklists">Reload</button><div id="blocklist-controls"></div><pre id="blocklists"></pre>
 <h2>Allowlist</h2><textarea id="allowlist-editor" rows="5" cols="80"></textarea><button id="replace-allowlist">Replace allowlist</button><pre id="allowlist-status"></pre>
+<h2>Blocklist groups</h2><textarea id="blocklist-groups-editor" rows="5" cols="80"></textarea><button id="replace-blocklist-groups">Replace assignments</button>
 <h2>Country</h2><textarea id="country-editor" rows="8" cols="80"></textarea><button id="replace-country">Replace country policy</button><pre id="country-status"></pre>
 <textarea id="country-preview" rows="2" cols="40">{"client":"192.0.2.10"}</textarea><button id="preview-country">Preview client</button><pre id="country-preview-result"></pre>
 <h2>Privacy</h2><pre id="privacy-status"></pre><select id="r"><option value="metadata">metadata</option><option value="action_only">action only</option></select><button id="s">Apply</button>
@@ -186,6 +187,7 @@ const load = (path, target) => fetch(path).then(response => response.json()).the
     document.querySelector('#identity-editor').value = JSON.stringify(value.client_identities || [], null, 2);
     document.querySelector('#country-editor').value = JSON.stringify(value.country_policy || {}, null, 2);
     document.querySelector('#allowlist-editor').value = JSON.stringify(value.domains || [], null, 2);
+    document.querySelector('#blocklist-groups-editor').value = JSON.stringify(value.groups || {}, null, 2);
     document.querySelector('#rewrite-editor').value = JSON.stringify(value.rewrites || [], null, 2);
     document.querySelector('#rule-editor').value = JSON.stringify(value.rules || [], null, 2);
     document.querySelector('#regex-editor').value = JSON.stringify(value.regex_rules || [], null, 2);
@@ -203,6 +205,7 @@ const load = (path, target) => fetch(path).then(response => response.json()).the
   }
   if (path === '/policy-bundle') document.querySelector(target).value = JSON.stringify(value, null, 2);
   else if (path === '/allowlist') document.querySelector(target).value = JSON.stringify(value.domains || [], null, 2);
+  else if (path === '/blocklist-groups') document.querySelector(target).value = JSON.stringify(value.groups || {}, null, 2);
   else if (path === '/abuse/denylist' || path === '/abuse/rate-limit-whitelist') document.querySelector(target).value = JSON.stringify(value, null, 2);
   else document.querySelector(target).textContent = JSON.stringify(value, null, 2);
   if (path === '/admission/status') document.querySelector('#admission-config').value = JSON.stringify(value, null, 2);
@@ -242,7 +245,7 @@ const previewCountry = () => {
       .then(value => { document.querySelector('#country-preview-result').textContent = JSON.stringify(value, null, 2); });
   } catch (error) { document.querySelector('#operation-status').textContent = `/country/preview: ${error.message}`; return Promise.reject(error); }
 };
-const refresh = () => Promise.all([load('/status','#status'), load('/stats','#stats'), load('/admission/status','#admission-status'), load('/abuse/status','#abuse-status'), load('/abuse/incidents','#abuse-incidents'), load('/abuse/denylist','#denylist-config'), load('/abuse/rate-limit-whitelist','#rate-limit-whitelist-config'), load('/policy-bundle','#policy-bundle'), load('/blocklists','#blocklists'), load('/allowlist','#allowlist-editor'), load('/country/status','#country-status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/client-identities','#identities'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
+const refresh = () => Promise.all([load('/status','#status'), load('/stats','#stats'), load('/admission/status','#admission-status'), load('/abuse/status','#abuse-status'), load('/abuse/incidents','#abuse-incidents'), load('/abuse/denylist','#denylist-config'), load('/abuse/rate-limit-whitelist','#rate-limit-whitelist-config'), load('/policy-bundle','#policy-bundle'), load('/blocklists','#blocklists'), load('/allowlist','#allowlist-editor'), load('/blocklist-groups','#blocklist-groups-editor'), load('/country/status','#country-status'), load('/privacy/status','#privacy-status'), load('/rules','#rules'), load('/profiles','#profiles'), load('/client-groups','#groups'), load('/client-identities','#identities'), load('/rewrites','#rewrites'), load('/logs','#logs')]);
 document.querySelector('#preview-policy').onclick = previewPolicy;
 document.querySelector('#preview-country').onclick = previewCountry;
 document.querySelector('#clear-logs').onclick = () => operate('/logs/clear', {method:'POST'}).then(refresh);
@@ -269,6 +272,7 @@ document.querySelector('#upsert-groups').onclick = () => edit('#group-editor', '
 document.querySelector('#upsert-identities').onclick = () => edit('#identity-editor', '/reload/client-identities/upsert', 'client_identities');
 document.querySelector('#replace-country').onclick = replaceCountry;
 document.querySelector('#replace-allowlist').onclick = () => operate('/reload/allowlist', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#allowlist-editor').value}).then(refresh);
+document.querySelector('#replace-blocklist-groups').onclick = () => operate('/reload/blocklist-groups', {method:'POST', headers:{'content-type':'application/json'}, body:document.querySelector('#blocklist-groups-editor').value}).then(refresh);
 document.querySelector('#replace-rewrites').onclick = replaceRewrites;
 document.querySelector('#upsert-rewrites').onclick = () => edit('#rewrite-editor', '/reload/rewrites/upsert', 'rewrites');
 document.querySelector('#upsert-rules').onclick = () => editArray('#rule-editor', '/reload/policy/upsert');
@@ -678,6 +682,7 @@ impl SendPipe for AdminHandler {
             }
             ("GET", "/blocklists") => Ok(Response::ok(self.policy.admin_blocklists())),
             ("GET", "/allowlist") => Ok(Response::ok(self.policy.admin_allowlist())),
+            ("GET", "/blocklist-groups") => Ok(Response::ok(self.policy.admin_blocklist_groups())),
             ("GET", "/policy-bundle") => Ok(Response::ok(self.policy.admin_policy_bundle())),
             ("GET", "/privacy/status") => Ok(Response::ok(self.policy.admin_privacy_status())),
             ("GET", "/rules") => Ok(Response::ok(self.policy.admin_rules())),
@@ -1094,6 +1099,36 @@ impl SendPipe for AdminHandler {
                     }
                 };
                 match self.policy.replace_allowlist(&domains) {
+                    Ok(crate::snapshot::ReloadState::Published) => {
+                        Ok(Response::ok("{\"status\":\"reloaded\"}"))
+                    }
+                    Ok(crate::snapshot::ReloadState::Unchanged) => {
+                        Ok(Response::ok("{\"status\":\"unchanged\"}"))
+                    }
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
+            ("POST", "/reload/blocklist-groups") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let groups = match serde_json::from_slice::<
+                    std::collections::BTreeMap<String, Vec<String>>,
+                >(&request.payload)
+                {
+                    Ok(groups) => groups,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                match self.policy.replace_blocklist_groups(&groups) {
                     Ok(crate::snapshot::ReloadState::Published) => {
                         Ok(Response::ok("{\"status\":\"reloaded\"}"))
                     }
@@ -3477,6 +3512,60 @@ mod tests {
         let status: serde_json::Value =
             serde_json::from_slice(&response.payload).expect("preserved allowlist JSON");
         assert_eq!(status["domains"], serde_json::json!(["safe.example"]));
+    }
+
+    #[test]
+    fn blocklist_group_route_replaces_and_reports_the_live_snapshot() {
+        let path = std::env::temp_dir().join(format!(
+            "blackhole-admin-group-{}-{}.txt",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        ));
+        std::fs::write(&path, "ads.example\n").expect("write blocklist");
+        let mut config = crate::Config::default();
+        config.policy.blocklists = vec![path.to_string_lossy().into_owned()];
+        config.policy.client_groups = vec![crate::ClientGroupConfig {
+            name: "home".into(),
+            enabled: true,
+            client_addresses: vec!["192.0.2.10".parse().expect("client address")],
+            client_cidrs: Vec::new(),
+        }];
+        let policy = Arc::new(Policy::new(config).expect("default policy"));
+        let handler = AdminHandler::new(Arc::clone(&policy));
+        let replacement = Request::builder()
+            .method("POST")
+            .path("/reload/blocklist-groups")
+            .payload(
+                serde_json::to_string(&std::collections::BTreeMap::from([(
+                    "home".to_owned(),
+                    vec![path.to_string_lossy().into_owned()],
+                )]))
+                .expect("blocklist group JSON"),
+            )
+            .build()
+            .expect("blocklist group replacement request");
+        let response = block_on(handler.call(replacement)).expect("blocklist group replacement");
+        assert_eq!(response.status, 200);
+
+        let response = block_on(handler.call(request("GET", "/blocklist-groups")))
+            .expect("blocklist group status response");
+        let status: serde_json::Value =
+            serde_json::from_slice(&response.payload).expect("blocklist group status JSON");
+        assert_eq!(status["groups"]["home"][0], path.to_string_lossy().as_ref());
+        assert_eq!(status["count"], 1);
+
+        let invalid = Request::builder()
+            .method("POST")
+            .path("/reload/blocklist-groups")
+            .payload(r#"{"missing":["/definitely/missing/blackhole.list"]}"#)
+            .build()
+            .expect("invalid blocklist group request");
+        let response = block_on(handler.call(invalid)).expect("invalid blocklist group response");
+        assert_eq!(response.status, 422);
+        std::fs::remove_file(path).expect("remove blocklist");
     }
 
     #[test]

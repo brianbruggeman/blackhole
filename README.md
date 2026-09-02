@@ -112,6 +112,10 @@ authenticated `POST /abuse/rate-limit-whitelist/add` and
 The first-class domain allowlist is available at authenticated `GET /allowlist`
 and can be atomically replaced with a bounded JSON array using
 `POST /reload/allowlist`. Invalid domains leave the active allowlist unchanged.
+Client-group blocklist assignments are similarly available at authenticated
+`GET /blocklist-groups` and can be atomically replaced with a bounded JSON
+object using `POST /reload/blocklist-groups`; invalid assignments leave the
+active snapshot unchanged.
 with bounded JSON CIDR arrays; it changes only the global ceiling exemption
 and is safe to retry.
 Set `[admission.ddos].persist_incidents = true` to persist temporary-blacklist

@@ -3263,6 +3263,8 @@ mod runtime {
         client_identity_control: LiveControl<Vec<ClientIdentityConfig>>,
         allowlist: Live<Vec<String>>,
         allowlist_control: LiveControl<Vec<String>>,
+        blocklist_groups: Live<BTreeMap<String, Vec<String>>>,
+        blocklist_groups_control: LiveControl<BTreeMap<String, Vec<String>>>,
         country_policy: Live<Option<CountryPolicy>>,
         country_policy_control: LiveControl<Option<CountryPolicy>>,
         country_policy_config: Live<CountryPolicyConfig>,
@@ -3659,6 +3661,8 @@ mod runtime {
             let country_policy_config = config.country_policy.clone();
             let (client_identities, client_identity_control) = live(client_identities);
             let (allowlist, allowlist_control) = live(config.policy.allowlist.clone());
+            let (blocklist_groups, blocklist_groups_control) =
+                live(config.policy.blocklist_groups.clone());
             let (country_policy, country_policy_control) = live(country_policy);
             let (country_policy_config, country_policy_config_control) =
                 live(country_policy_config);
@@ -3709,6 +3713,8 @@ mod runtime {
                 client_identity_control,
                 allowlist,
                 allowlist_control,
+                blocklist_groups,
+                blocklist_groups_control,
                 country_policy,
                 country_policy_control,
                 country_policy_config,
@@ -3894,7 +3900,7 @@ mod runtime {
             let replacement = load_blocklists_with_groups(
                 &configured_paths,
                 &configured_disabled.iter().cloned().collect::<BTreeSet<_>>(),
-                &self.config.policy.blocklist_groups,
+                self.blocklist_groups.snapshot().as_ref(),
                 client_groups,
             )?;
             let mut published = rules.to_vec();
@@ -4492,6 +4498,34 @@ mod runtime {
             self.set_blocklist_sources_enabled(paths, true)
         }
 
+        /// Atomically replace client-group blocklist assignments and publish
+        /// the resulting scoped rules. A failed validation leaves both the
+        /// assignments and the active blocklist snapshot unchanged.
+        pub fn replace_blocklist_groups(
+            &self,
+            groups: &BTreeMap<String, Vec<String>>,
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
+            let started = Instant::now();
+            if self.blocklist_groups.read(|current| current == groups) {
+                self.observe_reload_latency("blocklist_groups_unchanged", started);
+                return Ok(ReloadState::Unchanged);
+            }
+            let paths = self.blocklist_paths.snapshot();
+            let disabled = self.disabled_blocklist_paths.snapshot();
+            let client_groups = self.client_groups.snapshot();
+            let replacement =
+                load_blocklists_with_groups(&paths, &disabled, groups, &client_groups)?;
+            let published = self.replace_active_blocklist_rules_with_groups_locked(
+                started,
+                "blocklist_groups",
+                true,
+                replacement,
+            )?;
+            self.blocklist_groups_control.replace(groups.clone());
+            Ok(published)
+        }
+
         fn set_blocklist_sources_enabled(
             &self,
             paths: &[String],
@@ -4573,12 +4607,28 @@ mod runtime {
             reload_kind: &'static str,
             state_changed: bool,
         ) -> Result<ReloadState, policy::PolicyError> {
+            let groups = self.blocklist_groups.snapshot();
             let replacement = load_blocklists_with_groups(
                 configured_paths,
                 disabled_paths,
-                &self.config.policy.blocklist_groups,
+                groups.as_ref(),
                 self.client_groups.snapshot().as_ref(),
             )?;
+            self.replace_active_blocklist_rules_with_groups_locked(
+                started,
+                reload_kind,
+                state_changed,
+                replacement,
+            )
+        }
+
+        fn replace_active_blocklist_rules_with_groups_locked(
+            &self,
+            started: Instant,
+            reload_kind: &'static str,
+            state_changed: bool,
+            replacement: Vec<RuleConfig>,
+        ) -> Result<ReloadState, policy::PolicyError> {
             if !state_changed
                 && self
                     .blocklist_rules
@@ -4626,7 +4676,7 @@ mod runtime {
             let replacement = load_blocklists_with_groups(
                 &paths,
                 &disabled,
-                &self.config.policy.blocklist_groups,
+                self.blocklist_groups.snapshot().as_ref(),
                 self.client_groups.snapshot().as_ref(),
             )?;
             if replacement == *self.blocklist_rules.snapshot() {
@@ -5220,7 +5270,7 @@ mod runtime {
             let replacement = load_blocklists_with_groups(
                 &configured_paths,
                 &configured_disabled.iter().cloned().collect::<BTreeSet<_>>(),
-                &self.config.policy.blocklist_groups,
+                self.blocklist_groups.snapshot().as_ref(),
                 client_groups,
             )?;
             let mut base = rules.to_vec();
@@ -7621,7 +7671,7 @@ mod runtime {
                 "regex_rules": regex_rules.len(),
                 "blocklist_sources": blocklist_paths.len(),
                 "disabled_blocklist_sources": disabled_blocklists.len(),
-                "blocklist_group_assignments": self.config.policy.blocklist_groups.len(),
+                "blocklist_group_assignments": self.blocklist_groups.read(BTreeMap::len),
                 "blocklist_rules": blocklist_rules.len(),
                 "rewrites": rewrites.len(),
                 "profiles": profiles.len(),
@@ -7777,6 +7827,17 @@ mod runtime {
             .to_string()
         }
 
+        /// Return the authenticated operator's bounded live blocklist-group
+        /// assignments without exposing source contents.
+        pub(crate) fn admin_blocklist_groups(&self) -> String {
+            serde_json::json!({
+                "groups": self.blocklist_groups.snapshot().as_ref(),
+                "count": self.blocklist_groups.read(BTreeMap::len),
+                "policy_generation": self.policy_generation.load(Ordering::Acquire),
+            })
+            .to_string()
+        }
+
         /// Return the live operator-managed bundle for the authenticated
         /// editor. The blocklist source field is null intentionally: the
         /// bundle reload contract treats null as retaining the loaded map.
@@ -7857,7 +7918,7 @@ mod runtime {
                 })).collect::<Vec<_>>(),
                 "country_policy": self.country_policy_config.snapshot().as_ref().clone(),
                 "blocklists": serde_json::Value::Null,
-                "blocklist_groups": self.config.policy.blocklist_groups,
+                "blocklist_groups": self.blocklist_groups.snapshot().as_ref(),
                 "disabled_blocklists": self
                     .disabled_blocklist_paths
                     .snapshot()
