@@ -31,6 +31,17 @@ created_user=0
 [ -r "$config" ] || { echo "configuration is required: $config" >&2; exit 1; }
 [ -r "$plist" ] || { echo "launchd plist is required: $plist" >&2; exit 1; }
 
+wait_for_service() {
+    for attempt in 1 2 3 4 5; do
+        if launchctl print "system/$label" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+    done
+    echo "launchd service did not become visible: system/$label" >&2
+    return 1
+}
+
 if launchctl print "system/$label" >/dev/null 2>&1; then
     echo "refusing to overwrite an existing Blackhole launchd service" >&2
     exit 1
@@ -65,7 +76,7 @@ trap cleanup EXIT HUP INT TERM
 
 BLACKHOLE_BINARY="$binary" BLACKHOLE_CONFIG="$config" \
     BLACKHOLE_PLIST="$plist" "$script_dir/install.sh"
-launchctl print "system/$label" >/dev/null
+wait_for_service
 test -x "$binary_target"
 test -f "$config_target"
 test -f "$plist_target"
@@ -81,7 +92,7 @@ old_plist=$(shasum -a 256 "$plist_target")
 # running service and all installed payloads.
 BLACKHOLE_BINARY="$binary" BLACKHOLE_CONFIG="$config" \
     BLACKHOLE_PLIST="$plist" "$script_dir/install.sh"
-launchctl print "system/$label" >/dev/null
+wait_for_service
 test "$old_binary" = "$(shasum -a 256 "$binary_target")"
 test "$old_config" = "$(shasum -a 256 "$config_target")"
 test "$old_plist" = "$(shasum -a 256 "$plist_target")"
@@ -98,7 +109,7 @@ if BLACKHOLE_BINARY="$binary" BLACKHOLE_CONFIG="$config" \
     echo "failed launchd upgrade unexpectedly succeeded" >&2
     exit 1
 fi
-launchctl print "system/$label" >/dev/null
+wait_for_service
 test "$old_binary" = "$(shasum -a 256 "$binary_target")"
 test "$old_config" = "$(shasum -a 256 "$config_target")"
 test "$old_plist" = "$(shasum -a 256 "$plist_target")"
