@@ -429,6 +429,10 @@ mod runtime {
             true
         }
 
+        fn is_blocked(&self, epoch: Instant) -> bool {
+            self.blocked_until.load(Ordering::Acquire) > epoch.elapsed().as_secs()
+        }
+
         fn restore_blocked(&self, epoch: Instant, remaining: Duration) {
             let now = epoch.elapsed().as_secs();
             self.blocked_until.store(
@@ -6325,6 +6329,7 @@ mod runtime {
                 "global_window_secs": admission.ddos.global_abuse_window_secs,
                 "global_cooldown_secs": admission.ddos.global_abuse_cooldown_secs,
                 "incident_persistence": admission.ddos.persist_incidents,
+                "global_breaker_open": self.global_abuse.is_blocked(self.breaker_epoch),
                 "automatic_blacklist": "temporary_cooldown",
                 "keys": "not_exposed",
             })

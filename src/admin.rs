@@ -1692,6 +1692,7 @@ mod tests {
         assert_eq!(abuse_status["global_window_secs"], 10);
         assert_eq!(abuse_status["global_cooldown_secs"], 30);
         assert_eq!(abuse_status["incident_persistence"], false);
+        assert_eq!(abuse_status["global_breaker_open"], false);
         assert_eq!(abuse_status["automatic_blacklist"], "temporary_cooldown");
         let incidents =
             block_on(handler.call(request("GET", "/abuse/incidents"))).expect("incidents");
