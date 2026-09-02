@@ -462,6 +462,7 @@ pub mod native {
         fn apply(&self, args: &[&str], input: Option<&str>) -> Result<(), String> {
             let mut command = Command::new(&self.program);
             command.args(args);
+            command.stdout(Stdio::piped()).stderr(Stdio::piped());
             if input.is_some() {
                 command.stdin(Stdio::piped());
             }
@@ -480,7 +481,22 @@ pub mod native {
             if output.status.success() {
                 Ok(())
             } else {
-                Err(String::from_utf8_lossy(&output.stderr).trim().to_owned())
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let message = [stdout.trim(), stderr.trim()]
+                    .into_iter()
+                    .filter(|part| !part.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                Err(message)
+            }
+        }
+
+        fn remove_owned_chain(&self, plan: &NftRulePlan) -> Result<(), String> {
+            match self.apply(&["delete", "chain", "inet", &plan.table, &plan.chain], None) {
+                Ok(()) => Ok(()),
+                Err(error) if error.contains("No such file or directory") => Ok(()),
+                Err(error) => Err(error),
             }
         }
     }
@@ -500,7 +516,7 @@ pub mod native {
             // Delete only the chain recorded in the ownership journal. The
             // table name is shared namespace; removing the whole table could
             // destroy unrelated operator-managed chains.
-            self.apply(&["delete", "chain", "inet", &plan.table, &plan.chain], None)
+            self.remove_owned_chain(plan)
         }
     }
 }

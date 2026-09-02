@@ -27,12 +27,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|()| controller.cleanup(&plan));
     let table_cleanup = Command::new("nft")
         .args(["delete", "table", "inet", &table])
-        .status()?;
+        .output()?;
     if let Err(error) = operation {
         return Err(error.into());
     }
-    if !table_cleanup.success() {
-        return Err(format!("nft table cleanup failed for {table}").into());
+    if !table_cleanup.status.success() {
+        return Err(format!(
+            "nft table cleanup failed for {table}: {}",
+            String::from_utf8_lossy(&table_cleanup.stderr).trim()
+        )
+        .into());
     }
     if journal.exists() {
         return Err("capture smoke left an ownership journal".into());
