@@ -101,7 +101,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <h2>Blocklists</h2><textarea id="blocklist-sources"></textarea><button id="replace-blocklists">Replace</button><button id="add-blocklists">Add</button><button id="remove-blocklists">Remove</button><button id="reload-blocklists">Reload</button><div id="blocklist-controls"></div><pre id="blocklists"></pre>
 <h2>Country</h2><textarea id="country-editor" rows="8" cols="80"></textarea><button id="replace-country">Replace country policy</button><pre id="country-status"></pre>
 <h2>Privacy</h2><pre id="privacy-status"></pre><select id="r"><option value="metadata">metadata</option><option value="action_only">action only</option></select><button id="s">Apply</button>
-<h2>Rules</h2><textarea id="rule-editor" rows="8" cols="80"></textarea><button id="upsert-rules">Upsert domain rules</button><textarea id="regex-editor" rows="8" cols="80"></textarea><button id="upsert-regex">Upsert regex rules</button><pre id="rules"></pre>
+<h2>Rules</h2><textarea id="rule-editor" rows="8" cols="80"></textarea><button id="upsert-rules">Upsert domain rules</button><div id="rule-controls"></div><textarea id="regex-editor" rows="8" cols="80"></textarea><button id="upsert-regex">Upsert regex rules</button><div id="regex-controls"></div><pre id="rules"></pre>
 <h2>Profiles</h2><textarea id="profile-editor" rows="8" cols="80"></textarea><button id="upsert-profiles">Upsert profiles</button><div id="profile-controls"></div><pre id="profiles"></pre>
 <h2>Groups</h2><textarea id="group-editor" rows="8" cols="80"></textarea><button id="upsert-groups">Upsert groups</button><div id="group-controls"></div><pre id="groups"></pre>
 <h2>Identities</h2><textarea id="identity-editor" rows="8" cols="80"></textarea><button id="upsert-identities">Upsert identities</button><div id="identity-controls"></div><pre id="identities"></pre>
@@ -140,6 +140,18 @@ const load = (path, target) => fetch(path).then(response => response.json()).the
     toggle('#profile-controls', value.profiles, '/reload/profiles/upsert', 'profiles', '/reload/profiles/remove');
     toggle('#group-controls', value.client_groups, '/reload/client-groups/upsert', 'client_groups', '/reload/client-groups/remove');
     toggle('#identity-controls', value.client_identities, '/reload/client-identities/upsert', 'client_identities', '/reload/client-identities/remove');
+    const removeControls = (id, items, route, label) => {
+      const controls = document.querySelector(id);
+      controls.replaceChildren();
+      for (const item of items || []) {
+        const remove = document.createElement('button');
+        remove.textContent = `Remove ${label} ${item.id}`;
+        remove.onclick = () => send(route, [item.id]);
+        controls.append(remove, document.createTextNode(' '));
+      }
+    };
+    removeControls('#rule-controls', value.rules, '/reload/policy/remove', 'rule');
+    removeControls('#regex-controls', value.regex_rules, '/reload/regex/remove', 'regex rule');
     document.querySelector('#profile-editor').value = JSON.stringify(value.profiles || [], null, 2);
     document.querySelector('#group-editor').value = JSON.stringify(value.client_groups || [], null, 2);
     document.querySelector('#identity-editor').value = JSON.stringify(value.client_identities || [], null, 2);
@@ -1414,6 +1426,8 @@ mod tests {
             b"/reload/client-groups/remove".as_slice(),
             b"/reload/client-identities/upsert".as_slice(),
             b"/reload/client-identities/remove".as_slice(),
+            b"/reload/policy/remove".as_slice(),
+            b"/reload/regex/remove".as_slice(),
         ] {
             assert!(
                 ui.payload
@@ -1439,6 +1453,8 @@ mod tests {
             b"regex-editor".as_slice(),
             b"upsert-rules".as_slice(),
             b"upsert-regex".as_slice(),
+            b"rule-controls".as_slice(),
+            b"regex-controls".as_slice(),
         ] {
             assert!(
                 ui.payload
@@ -1447,7 +1463,7 @@ mod tests {
             );
         }
         assert!(
-            ui.payload.len() < 12 * 1024,
+            ui.payload.len() < 16 * 1024,
             "admin UI payload is {} bytes",
             ui.payload.len()
         );
