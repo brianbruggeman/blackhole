@@ -22,9 +22,6 @@ below are future capabilities, grouped by the dependency layer they extend.
   beyond the explicit operator-supplied map labels, SHA-256-pinned
   bounded refresh, and last-good snapshot in the current baseline; uncertainty
   must remain explicit.
-- Add incremental background updates for deployment-managed configuration
-  sources beyond the bounded TOML policy-file reload. Listener, transport,
-  capture, storage, and service changes still require a controlled restart.
 
 ## Interception and deployment
 
