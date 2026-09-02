@@ -120,6 +120,11 @@ Client-group blocklist assignments are similarly available at authenticated
 `GET /blocklist-groups` and can be atomically replaced with a bounded JSON
 object using `POST /reload/blocklist-groups`; invalid assignments leave the
 active snapshot unchanged.
+For configuration-driven per-device policy, use
+`policy.blocklists_by_identity = { family-router = ["/etc/blackhole/family.txt"] }`.
+The named identity must be enabled, each source must also appear in
+`policy.blocklists`, and assigned sources are removed from the global snapshot;
+only requests carrying that adapter-owned identity receive those rules.
 with bounded JSON CIDR arrays; it changes only the global ceiling exemption
 and is safe to retry.
 Set `[admission.ddos].persist_incidents = true` to persist temporary-blacklist

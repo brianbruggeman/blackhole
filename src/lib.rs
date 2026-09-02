@@ -1371,6 +1371,11 @@ mod runtime {
         /// client group and values select configured blocklist sources for it.
         #[serde(default)]
         pub blocklist_groups: BTreeMap<String, Vec<String>>,
+        /// Optional identity-scoped source assignments. A key names an
+        /// enabled client identity and values select configured blocklist
+        /// sources for it.
+        #[serde(default)]
+        pub blocklists_by_identity: BTreeMap<String, Vec<String>>,
         /// Optional bounded background reload interval. Zero disables polling.
         #[serde(default)]
         pub blocklist_reload_interval_secs: u64,
@@ -1406,6 +1411,7 @@ mod runtime {
                 allowlist_by_identity: BTreeMap::new(),
                 disabled_blocklists: Vec::new(),
                 blocklist_groups: BTreeMap::new(),
+                blocklists_by_identity: BTreeMap::new(),
                 blocklist_reload_interval_secs: 0,
                 rewrites: Vec::new(),
                 profiles: Vec::new(),
@@ -2241,19 +2247,25 @@ mod runtime {
         disabled_paths: &BTreeSet<String>,
         assignments: &BTreeMap<String, Vec<String>>,
         groups: &[ClientGroupConfig],
+        identity_assignments: &BTreeMap<String, Vec<String>>,
+        identities: &[ClientIdentityConfig],
     ) -> Result<Vec<RuleConfig>, policy::PolicyError> {
         let active_paths = active_blocklist_paths(
             configured_paths,
             &disabled_paths.iter().cloned().collect::<Vec<_>>(),
         )?;
-        let assigned_sources = assignments.values().flatten().collect::<BTreeSet<_>>();
+        let assigned_sources = assignments
+            .values()
+            .chain(identity_assignments.values())
+            .flatten()
+            .collect::<BTreeSet<_>>();
         let unscoped_paths = active_paths
             .iter()
             .filter(|path| !assigned_sources.contains(path))
             .cloned()
             .collect::<Vec<_>>();
         let mut rules = load_blocklists(&unscoped_paths)?;
-        if assignments.is_empty() {
+        if assignments.is_empty() && identity_assignments.is_empty() {
             return Ok(rules);
         }
         compile_profiles(&[], groups)?;
@@ -2364,6 +2376,87 @@ mod runtime {
                     scoped.client_identity = None;
                     rules.push(scoped);
                 }
+            }
+        }
+        if identity_assignments.len() > MAX_BLOCKLIST_GROUP_ASSIGNMENTS {
+            return Err(policy::PolicyError::InvalidBlocklist {
+                path: "<identities>".into(),
+                reason: format!(
+                    "identity assignment count exceeds {MAX_BLOCKLIST_GROUP_ASSIGNMENTS}"
+                ),
+            });
+        }
+        let configured_identities = identities
+            .iter()
+            .filter(|identity| identity.enabled)
+            .map(|identity| identity.name.as_str())
+            .collect::<BTreeSet<_>>();
+        let mut identity_names = BTreeSet::new();
+        for (identity_name, source_paths) in identity_assignments {
+            if identity_name.is_empty()
+                || !identity_name.is_ascii()
+                || !identity_names.insert(identity_name.to_ascii_lowercase())
+            {
+                return Err(policy::PolicyError::InvalidBlocklist {
+                    path: identity_name.clone(),
+                    reason: "identity assignment names must be unique non-empty ASCII".into(),
+                });
+            }
+            if !configured_identities.contains(identity_name.as_str()) {
+                return Err(policy::PolicyError::InvalidBlocklist {
+                    path: identity_name.clone(),
+                    reason: "identity assignment references an unknown or disabled identity".into(),
+                });
+            }
+            if source_paths.is_empty() {
+                return Err(policy::PolicyError::InvalidBlocklist {
+                    path: identity_name.clone(),
+                    reason: "identity assignment must select at least one source".into(),
+                });
+            }
+            let mut unique_sources = BTreeSet::new();
+            if source_paths
+                .iter()
+                .any(|source| !unique_sources.insert(source))
+            {
+                return Err(policy::PolicyError::InvalidBlocklist {
+                    path: identity_name.clone(),
+                    reason: "identity assignment sources must be unique".into(),
+                });
+            }
+            if source_paths
+                .iter()
+                .any(|source| !configured.contains(source))
+            {
+                return Err(policy::PolicyError::InvalidBlocklist {
+                    path: identity_name.clone(),
+                    reason: "identity assignment source is not configured".into(),
+                });
+            }
+            let active_sources = source_paths
+                .iter()
+                .filter(|source| active.contains(source))
+                .cloned()
+                .collect::<Vec<_>>();
+            if active_sources.is_empty() {
+                continue;
+            }
+            for mut rule in load_blocklists(&active_sources)? {
+                if rules.len() >= MAX_BLOCKLIST_GROUP_RULES {
+                    return Err(policy::PolicyError::InvalidBlocklist {
+                        path: identity_name.clone(),
+                        reason: format!(
+                            "identity-scoped rule count exceeds {MAX_BLOCKLIST_GROUP_RULES}"
+                        ),
+                    });
+                }
+                rule.id = next_id;
+                next_id = next_id.saturating_sub(1);
+                rule.client = None;
+                rule.client_cidr = None;
+                rule.client_cidrs.clear();
+                rule.client_identity = Some(identity_name.clone());
+                rules.push(rule);
             }
         }
         Ok(rules)
@@ -3600,6 +3693,8 @@ mod runtime {
         allowlist_by_identity_control: LiveControl<BTreeMap<String, Vec<String>>>,
         blocklist_groups: Live<BTreeMap<String, Vec<String>>>,
         blocklist_groups_control: LiveControl<BTreeMap<String, Vec<String>>>,
+        blocklists_by_identity: Live<BTreeMap<String, Vec<String>>>,
+        blocklists_by_identity_control: LiveControl<BTreeMap<String, Vec<String>>>,
         country_policy: Live<Option<CountryPolicy>>,
         country_policy_control: LiveControl<Option<CountryPolicy>>,
         country_policy_config: Live<CountryPolicyConfig>,
@@ -3948,6 +4043,8 @@ mod runtime {
                 &disabled_blocklists,
                 &config.policy.blocklist_groups,
                 &config.policy.client_groups,
+                &config.policy.blocklists_by_identity,
+                &config.policy.client_identities,
             )?;
             let retained_blocklist_rules = blocklist_rules.clone();
             let country_policy = load_country_policy(&config.country_policy)?;
@@ -4007,6 +4104,8 @@ mod runtime {
                 live(config.policy.allowlist_by_identity.clone());
             let (blocklist_groups, blocklist_groups_control) =
                 live(config.policy.blocklist_groups.clone());
+            let (blocklists_by_identity, blocklists_by_identity_control) =
+                live(config.policy.blocklists_by_identity.clone());
             let (country_policy, country_policy_control) = live(country_policy);
             let (country_policy_config, country_policy_config_control) =
                 live(country_policy_config);
@@ -4062,6 +4161,8 @@ mod runtime {
                 allowlist_by_identity_control,
                 blocklist_groups,
                 blocklist_groups_control,
+                blocklists_by_identity,
+                blocklists_by_identity_control,
                 country_policy,
                 country_policy_control,
                 country_policy_config,
@@ -4257,6 +4358,8 @@ mod runtime {
                 &configured_disabled.iter().cloned().collect::<BTreeSet<_>>(),
                 self.blocklist_groups.snapshot().as_ref(),
                 client_groups,
+                self.blocklists_by_identity.snapshot().as_ref(),
+                client_identities,
             )?;
             let mut published = rules.to_vec();
             published.extend(generated);
@@ -4996,8 +5099,14 @@ mod runtime {
             let paths = self.blocklist_paths.snapshot();
             let disabled = self.disabled_blocklist_paths.snapshot();
             let client_groups = self.client_groups.snapshot();
-            let replacement =
-                load_blocklists_with_groups(&paths, &disabled, groups, &client_groups)?;
+            let replacement = load_blocklists_with_groups(
+                &paths,
+                &disabled,
+                groups,
+                &client_groups,
+                self.blocklists_by_identity.snapshot().as_ref(),
+                self.client_identities.snapshot().as_ref(),
+            )?;
             let published = self.replace_active_blocklist_rules_with_groups_locked(
                 started,
                 "blocklist_groups",
@@ -5095,6 +5204,8 @@ mod runtime {
                 disabled_paths,
                 groups.as_ref(),
                 self.client_groups.snapshot().as_ref(),
+                self.blocklists_by_identity.snapshot().as_ref(),
+                self.client_identities.snapshot().as_ref(),
             )?;
             self.replace_active_blocklist_rules_with_groups_locked(
                 started,
@@ -5160,6 +5271,8 @@ mod runtime {
                 &disabled,
                 self.blocklist_groups.snapshot().as_ref(),
                 self.client_groups.snapshot().as_ref(),
+                self.blocklists_by_identity.snapshot().as_ref(),
+                self.client_identities.snapshot().as_ref(),
             )?;
             if replacement == *self.blocklist_rules.snapshot() {
                 self.observe_reload_latency("blocklists_unchanged", started);
@@ -5316,6 +5429,7 @@ mod runtime {
                 &next.policy.client_groups,
                 &next.policy.client_identities,
                 &next.policy.allowlist_by_identity,
+                &next.policy.blocklists_by_identity,
                 &next.policy.rewrites,
                 &next.country_policy,
                 Some(&next.policy.blocklists),
@@ -5693,6 +5807,7 @@ mod runtime {
                 client_groups,
                 &[],
                 self.allowlist_by_identity.snapshot().as_ref(),
+                self.blocklists_by_identity.snapshot().as_ref(),
                 rewrite_configs,
                 country_config,
                 blocklist_paths,
@@ -5715,6 +5830,7 @@ mod runtime {
             client_groups: &[ClientGroupConfig],
             client_identities: &[ClientIdentityConfig],
             allowlist_by_identity: &BTreeMap<String, Vec<String>>,
+            blocklists_by_identity: &BTreeMap<String, Vec<String>>,
             rewrite_configs: &[RewriteConfig],
             country_config: &CountryPolicyConfig,
             blocklist_paths: Option<&[String]>,
@@ -5731,6 +5847,7 @@ mod runtime {
                 client_groups,
                 client_identities,
                 allowlist_by_identity,
+                blocklists_by_identity,
                 rewrite_configs,
                 country_config,
                 blocklist_paths,
@@ -5754,6 +5871,7 @@ mod runtime {
             client_groups: &[ClientGroupConfig],
             client_identities: &[ClientIdentityConfig],
             allowlist_by_identity: &BTreeMap<String, Vec<String>>,
+            blocklists_by_identity: &BTreeMap<String, Vec<String>>,
             rewrite_configs: &[RewriteConfig],
             country_config: &CountryPolicyConfig,
             blocklist_paths: Option<&[String]>,
@@ -5803,6 +5921,8 @@ mod runtime {
                 &configured_disabled.iter().cloned().collect::<BTreeSet<_>>(),
                 self.blocklist_groups.snapshot().as_ref(),
                 client_groups,
+                blocklists_by_identity,
+                &client_identities,
             )?;
             let mut base = rules.to_vec();
             base.extend(generated);
@@ -5826,6 +5946,9 @@ mod runtime {
                 && self
                     .allowlist_by_identity
                     .read(|current| current == allowlist_by_identity)
+                && self
+                    .blocklists_by_identity
+                    .read(|current| current == blocklists_by_identity)
                 && self
                     .rewrite_configs
                     .read(|current| current == rewrite_configs)
@@ -5866,6 +5989,8 @@ mod runtime {
             self.client_identity_control.replace(client_identities);
             self.allowlist_by_identity_control
                 .replace(allowlist_by_identity.clone());
+            self.blocklists_by_identity_control
+                .replace(blocklists_by_identity.clone());
             self.rewrite_control.replace(rewrites);
             self.rewrite_configs_control
                 .replace(rewrite_configs.to_vec());
@@ -8274,6 +8399,9 @@ mod runtime {
                 "blocklist_sources": blocklist_paths.len(),
                 "disabled_blocklist_sources": disabled_blocklists.len(),
                 "blocklist_group_assignments": self.blocklist_groups.read(BTreeMap::len),
+                "blocklist_identity_assignments": self
+                    .blocklists_by_identity
+                    .read(BTreeMap::len),
                 "blocklist_rules": blocklist_rules.len(),
                 "rewrites": rewrites.len(),
                 "profiles": profiles.len(),
@@ -8529,6 +8657,7 @@ mod runtime {
                 "country_policy": self.country_policy_config.snapshot().as_ref().clone(),
                 "blocklists": serde_json::Value::Null,
                 "blocklist_groups": self.blocklist_groups.snapshot().as_ref(),
+                "blocklists_by_identity": self.blocklists_by_identity.snapshot().as_ref(),
                 "disabled_blocklists": self
                     .disabled_blocklist_paths
                     .snapshot()
@@ -9705,6 +9834,60 @@ mod runtime {
             );
             assert!(policy.decision(&query, None).is_none());
             std::fs::remove_file(path).expect("remove group blocklist");
+        }
+
+        #[test]
+        fn blocklists_can_be_scoped_to_a_client_identity() {
+            let path = std::env::temp_dir().join(format!(
+                "blackhole-blocklist-identity-{}-{}",
+                std::process::id(),
+                1
+            ));
+            std::fs::write(&path, "||identity-only.example^\n").expect("write identity blocklist");
+            let source = path.to_string_lossy().into_owned();
+            let mut config = Config::default();
+            config.policy.blocklists = vec![source.clone()];
+            config.policy.client_identities = vec![ClientIdentityConfig {
+                name: "family".into(),
+                enabled: true,
+                query_log_enabled: false,
+                statistics_enabled: true,
+                cache_enabled: true,
+                filtering_enabled: true,
+                default_action: None,
+                upstream: None,
+                max_queries_per_second: None,
+                max_response_bytes_per_second: None,
+                max_response_bytes_per_network_per_second: None,
+                max_inflight_requests: None,
+                clients: vec!["192.0.2.10".parse().expect("identity client")],
+                client_cidrs: Vec::new(),
+            }];
+            config
+                .policy
+                .blocklists_by_identity
+                .insert("family".into(), vec![source]);
+            let policy = Policy::new(config).expect("valid identity blocklist");
+            let query = proxima_dns::DnsQuery {
+                id: 1,
+                recursion_desired: true,
+                name: "identity-only.example.".into(),
+                qtype: 1,
+                qclass: 1,
+            };
+            assert_eq!(
+                policy
+                    .decision(&query, Some("192.0.2.10".parse().unwrap()))
+                    .expect("identity blocklist decision")
+                    .action,
+                Action::Nxdomain
+            );
+            assert!(
+                policy
+                    .decision(&query, Some("192.0.2.11".parse().unwrap()))
+                    .is_none()
+            );
+            std::fs::remove_file(path).expect("remove identity blocklist");
         }
 
         #[test]
