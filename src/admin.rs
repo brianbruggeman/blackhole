@@ -763,7 +763,12 @@ impl SendPipe for AdminHandler {
                     }
                 };
                 match self.policy.upsert_client_groups(&update.client_groups) {
-                    Ok(_) => Ok(Response::ok("{\"status\":\"reloaded\"}")),
+                    Ok(crate::snapshot::ReloadState::Published) => {
+                        Ok(Response::ok("{\"status\":\"reloaded\"}"))
+                    }
+                    Ok(crate::snapshot::ReloadState::Unchanged) => {
+                        Ok(Response::ok("{\"status\":\"unchanged\"}"))
+                    }
                     Err(error) => Ok(Response::new(422).with_body(format!(
                         "{{\"status\":\"error\",\"message\":{}}}",
                         serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())

@@ -4044,7 +4044,8 @@ mod runtime {
                     });
                 }
             }
-            let mut groups = self.client_groups.snapshot().as_ref().clone();
+            let current_groups = self.client_groups.snapshot().as_ref().clone();
+            let mut groups = current_groups.clone();
             for update in updates {
                 if let Some(existing) = groups
                     .iter_mut()
@@ -4060,6 +4061,10 @@ mod runtime {
             let explicit = self.explicit_rules.snapshot().as_ref().clone();
             let mut combined = explicit.clone();
             combined.extend(generated);
+            if groups == current_groups {
+                self.observe_reload_latency("client_groups_upsert_unchanged", started);
+                return Ok(ReloadState::Unchanged);
+            }
             let published =
                 self.publish_rules_locked(&combined, &explicit, "client_groups_upsert", started)?;
             self.client_groups_control.replace(groups);
