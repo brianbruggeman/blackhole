@@ -370,6 +370,43 @@ fn shipped_binary_serves_udp_datagrams_and_tcp_frames() {
 }
 
 #[test]
+fn shipped_binary_applies_client_admission_to_real_udp_peers() {
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("reserve listener port");
+    let listener_addr = listener.local_addr().expect("listener address");
+    drop(listener);
+
+    let mut config = NamedTempFile::new().expect("create config");
+    writeln!(
+        config,
+        "[server]\nlisten = \"{listener_addr}\"\n\n[admission]\ndeny_client_cidrs = [\"127.0.0.2/32\"]"
+    )
+    .expect("write config");
+
+    let _child = ChildGuard(
+        Command::new(env!("CARGO_BIN_EXE_blackhole"))
+            .arg(config.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("start shipped blackhole binary"),
+    );
+    drop(wait_for_tcp(listener_addr));
+
+    let udp = UdpSocket::bind((Ipv4Addr::new(127, 0, 0, 2), 0)).expect("bind client UDP socket");
+    udp.set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("set client UDP timeout");
+    udp.send_to(&query(0x4010, "udp-client.example."), listener_addr)
+        .expect("send UDP query");
+    let mut response = [0u8; 4096];
+    let (length, _) = udp.recv_from(&mut response).expect("receive UDP refusal");
+    let message = parse_message(&response[..length]).expect("parse UDP refusal");
+    assert_eq!(message.header.id, 0x4010);
+    assert_eq!(message.header.flags.rcode(), 5);
+    assert!(message.answers().next().is_none());
+}
+
+#[test]
 fn shipped_binary_retries_truncated_upstream_over_tcp() {
     let upstream_tcp = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind upstream TCP");
     let upstream_addr = upstream_tcp.local_addr().expect("upstream address");
