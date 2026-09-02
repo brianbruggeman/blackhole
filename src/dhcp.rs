@@ -20,6 +20,7 @@ const OPTION_PAD: u8 = 0;
 const OPTION_MESSAGE_TYPE: u8 = 53;
 const OPTION_REQUESTED_IP: u8 = 50;
 const OPTION_SERVER_IDENTIFIER: u8 = 54;
+const OPTION_DOMAIN_NAME: u8 = 15;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -148,11 +149,12 @@ impl<'packet> Request<'packet> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ReplyConfig {
+pub struct ReplyConfig<'domain> {
     pub server: Ipv4Addr,
     pub subnet_mask: Ipv4Addr,
     pub router: Option<Ipv4Addr>,
     pub dns: Option<Ipv4Addr>,
+    pub domain_name: Option<&'domain str>,
     pub lease_secs: u32,
 }
 
@@ -166,7 +168,7 @@ pub fn encode_reply(
     request: &Request<'_>,
     message_type: MessageType,
     address: Ipv4Addr,
-    config: ReplyConfig,
+    config: ReplyConfig<'_>,
     output: &mut [u8],
 ) -> Result<usize, EncodeError> {
     if config.lease_secs == 0 {
@@ -178,6 +180,7 @@ pub fn encode_reply(
         + 6
         + config.router.is_some() as usize * 6
         + config.dns.is_some() as usize * 6
+        + config.domain_name.map_or(0, |name| 2 + name.len())
         + 1;
     if output.len() < required || output.len() > MAX_DHCP_PACKET {
         return Err(EncodeError::OutputTooSmall);
@@ -208,6 +211,14 @@ pub fn encode_reply(
     if let Some(dns) = config.dns {
         push_option(&mut output[cursor..], 6, &dns.octets());
         cursor += 6;
+    }
+    if let Some(domain_name) = config.domain_name {
+        push_option(
+            &mut output[cursor..],
+            OPTION_DOMAIN_NAME,
+            domain_name.as_bytes(),
+        );
+        cursor += 2 + domain_name.len();
     }
     push_option(&mut output[cursor..], 51, &config.lease_secs.to_be_bytes());
     cursor += 6;
@@ -298,11 +309,13 @@ fn serve_socket(
         .dns
         .as_deref()
         .map(|value| value.parse::<Ipv4Addr>().expect("validated DHCP DNS"));
+    let domain_name = config.domain_name.as_deref();
     let reply_config = ReplyConfig {
         server,
         subnet_mask,
         router,
         dns,
+        domain_name,
         lease_secs: config.lease_secs,
     };
     let mut leases = BTreeMap::new();
@@ -462,6 +475,7 @@ mod tests {
                 subnet_mask: Ipv4Addr::new(255, 255, 255, 0),
                 router: None,
                 dns: Some(Ipv4Addr::new(192, 0, 2, 1)),
+                domain_name: Some("home.arpa"),
                 lease_secs: 300,
             },
             &mut output,
@@ -469,6 +483,24 @@ mod tests {
         .expect("offer");
         assert_eq!(&output[16..20], &[192, 0, 2, 20]);
         assert_eq!(&output[240..243], &[OPTION_MESSAGE_TYPE, 1, 2]);
+        let domain_option = [
+            OPTION_DOMAIN_NAME,
+            "home.arpa".len() as u8,
+            b'h',
+            b'o',
+            b'm',
+            b'e',
+            b'.',
+            b'a',
+            b'r',
+            b'p',
+            b'a',
+        ];
+        assert!(
+            output[..length]
+                .windows(domain_option.len())
+                .any(|window| window == domain_option)
+        );
         assert!(length < MAX_DHCP_PACKET);
     }
 

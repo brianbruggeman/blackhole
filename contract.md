@@ -14,6 +14,10 @@ Policy actions have one transport meaning at the DNS boundary:
 | `honeypot` | Return the configured synthetic A/AAAA address when the type supports it. |
 | `forward` | Query the configured Proxima upstream, subject to bounds and fail-closed errors. |
 
+The optional DHCPv4 adapter advertises the configured resolver through option
+6 and, when `dhcp.domain_name` is set, the bounded ASCII DNS domain through
+option 15. Invalid domain names are rejected before the adapter binds port 67.
+
 Local rewrites are configured as bounded A/AAAA/CNAME/PTR/TXT answers. They are used only
 when the selected action is `pass` or `observe`; an explicit matching rule for
 any other action takes precedence over the rewrite.

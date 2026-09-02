@@ -7,6 +7,20 @@ reload_interval_secs = 3600
 # intentionally configured to expose DNS on every interface.
 listen = "192.168.50.1:53"
 
+[dhcp]
+# DHCP is opt-in and requires authorization to bind UDP port 67.
+enabled = false
+listen = "0.0.0.0:67"
+server = "192.168.50.1"
+subnet_mask = "255.255.255.0"
+pool_start = "192.168.50.100"
+pool_end = "192.168.50.199"
+router = "192.168.50.1"
+dns = "192.168.50.1"
+domain_name = "lan.example"
+lease_secs = 3600
+max_leases = 256
+
 [policy]
 default_action = "pass"
 # Add bounded Pi-hole/AdGuard-compatible files here after creating them with

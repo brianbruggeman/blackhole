@@ -1268,6 +1268,9 @@ mod runtime {
         pub router: Option<String>,
         #[serde(default)]
         pub dns: Option<String>,
+        /// Optional ASCII DNS search domain advertised through DHCP option 15.
+        #[serde(default)]
+        pub domain_name: Option<String>,
         #[serde(default = "default_dhcp_lease_secs")]
         pub lease_secs: u32,
         #[serde(default = "default_dhcp_max_leases")]
@@ -1285,6 +1288,7 @@ mod runtime {
                 pool_end: default_dhcp_pool_end(),
                 router: None,
                 dns: None,
+                domain_name: None,
                 lease_secs: default_dhcp_lease_secs(),
                 max_leases: default_dhcp_max_leases(),
             }
@@ -8815,6 +8819,16 @@ mod runtime {
                 parse_ip(name, value)?;
             }
         }
+        if let Some(domain_name) = config.domain_name.as_deref()
+            && (domain_name.is_empty()
+                || domain_name.len() > 253
+                || !domain_name.is_ascii()
+                || !valid_dns_name(domain_name.trim_end_matches('.')))
+        {
+            return Err(policy::PolicyError::InvalidDhcp {
+                reason: "domain_name must be a bounded ASCII DNS name".into(),
+            });
+        }
         let _ = (server, subnet_mask);
         Ok(())
     }
@@ -9423,6 +9437,17 @@ mod runtime {
             assert!(Policy::new(config.clone()).is_ok());
 
             config.dhcp.max_leases = 4097;
+            assert!(matches!(
+                Policy::new(config),
+                Err(policy::PolicyError::InvalidDhcp { .. })
+            ));
+        }
+
+        #[test]
+        fn dhcp_domain_name_rejects_non_dns_values() {
+            let mut config = Config::default();
+            config.dhcp.enabled = true;
+            config.dhcp.domain_name = Some("lan name".into());
             assert!(matches!(
                 Policy::new(config),
                 Err(policy::PolicyError::InvalidDhcp { .. })
