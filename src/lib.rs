@@ -5423,7 +5423,7 @@ mod runtime {
             }
             let mut seen = BTreeSet::new();
             for rewrite in updates {
-                if !seen.insert(normalize(&rewrite.name)) {
+                if !seen.insert((rewrite.client_identity.clone(), normalize(&rewrite.name))) {
                     return Err(policy::PolicyError::InvalidRewrite {
                         name: rewrite.name.clone(),
                         reason: "rewrite name must be unique within an upsert".into(),
@@ -5433,10 +5433,10 @@ mod runtime {
             let mut next = self.rewrite_configs.snapshot().as_ref().clone();
             for update in updates {
                 let name = normalize(&update.name);
-                if let Some(existing) = next
-                    .iter_mut()
-                    .find(|rewrite| normalize(&rewrite.name) == name)
-                {
+                if let Some(existing) = next.iter_mut().find(|rewrite| {
+                    rewrite.client_identity == update.client_identity
+                        && normalize(&rewrite.name) == name
+                }) {
                     *existing = update.clone();
                 } else {
                     next.push(update.clone());
@@ -8143,6 +8143,7 @@ mod runtime {
                 .map(|rewrite| {
                     serde_json::json!({
                         "name": rewrite.name,
+                        "client_identity": rewrite.client_identity,
                         "ipv4": rewrite.ipv4,
                         "ipv6": rewrite.ipv6,
                         "cname": rewrite.cname,

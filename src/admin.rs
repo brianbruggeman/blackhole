@@ -3892,7 +3892,7 @@ mod tests {
             .method("POST")
             .path("/reload/rewrites/upsert")
             .payload(
-                r#"{"rewrites":[{"name":"ROUTER.EXAMPLE","ipv4":"198.51.100.1","ttl":60},{"name":"guest.example","ipv6":"2001:db8::1","ttl":20}]}"#,
+                r#"{"rewrites":[{"name":"ROUTER.EXAMPLE","ipv4":"198.51.100.1","ttl":60},{"name":"router.example","client_identity":"family-router","ipv4":"198.51.100.42","ttl":60},{"name":"guest.example","ipv6":"2001:db8::1","ttl":20}]}"#,
             )
             .build()
             .expect("rewrite upsert request");
@@ -3905,8 +3905,9 @@ mod tests {
         let listed = block_on(handler.call(request("GET", "/rewrites"))).expect("rewrite list");
         let listed: serde_json::Value =
             serde_json::from_slice(&listed.payload).expect("rewrite list JSON");
-        assert_eq!(listed["total"], 2);
+        assert_eq!(listed["total"], 3);
         assert_eq!(listed["rewrites"][0]["name"], "ROUTER.EXAMPLE");
+        assert_eq!(listed["rewrites"][1]["client_identity"], "family-router");
 
         let query = proxima_dns::DnsQuery {
             id: 1,
