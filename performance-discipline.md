@@ -519,3 +519,31 @@ module_bytes=5618089 memory_bytes=2162688
 The timed loop performs no JavaScript-to-WASM packet copy; setup copies are
 outside the samples. This is workload evidence for the pure edge probe only,
 not a production-performance or zero-copy claim.
+
+## Row 21 — current debug policy reference after CNAME enforcement
+
+`MEASURED` on 2026-09-02, Linux `x86_64`, rustc `1.98.0`, debug build, source
+commit `3781cd7a16e7d6369f93342c22295ae606b8a48a`, and GitHub Proxima revision
+`03ea2c7d`. The pure policy harness used `N=25` samples:
+
+```text
+build_ns p50=193179379 p95=195447551 p99=196021811 cov=0.006528 allocs=250025 alloc_bytes=45722250
+match_ns p50=162517 p95=165936 p99=166186 cov=0.010079 allocs=2500 alloc_bytes=57500
+edge_parse_match_ns p50=158226 p95=199628 p99=211657 cov=0.097628 allocs=100 alloc_bytes=1375
+parse_short_ns p50=515 p95=566 p99=911 cov=0.146378 allocs=0 alloc_bytes=0
+parse_long_ns p50=2841 p95=2967 p99=5215 cov=0.158000 allocs=0 alloc_bytes=0
+parse_adversarial_ns p50=744 p95=787 p99=859 cov=0.038515 allocs=0 alloc_bytes=0
+parse_mixed_ns p50=741 p95=2902 p99=2908 cov=0.760681 allocs=0 alloc_bytes=0
+name_scan_scalar_ns p50=150 p95=153 p99=182 cov=0.043388 allocs=0 alloc_bytes=0
+name_scan_chunked_ns p50=745 p95=780 p99=1179 cov=0.111631 allocs=0 alloc_bytes=0
+name_scan_memchr_ns p50=326 p95=392 p99=3410 cov=1.326195 allocs=0 alloc_bytes=0
+owned_ns p50=740 p95=811 p99=1536 cov=0.199549 allocs=50 alloc_bytes=400
+encode_response_ns p50=1168 p95=1347 p99=1975 cov=0.132913 allocs=50 alloc_bytes=1450
+rss_kib=8968
+copy_count=not-instrumented decision=do-not-claim-zero-copy
+arms=scalar-production name-scan-chunked-measured name-scan-memchr-measured simd-not-added wasm-edge-runtime-measured-separately
+```
+
+This is debug-profile pure-path evidence. Scalar remains the production arm;
+the row does not establish zero-copy, high-performance, or production-grade
+status.
