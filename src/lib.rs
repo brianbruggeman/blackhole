@@ -2557,7 +2557,6 @@ mod runtime {
                 let mut fallback = config.clone();
                 fallback.map_path = Some(last_good_path.to_owned());
                 fallback.last_good_path = None;
-                fallback.max_age_secs = None;
                 load_country_policy_from_source(&fallback)
                     .map(|(mut policy, _)| {
                         if let Some(policy) = policy.as_mut() {
@@ -12414,6 +12413,50 @@ mod runtime {
                 serde_json::from_str(&policy.admin_country_status()).expect("country status");
             assert_eq!(status["active_source"], "last_good");
             assert_eq!(policy.reload_country_policy(), Ok(ReloadState::Unchanged));
+            std::fs::remove_file(source).expect("remove country source");
+            std::fs::remove_file(last_good).expect("remove last-good map");
+        }
+
+        #[test]
+        fn stale_last_good_country_snapshot_fails_closed() {
+            let source = std::env::temp_dir().join(format!(
+                "blackhole-country-stale-source-{}-{}",
+                std::process::id(),
+                1
+            ));
+            let last_good = std::env::temp_dir().join(format!(
+                "blackhole-country-stale-last-good-{}-{}",
+                std::process::id(),
+                1
+            ));
+            std::fs::write(&source, "US 192.0.2.0/24\n").expect("write country source");
+            let config = CountryPolicyConfig {
+                map_path: Some(source.to_string_lossy().into_owned()),
+                last_good_path: Some(last_good.to_string_lossy().into_owned()),
+                max_age_secs: Some(1),
+                deny: vec!["US".into()],
+                ..Default::default()
+            };
+            let policy = Policy::new(Config {
+                country_policy: config,
+                ..Default::default()
+            })
+            .expect("initial country policy");
+            std::thread::sleep(Duration::from_secs(2));
+            std::fs::write(&source, "not a country map\n").expect("corrupt country source");
+
+            let error = policy
+                .reload_country_policy()
+                .expect_err("stale last-good snapshot must fail closed");
+            assert!(error.to_string().contains("older than configured 1s"));
+            assert!(
+                policy
+                    .country_policy
+                    .snapshot()
+                    .as_ref()
+                    .as_ref()
+                    .is_some_and(|current| !current.last_good_active)
+            );
             std::fs::remove_file(source).expect("remove country source");
             std::fs::remove_file(last_good).expect("remove last-good map");
         }
