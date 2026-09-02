@@ -38,6 +38,29 @@ fn wasm_edge_benchmark_covers_bounded_workload_cells() {
 }
 
 #[test]
+fn measurement_workflows_record_source_and_corpus_identity() {
+    let workflow = fs::read_to_string(VERIFY_WORKFLOW).expect("read verification workflow");
+    for section in [
+        "name: record WASM provenance",
+        "name: record fuzz provenance",
+        "name: record performance provenance",
+    ] {
+        let start = workflow.find(section).expect("provenance section");
+        let end = workflow[start..]
+            .find("- uses: actions/upload-artifact@v4")
+            .map_or(workflow.len(), |offset| start + offset);
+        let provenance = &workflow[start..end];
+        for required in [
+            "source_tree_sha256",
+            "fuzz_corpus_files",
+            "fuzz_corpus_sha256",
+        ] {
+            assert!(provenance.contains(required), "{section} lacks {required}");
+        }
+    }
+}
+
+#[test]
 fn launchd_service_is_unprivileged_and_direct() {
     let plist = fs::read_to_string(LAUNCHD_PLIST).expect("read launchd service definition");
 

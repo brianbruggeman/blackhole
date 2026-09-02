@@ -338,7 +338,10 @@ jobs:
             cargo -vV
             uname -a
             node --version
-            sha256sum Cargo.lock
+            echo "cargo_lock_sha256=$(sha256sum Cargo.lock | awk '{print $1}')"
+            echo "source_tree_sha256=$(git ls-files -z | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
+            echo "fuzz_corpus_files=$(find fuzz/corpus/query_view -type f | wc -l)"
+            echo "fuzz_corpus_sha256=$(find fuzz/corpus/query_view -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
             stat -c "artifact_bytes=%s artifact=%n" target/wasm32-unknown-unknown/debug/blackhole.wasm
           } > wasm-metadata.txt
       - uses: actions/upload-artifact@v4
@@ -366,8 +369,10 @@ jobs:
           {
             echo "source_commit=$GITHUB_SHA"
             rustc +nightly -vV
-            echo "corpus_files=$(find fuzz/corpus/query_view -type f | wc -l)"
-            sha256sum fuzz/Cargo.lock
+            echo "cargo_lock_sha256=$(sha256sum fuzz/Cargo.lock | awk '{print $1}')"
+            echo "source_tree_sha256=$(git ls-files -z | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
+            echo "fuzz_corpus_files=$(find fuzz/corpus/query_view -type f | wc -l)"
+            echo "fuzz_corpus_sha256=$(find fuzz/corpus/query_view -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
           } > fuzz-metadata.txt
       - if: always()
         uses: actions/upload-artifact@v4
@@ -400,7 +405,10 @@ jobs:
             echo "source_commit=$GITHUB_SHA"
             rustc -vV
             uname -a
-            sha256sum Cargo.lock
+            echo "cargo_lock_sha256=$(sha256sum Cargo.lock | awk '{print $1}')"
+            echo "source_tree_sha256=$(git ls-files -z | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
+            echo "fuzz_corpus_files=$(find fuzz/corpus/query_view -type f | wc -l)"
+            echo "fuzz_corpus_sha256=$(find fuzz/corpus/query_view -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
           } > performance-metadata.txt
       - uses: actions/upload-artifact@v4
         with:
