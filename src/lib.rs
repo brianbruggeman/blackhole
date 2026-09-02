@@ -2353,6 +2353,12 @@ mod runtime {
     fn load_country_policy(
         config: &CountryPolicyConfig,
     ) -> Result<Option<CountryPolicy>, policy::PolicyError> {
+        if config.last_good_path.is_some() && config.map_path.is_none() {
+            return Err(policy::PolicyError::InvalidCountryMap {
+                path: "<none>".into(),
+                reason: "last_good_path requires map_path".into(),
+            });
+        }
         match load_country_policy_from_source(config) {
             Ok((policy, contents)) => {
                 if let Some(contents) = contents.as_deref() {
@@ -2442,6 +2448,12 @@ mod runtime {
     fn load_country_policy_from_source(
         config: &CountryPolicyConfig,
     ) -> Result<(Option<CountryPolicy>, Option<Vec<u8>>), policy::PolicyError> {
+        if config.last_good_path.is_some() && config.map_path.is_none() {
+            return Err(policy::PolicyError::InvalidCountryMap {
+                path: "<none>".into(),
+                reason: "last_good_path requires map_path".into(),
+            });
+        }
         if config.map_path.is_none()
             && config.deny.is_empty()
             && config.observe.is_empty()
@@ -11102,6 +11114,19 @@ mod runtime {
             assert!(denied.denied(unmapped));
             assert!(!denied.observed(unmapped));
             std::fs::remove_file(path).expect("remove country map");
+        }
+
+        #[test]
+        fn country_last_good_path_requires_a_primary_map() {
+            let config = CountryPolicyConfig {
+                last_good_path: Some("/var/lib/blackhole/country.last-good".into()),
+                ..Default::default()
+            };
+            assert!(matches!(
+                load_country_policy(&config),
+                Err(policy::PolicyError::InvalidCountryMap { reason, .. })
+                    if reason == "last_good_path requires map_path"
+            ));
         }
 
         #[test]
