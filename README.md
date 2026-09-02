@@ -234,7 +234,7 @@ and optional client address),
 `GET /abuse/denylist`,
 `GET /policy-bundle`,
 `GET /rules`, `GET /logs`,
-and `POST /logs/clear`, `POST /logs/clear-durable`, `POST /cache/clear`, `POST /reload/blocklists`, bounded
+and `POST /logs/clear`, `POST /logs/clear-durable`, `POST /logs/verify-durable`, `POST /cache/clear`, `POST /reload/blocklists`, bounded
 `POST /reload/blocklists/replace`, `/reload/blocklists/add`, and
 `/reload/blocklists/remove`, `/reload/blocklists/enable`, and
 `/reload/blocklists/disable` (atomic exact source-path management), bounded
@@ -272,6 +272,9 @@ It also provides bounded `GET /profiles`, `GET /client-groups`, and
 query-decision inspection at `GET /logs` and deletion at `POST /logs/clear` when
 enabled. `POST /logs/clear-durable` deletes the configured durable recording and
 bounded rotations only after regular-file preflight and post-delete verification.
+`POST /logs/verify-durable` reports bounded file and byte totals for the exact
+recording target and rotations without reading payload contents or deleting
+anything.
 `POST /reload/privacy/redaction` atomically selects `"metadata"` or
 `"action_only"` for future decision events without restarting the resolver.
 `POST /reload/profiles` atomically replaces the profile and client-group

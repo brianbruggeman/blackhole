@@ -119,7 +119,7 @@ mod runtime {
     use std::fs::Metadata;
     use std::hash::Hash;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::{Arc, RwLock};
     use std::time::{Duration, Instant};
@@ -6285,6 +6285,70 @@ mod runtime {
                 }
             }
             Ok(removed)
+        }
+
+        /// Verify the configured durable recording and bounded rotations
+        /// without reading, deleting, or retaining their contents.
+        pub(crate) fn verify_durable_query_recording(&self) -> Result<String, String> {
+            const MAX_ROTATIONS: usize = 16;
+            let path = self
+                .config
+                .privacy
+                .query_recording_path
+                .as_deref()
+                .ok_or_else(|| "durable query recording is not configured".to_owned())?;
+            let destination = Path::new(path);
+            let parent = destination
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or_else(|| Path::new("."));
+            if !std::fs::metadata(parent)
+                .map_err(|error| format!("inspect recording parent {}: {error}", parent.display()))?
+                .is_dir()
+            {
+                return Err(format!(
+                    "recording parent {} is not a directory",
+                    parent.display()
+                ));
+            }
+            let mut files = 0usize;
+            let mut bytes = 0u64;
+            for index in 0..=MAX_ROTATIONS {
+                let target = if index == 0 {
+                    destination.to_owned()
+                } else {
+                    let mut rotated = destination.as_os_str().to_os_string();
+                    rotated.push(format!(".{index}"));
+                    PathBuf::from(rotated)
+                };
+                match std::fs::symlink_metadata(&target) {
+                    Ok(metadata) if metadata.file_type().is_file() => {
+                        files = files.saturating_add(1);
+                        bytes = bytes.saturating_add(metadata.len());
+                    }
+                    Ok(_) => {
+                        return Err(format!(
+                            "recording target {} is not a regular file",
+                            target.display()
+                        ));
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => {
+                        return Err(format!(
+                            "inspect recording target {}: {error}",
+                            target.display()
+                        ));
+                    }
+                }
+            }
+            Ok(serde_json::json!({
+                "status": "ok",
+                "files": files,
+                "bytes": bytes,
+                "max_bytes": self.config.privacy.query_recording_max_bytes,
+                "max_rotations": MAX_ROTATIONS,
+            })
+            .to_string())
         }
 
         /// Return aggregate action counts without exposing names, client

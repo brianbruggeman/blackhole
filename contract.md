@@ -59,6 +59,9 @@ Blackhole rotates only oversized files within the configured bounded generation
 count and verifies deletion of the exact oldest generation. Its encoded size is bounded by
 `privacy.query_recording_max_bytes`; operators must configure rotation and deletion
 before enabling it.
+The authenticated `POST /logs/verify-durable` operation checks the same exact
+regular-file targets and reports bounded file and byte totals without reading
+record payloads, deleting files, or retaining new metadata.
 
 The authenticated `POST /policy/preview` control-plane route is a dry-run of
 the live policy matcher. It accepts an ASCII DNS name, non-zero qtype and

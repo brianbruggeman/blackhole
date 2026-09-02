@@ -102,7 +102,7 @@ const ADMIN_UI: &str = r#"<!doctype html>
 <meta charset="utf-8">
 <title>Blackhole</title>
 <h1>Blackhole</h1>
-<p><button id="clear-logs">Clear log</button> <button id="clear-durable-logs">Delete durable log</button> <button id="clear-stats">Clear stats</button> <button id="clear-cache">Clear cache</button> <button id="clear-abuse">Clear abuse</button> <button id="revoke-global-abuse">Revoke global abuse</button> <button id="reload-blocklists-top">Reload lists</button> <button id="reload-country">Reload country</button> <button id="reload-admission">Reload admission</button> <button id="reload-bundle">Publish config</button> <button id="toggle-filtering">Toggle filtering</button></p>
+<p><button id="clear-logs">Clear log</button> <button id="verify-durable-logs">Verify durable log</button> <button id="clear-durable-logs">Delete durable log</button> <button id="clear-stats">Clear stats</button> <button id="clear-cache">Clear cache</button> <button id="clear-abuse">Clear abuse</button> <button id="revoke-global-abuse">Revoke global abuse</button> <button id="reload-blocklists-top">Reload lists</button> <button id="reload-country">Reload country</button> <button id="reload-admission">Reload admission</button> <button id="reload-bundle">Publish config</button> <button id="toggle-filtering">Toggle filtering</button></p>
 <p id="operation-status"></p>
 <h2>Status</h2><pre id="status"></pre>
 <h2>Stats</h2><pre id="stats"></pre>
@@ -243,6 +243,7 @@ document.querySelector('#preview-policy').onclick = previewPolicy;
 document.querySelector('#preview-country').onclick = previewCountry;
 document.querySelector('#clear-logs').onclick = () => operate('/logs/clear', {method:'POST'}).then(refresh);
 document.querySelector('#clear-durable-logs').onclick = () => operate('/logs/clear-durable', {method:'POST'}).then(refresh);
+document.querySelector('#verify-durable-logs').onclick = () => operate('/logs/verify-durable', {method:'POST'});
 document.querySelector('#s').onclick = () => send('/reload/privacy/redaction', document.querySelector('#r').value);
 document.querySelector('#clear-stats').onclick = () => operate('/stats/clear', {method:'POST'}).then(refresh);
 document.querySelector('#clear-cache').onclick = () => operate('/cache/clear', {method:'POST'}).then(refresh);
@@ -994,6 +995,15 @@ impl SendPipe for AdminHandler {
                     serde_json::to_string(&error).unwrap_or_else(|_| "null".into())
                 ))),
             },
+            ("POST", "/logs/verify-durable") => {
+                match self.policy.verify_durable_query_recording() {
+                    Ok(result) => Ok(Response::ok(result)),
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
             ("POST", "/reload/privacy/redaction") => {
                 if request.payload.len() > 64 {
                     return Ok(Response::new(413));
@@ -1422,6 +1432,7 @@ impl SendPipe for AdminHandler {
                 | "/cache/clear"
                 | "/logs/clear"
                 | "/logs/clear-durable"
+                | "/logs/verify-durable"
                 | "/reload/privacy/redaction"
                 | "/reload/blocklists"
                 | "/reload/blocklists/replace"
@@ -1646,6 +1657,11 @@ mod tests {
             ui.payload
                 .windows(b"/logs/clear-durable".len())
                 .any(|window| window == b"/logs/clear-durable")
+        );
+        assert!(
+            ui.payload
+                .windows(b"verify-durable-logs".len())
+                .any(|window| window == b"verify-durable-logs")
         );
         for route in [
             b"/reload/profiles/upsert".as_slice(),
@@ -2256,6 +2272,16 @@ mod tests {
         for target in &targets {
             std::fs::write(target, b"metadata\n").expect("write recording fixture");
         }
+
+        let verification = block_on(handler.call(request("POST", "/logs/verify-durable")))
+            .expect("durable verification response");
+        assert_eq!(verification.status, 200);
+        let verification_body: serde_json::Value =
+            serde_json::from_slice(&verification.payload).expect("durable verification JSON");
+        assert_eq!(verification_body["status"], "ok");
+        assert_eq!(verification_body["files"], 17);
+        assert_eq!(verification_body["bytes"], 153);
+        assert_eq!(verification_body["max_rotations"], 16);
 
         let response = block_on(handler.call(request("POST", "/logs/clear-durable")))
             .expect("durable deletion response");

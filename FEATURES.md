@@ -206,6 +206,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
 - Explicit local `--delete-recording recording.jsonl` management removes only
   the durable recording and its bounded `.1` through `.16` rotations after a
   regular-file preflight, then verifies every exact target is absent.
+- Authenticated `POST /logs/verify-durable` checks the configured recording and
+  bounded rotations without reading payload contents, deleting files, or
+  retaining new metadata.
 - The in-process query-decision log uses Proxima's lock-free live snapshot
   publication for concurrent append/read paths while retaining bounded count
   and age limits.
