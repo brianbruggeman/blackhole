@@ -1327,6 +1327,10 @@ mod runtime {
         /// automatic client classification.
         #[serde(default = "default_identity_enabled")]
         pub enabled: bool,
+        /// Disable policy filtering for this client while retaining its
+        /// identity mapping and all configured policy rules.
+        #[serde(default = "default_identity_filtering_enabled")]
+        pub filtering_enabled: bool,
         #[serde(default)]
         pub clients: Vec<IpAddr>,
         /// Optional bounded networks whose clients receive this identity.
@@ -1335,6 +1339,10 @@ mod runtime {
     }
 
     fn default_identity_enabled() -> bool {
+        true
+    }
+
+    fn default_identity_filtering_enabled() -> bool {
         true
     }
 
@@ -5118,6 +5126,24 @@ mod runtime {
             })
         }
 
+        fn client_filtering_enabled(
+            &self,
+            client: Option<std::net::IpAddr>,
+            identity: Option<&str>,
+        ) -> bool {
+            self.client_identities.read(|identities| {
+                let configured = identity
+                    .and_then(|name| identities.iter().find(|entry| entry.name == name))
+                    .or_else(|| {
+                        client.and_then(|client| {
+                            Self::client_identity_index(identities, client)
+                                .and_then(|index| identities.get(index))
+                        })
+                    });
+                configured.is_none_or(|entry| entry.filtering_enabled)
+            })
+        }
+
         fn client_identity_index(
             identities: &[ClientIdentityConfig],
             client: std::net::IpAddr,
@@ -5696,6 +5722,9 @@ mod runtime {
                 return Action::Pass;
             }
             let name = query.name.to_dotted();
+            if !self.client_filtering_enabled(client, client_identity) {
+                return Action::Pass;
+            }
             if !self.rules_configured.load(Ordering::Acquire) {
                 if !self.matches(&name) {
                     return Action::Pass;
@@ -7006,6 +7035,7 @@ mod runtime {
                         serde_json::json!({
                             "name": identity.name,
                             "enabled": identity.enabled,
+                            "filtering_enabled": identity.filtering_enabled,
                             "clients": identity.clients.len(),
                             "client_cidrs": identity.client_cidrs.len(),
                         })
@@ -7306,10 +7336,12 @@ mod runtime {
                         None
                     }
                 } else {
-                    Some(
+                    Some(if !self.client_filtering_enabled(client, None) {
+                        Action::Pass
+                    } else {
                         self.decision(&query, client)
-                            .map_or(*self.default_action.snapshot(), |decision| decision.action),
-                    )
+                            .map_or(*self.default_action.snapshot(), |decision| decision.action)
+                    })
                 }
             });
             // The borrowed listener records the action before handing the
@@ -8778,6 +8810,7 @@ mod runtime {
             config.policy.client_identities = vec![ClientIdentityConfig {
                 name: "family-router".into(),
                 enabled: true,
+                filtering_enabled: true,
                 clients: vec!["192.0.2.10".parse().expect("client")],
                 client_cidrs: Vec::new(),
             }];
@@ -8813,11 +8846,60 @@ mod runtime {
         }
 
         #[test]
+        fn client_identity_can_disable_filtering_without_disabling_identity_mapping() {
+            let mut config = Config::default();
+            config.policy.client_identities = vec![ClientIdentityConfig {
+                name: "guest-router".into(),
+                enabled: true,
+                filtering_enabled: false,
+                clients: vec!["192.0.2.20".parse().expect("client")],
+                client_cidrs: Vec::new(),
+            }];
+            config.policy.rules = vec![RuleConfig {
+                enabled: true,
+                id: 32,
+                domain: "identity.example".into(),
+                action: Action::Reject,
+                priority: 0,
+                qtype: None,
+                qtypes: Vec::new(),
+                qclass: None,
+                qclasses: Vec::new(),
+                client: None,
+                client_cidr: None,
+                client_cidrs: Vec::new(),
+                client_identity: None,
+            }];
+            let policy = Policy::new(config).expect("valid per-client filtering config");
+            let packet = [
+                0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 8, b'i', b'd', b'e', b'n', b't', b'i', b't',
+                b'y', 7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 0, 0, 1, 0, 1,
+            ];
+            let view = QueryView::parse(&packet).expect("valid query");
+            assert_eq!(
+                policy.action_for_view_with_client(view, Some("192.0.2.20".parse().unwrap())),
+                Action::Pass
+            );
+            assert_eq!(
+                policy.action_for_view_with_client(view, Some("192.0.2.21".parse().unwrap())),
+                Action::Reject
+            );
+            let identities: serde_json::Value =
+                serde_json::from_str(&policy.admin_client_identities()).expect("identity status");
+            assert_eq!(identities["client_identities"][0]["enabled"], true);
+            assert_eq!(
+                identities["client_identities"][0]["filtering_enabled"],
+                false
+            );
+        }
+
+        #[test]
         fn disabled_client_identity_retains_mapping_without_classifying_clients() {
             let mut config = Config::default();
             config.policy.client_identities = vec![ClientIdentityConfig {
                 name: "family-router".into(),
                 enabled: false,
+                filtering_enabled: true,
                 clients: vec!["192.0.2.10".parse().expect("client")],
                 client_cidrs: Vec::new(),
             }];
@@ -8857,6 +8939,7 @@ mod runtime {
             config.policy.client_identities = vec![ClientIdentityConfig {
                 name: "family-router".into(),
                 enabled: true,
+                filtering_enabled: true,
                 clients: vec!["192.0.2.10".parse().expect("client")],
                 client_cidrs: Vec::new(),
             }];
@@ -8903,6 +8986,7 @@ mod runtime {
             config.policy.client_identities = vec![ClientIdentityConfig {
                 name: "family-router".into(),
                 enabled: true,
+                filtering_enabled: true,
                 clients: Vec::new(),
                 client_cidrs: vec!["192.0.2.0/24".into()],
             }];
@@ -8949,6 +9033,7 @@ mod runtime {
             config.policy.client_identities = vec![ClientIdentityConfig {
                 name: "family-router".into(),
                 enabled: true,
+                filtering_enabled: true,
                 clients: vec!["192.0.2.10".parse().expect("client")],
                 client_cidrs: vec!["192.0.2.0/24".into(), "2001:db8::/32".into()],
             }];
@@ -8990,12 +9075,14 @@ mod runtime {
                 ClientIdentityConfig {
                     name: "family-router".into(),
                     enabled: true,
+                    filtering_enabled: true,
                     clients: vec!["192.0.2.10".parse().expect("client")],
                     client_cidrs: vec!["192.0.2.0/24".into()],
                 },
                 ClientIdentityConfig {
                     name: "guest-router".into(),
                     enabled: true,
+                    filtering_enabled: true,
                     clients: Vec::new(),
                     client_cidrs: vec!["192.0.2.128/25".into()],
                 },
@@ -9040,6 +9127,7 @@ mod runtime {
                 policy.reload_client_identities(&[ClientIdentityConfig {
                     name: "family-router".into(),
                     enabled: true,
+                    filtering_enabled: true,
                     clients: vec![family],
                     client_cidrs: Vec::new(),
                 }]),
@@ -9057,6 +9145,7 @@ mod runtime {
                 policy.reload_client_identities(&[ClientIdentityConfig {
                     name: "family-router".into(),
                     enabled: true,
+                    filtering_enabled: true,
                     clients: Vec::new(),
                     client_cidrs: Vec::new(),
                 }]),

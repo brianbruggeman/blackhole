@@ -173,6 +173,7 @@ to an opaque label:
 ```toml
 [[policy.client_identities]]
 name = "family-router"
+filtering_enabled = true
 clients = ["192.0.2.10"]
 client_cidrs = ["192.0.2.0/24"]
 ```
@@ -181,6 +182,9 @@ Rules using `client_identity = "family-router"` match that transient label;
 exact addresses take precedence over CIDR scopes, overlapping scopes across
 identities are rejected, and names and client identities are excluded from
 telemetry and recording.
+Set `filtering_enabled = false` on an identity to retain its mapping while
+allowing that client's queries through without applying policy rules; the
+global filtering switch remains independent.
 Direct `client_cidrs` and named groups are mutually exclusive.
 Rules may use `client_cidrs` for a bounded set of IPv4/IPv6 networks; the
 most-specific matching network wins while `client_cidr` remains supported.

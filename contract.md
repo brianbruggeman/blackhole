@@ -69,6 +69,11 @@ qclass, and an optional client address, and returns the selected action and
 matched rule ID. It does not execute rewrites or forwarding, increment
 decision counters, emit recording events, or retain the supplied address.
 
+An enabled client identity may set `filtering_enabled = false`. In that case
+the identity remains configured and visible to control-plane projections, but
+its queries bypass policy matching and continue through the normal pass,
+rewrite, and upstream path; the global filtering switch is independent.
+
 The authenticated `POST /country/preview` route performs the same kind of
 non-retaining dry-run for a client address against the live country map. It
 reports the matched country, region, ASN, and deny/observe results; it does

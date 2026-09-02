@@ -5,7 +5,9 @@ use std::sync::Arc;
 use blackhole::admin::AdminHandler;
 use blackhole::listener::{TcpProtocol, UdpProtocol};
 use blackhole::query::MAX_QUERY_BYTES;
-use blackhole::{Action, Config, Policy, RewriteConfig, RuleConfig, UpstreamConfig};
+use blackhole::{
+    Action, ClientIdentityConfig, Config, Policy, RewriteConfig, RuleConfig, UpstreamConfig,
+};
 use bytes::Bytes;
 use futures::executor::block_on;
 use futures::io::{AsyncReadExt, AsyncWriteExt};
@@ -146,6 +148,70 @@ async fn listener_preserves_distinct_terminal_actions_on_udp() {
     ] {
         assert_eq!(stats["actions"][action], 1, "UDP action count for {action}");
     }
+    drop(server);
+}
+
+#[proxima::test]
+async fn listener_honors_per_client_filtering_toggle() {
+    let mut config = Config::default();
+    config.server.listen = "127.0.0.1:0".into();
+    config.policy.client_identities = vec![ClientIdentityConfig {
+        name: "guest-router".into(),
+        enabled: true,
+        filtering_enabled: false,
+        clients: vec!["127.0.0.1".parse().expect("loopback client")],
+        client_cidrs: Vec::new(),
+    }];
+    config.policy.rules = vec![RuleConfig {
+        enabled: true,
+        id: 901,
+        domain: "blocked.example.".into(),
+        action: Action::Reject,
+        priority: 0,
+        qtype: None,
+        qtypes: Vec::new(),
+        qclass: None,
+        qclasses: Vec::new(),
+        client: None,
+        client_cidr: None,
+        client_cidrs: Vec::new(),
+        client_identity: None,
+    }];
+    let policy = Arc::new(Policy::new(config).expect("valid per-client filtering policy"));
+    let listener_addr = test_listener_addr();
+    let server = Listener::builder()
+        .bind(listener_addr)
+        .any()
+        .protocol(UdpProtocol::new(Arc::clone(&policy)))
+        .handle(into_handle(Passthrough))
+        .serve()
+        .await
+        .expect("serve per-client filtering listener");
+
+    let client = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind filtering client");
+    client
+        .set_read_timeout(Some(std::time::Duration::from_millis(250)))
+        .expect("set filtering client timeout");
+    let mut query = Vec::new();
+    encode::encode_query(
+        0x901,
+        true,
+        encode::EncodeQuestion {
+            name: "blocked.example.",
+            qtype: 1,
+            qclass: 1,
+        },
+        &mut query,
+    )
+    .expect("encode filtering query");
+    client
+        .send_to(&query, listener_addr)
+        .expect("send filtering query");
+    let mut response = [0u8; 4096];
+    let (length, _) = client.recv_from(&mut response).expect("filtering response");
+    let message = parse_message(&response[..length]).expect("parse filtering response");
+    assert_eq!(message.header.flags.rcode(), 0);
+    assert_eq!(message.answers().count(), 0);
     drop(server);
 }
 
