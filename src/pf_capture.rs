@@ -7,7 +7,7 @@
 use std::fmt;
 use std::net::SocketAddr;
 
-use crate::linux_capture::{CaptureContext, CaptureOwnership, CapturePlan};
+use crate::linux_capture::{CaptureContext, CaptureError, CaptureOwnership, CapturePlan};
 
 const MAX_ANCHOR_BYTES: usize = 64;
 
@@ -178,11 +178,13 @@ pub mod native {
 /// semantics for every UDP deployment. Reject unsupported contexts instead of
 /// silently degrading to a policy path with invented metadata.
 pub fn validate_context(context: &CaptureContext) -> Result<(), PfError> {
-    context
-        .validate()
-        .map_err(|_| PfError::Unsupported("capture context"))?;
-    if context.original_destination.ip().is_unspecified() {
-        return Err(PfError::Unsupported("unspecified original destination"));
+    if let Err(error) = context.validate() {
+        return match error {
+            CaptureError::InvalidContext("original destination") => {
+                Err(PfError::Unsupported("unspecified original destination"))
+            }
+            _ => Err(PfError::Unsupported("capture context")),
+        };
     }
     Ok(())
 }
