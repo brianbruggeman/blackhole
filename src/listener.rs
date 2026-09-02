@@ -491,9 +491,82 @@ impl AnyProtocol for TcpProtocol {
 mod tests {
     use super::*;
     use crate::{Config, Policy};
+    use futures::io::{AsyncRead, AsyncWrite};
     use proxima::Telemetry;
     use proxima_primitives::pipe::telemetry_surface::Labels;
+    use std::io;
+    use std::pin::Pin;
     use std::sync::{Arc, Mutex};
+    use std::task::{Context, Poll};
+
+    struct TestConnection {
+        input: std::io::Cursor<Vec<u8>>,
+        output: Arc<Mutex<Vec<u8>>>,
+        peer: Option<PeerInfo>,
+    }
+
+    impl AsyncRead for TestConnection {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            output: &mut [u8],
+        ) -> Poll<io::Result<usize>> {
+            let _ = cx;
+            let offset = self.input.position() as usize;
+            let input = self.input.get_ref();
+            if offset >= input.len() {
+                return Poll::Ready(Ok(0));
+            }
+            let count = output.len().min(input.len() - offset);
+            output[..count].copy_from_slice(&input[offset..offset + count]);
+            self.input.set_position((offset + count) as u64);
+            Poll::Ready(Ok(count))
+        }
+    }
+
+    impl AsyncWrite for TestConnection {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            input: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            self.output
+                .lock()
+                .expect("test output lock")
+                .extend_from_slice(input);
+            Poll::Ready(Ok(input.len()))
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    impl StreamConnection for TestConnection {
+        fn peer(&self) -> Option<PeerInfo> {
+            self.peer.clone()
+        }
+    }
+
+    fn test_query() -> Vec<u8> {
+        let mut packet = Vec::new();
+        encode::encode_query(
+            0x1234,
+            true,
+            encode::EncodeQuestion {
+                name: "example.com.",
+                qtype: 1,
+                qclass: 1,
+            },
+            &mut packet,
+        )
+        .expect("test query");
+        packet
+    }
 
     struct FailureCollector(Arc<Mutex<Vec<String>>>);
 
@@ -546,6 +619,50 @@ mod tests {
                 Some("192.0.2.53:53")
             );
         }
+    }
+
+    #[test]
+    fn universal_listener_drives_udp_and_tcp_adapters_into_the_fsm() {
+        let policy = Arc::new(Policy::new(Config::default()).expect("default policy"));
+        let peer = Some(PeerInfo::Tcp("192.0.2.10:5353".parse().expect("peer")));
+
+        let udp_output = Arc::new(Mutex::new(Vec::new()));
+        let udp = UdpProtocol::new(Arc::clone(&policy));
+        futures::executor::block_on(udp.drive(
+            Box::new(TestConnection {
+                input: std::io::Cursor::new(test_query()),
+                output: Arc::clone(&udp_output),
+                peer: peer.clone(),
+            }),
+            Arc::new(()),
+            &Value::Null,
+            peer.clone(),
+            &ConnAdmission::unbounded(),
+        ))
+        .expect("UDP adapter drive");
+        let udp_output = udp_output.lock().expect("UDP output");
+        assert_eq!(u16::from_be_bytes([udp_output[0], udp_output[1]]), 0x1234);
+
+        let query = test_query();
+        let mut framed = Vec::with_capacity(query.len() + 2);
+        framed.extend_from_slice(&(query.len() as u16).to_be_bytes());
+        framed.extend_from_slice(&query);
+        let tcp_output = Arc::new(Mutex::new(Vec::new()));
+        let tcp = TcpProtocol::new(Arc::clone(&policy));
+        futures::executor::block_on(tcp.drive(
+            Box::new(TestConnection {
+                input: std::io::Cursor::new(framed),
+                output: Arc::clone(&tcp_output),
+                peer,
+            }),
+            Arc::new(()),
+            &Value::Null,
+            Some(PeerInfo::Tcp("192.0.2.10:5353".parse().expect("peer"))),
+            &ConnAdmission::unbounded(),
+        ))
+        .expect("TCP adapter drive");
+        let tcp_output = tcp_output.lock().expect("TCP output");
+        assert_eq!(u16::from_be_bytes([tcp_output[2], tcp_output[3]]), 0x1234);
     }
 
     #[test]
