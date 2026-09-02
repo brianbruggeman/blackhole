@@ -3262,6 +3262,23 @@ mod runtime {
             self.publish_rules_locked(&combined, rules, "rules", started)
         }
 
+        /// Validate a proposed explicit rule table without publishing it.
+        /// Generated profile rules remain part of the validation set so a
+        /// proposed rule cannot pass here and then fail at publication due to
+        /// a cross-table identity collision.
+        pub fn validate_rules(&self, rules: &[RuleConfig]) -> Result<(), policy::PolicyError> {
+            if rules.is_empty() {
+                return Err(policy::PolicyError::InvalidProfile {
+                    name: "<rule-validation>".into(),
+                    reason: "at least one rule is required".into(),
+                });
+            }
+            let mut combined = rules.to_vec();
+            combined.extend(self.current_profile_rules()?);
+            let _ = PolicyStore::new(&combined)?;
+            Ok(())
+        }
+
         fn validate_admission(
             &self,
             admission: &AdmissionConfig,

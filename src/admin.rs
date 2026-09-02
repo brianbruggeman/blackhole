@@ -1009,6 +1009,28 @@ impl SendPipe for AdminHandler {
                     ))),
                 }
             }
+            ("POST", "/validate/policy") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let rules = match serde_json::from_slice::<Vec<RuleConfig>>(&request.payload) {
+                    Ok(rules) => rules,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                match self.policy.validate_rules(&rules) {
+                    Ok(()) => Ok(Response::ok("{\"status\":\"valid\"}")),
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
             ("POST", "/reload/policy/remove") => {
                 if request.payload.len() > MAX_POLICY_BODY_BYTES {
                     return Ok(Response::new(413));
@@ -1230,6 +1252,7 @@ impl SendPipe for AdminHandler {
                 | "/reload/policy/add"
                 | "/reload/policy/upsert"
                 | "/reload/policy/remove"
+                | "/validate/policy"
                 | "/reload/regex"
                 | "/reload/regex/upsert"
                 | "/reload/regex/remove"
@@ -2619,6 +2642,30 @@ mod tests {
         assert_eq!(bundle["rewrites"][0]["name"], "router.example");
         assert_eq!(bundle["rewrites"][0]["ipv4"], "192.0.2.1");
         assert_eq!(bundle["blocklists"], serde_json::Value::Null);
+        let validate = Request::builder()
+            .method("POST")
+            .path("/validate/policy")
+            .payload(
+                r#"[{"id":70,"domain":"validated.example","action":"drop","qtypes":[1,28],"qclasses":[1]}]"#,
+            )
+            .build()
+            .expect("policy validation request");
+        let response = block_on(handler.call(validate)).expect("policy validation response");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.payload.as_ref(), br#"{"status":"valid"}"#);
+        let invalid_validate = Request::builder()
+            .method("POST")
+            .path("/validate/policy")
+            .payload(r#"[{"id":70,"domain":"bad name","action":"drop"}]"#)
+            .build()
+            .expect("invalid policy validation request");
+        let response =
+            block_on(handler.call(invalid_validate)).expect("invalid policy validation response");
+        assert_eq!(response.status, 422);
+        let current = block_on(handler.call(request("GET", "/rules"))).expect("current rules");
+        let current: serde_json::Value =
+            serde_json::from_slice(&current.payload).expect("current rules JSON");
+        assert_eq!(current["rules"][0]["id"], 7);
         let status = block_on(handler.call(request("GET", "/policy/status"))).expect("status");
         let status: serde_json::Value =
             serde_json::from_slice(&status.payload).expect("status JSON");
