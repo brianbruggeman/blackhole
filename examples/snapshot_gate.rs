@@ -21,6 +21,7 @@ fn rss_kib() -> Option<u64> {
 
 fn rule(id: u32) -> RuleConfig {
     RuleConfig {
+        enabled: true,
         id,
         domain: format!("generation-{id}.example"),
         action: Action::Reject,

@@ -152,6 +152,17 @@ const load = (path, target) => fetch(path).then(response => response.json()).the
     };
     removeControls('#rule-controls', value.rules, '/reload/policy/remove', 'rule');
     removeControls('#regex-controls', value.regex_rules, '/reload/regex/remove', 'regex rule');
+    const toggleRules = (id, items, path, label) => {
+      const controls = document.querySelector(id);
+      for (const item of items || []) {
+        const toggle = document.createElement('button');
+        toggle.textContent = `${item.enabled ? 'Disable' : 'Enable'} ${label} ${item.id}`;
+        toggle.onclick = () => operate(path, {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify([Object.assign({}, item, {enabled: !item.enabled})])}).then(refresh);
+        controls.prepend(toggle, document.createTextNode(' '));
+      }
+    };
+    toggleRules('#rule-controls', value.rules, '/reload/policy/upsert', 'rule');
+    toggleRules('#regex-controls', value.regex_rules, '/reload/regex/upsert', 'regex rule');
     document.querySelector('#profile-editor').value = JSON.stringify(value.profiles || [], null, 2);
     document.querySelector('#group-editor').value = JSON.stringify(value.client_groups || [], null, 2);
     document.querySelector('#identity-editor').value = JSON.stringify(value.client_identities || [], null, 2);
