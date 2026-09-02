@@ -56,6 +56,9 @@ blocklists = []
 # family-router = ["updates.example"]
 # Optional cancellable background reload interval; zero disables polling.
 blocklist_reload_interval_secs = 0
+# Optional standard hosts file for local A/AAAA rewrites. The file is bounded,
+# read at startup, and explicit policy.rewrites entries win on name collisions.
+# hosts_path = "/etc/blackhole/hosts"
 # Optional group-scoped sources. A referenced source is removed from the
 # unscoped list and applies only to enabled clients in the named group.
 # [policy.blocklist_groups]
