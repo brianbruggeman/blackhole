@@ -90,7 +90,7 @@ fn shipped_binary_serves_udp_datagrams_and_tcp_frames() {
     let mut config = NamedTempFile::new().expect("create config");
     writeln!(
         config,
-        "[server]\nlisten = \"{listener_addr}\"\n\n[policy]\ndefault_action = \"forward\"\n\n[upstream]\nresolver_ip = \"127.0.0.1\"\nport = {}\ntransport = \"udp\"\nquery_timeout_ms = 500\nmax_attempts = 1",
+        "[server]\nlisten = \"{listener_addr}\"\n\n[policy]\ndefault_action = \"forward\"\n\n[[policy.rules]]\nid = 9001\ndomain = \"blocked.example.\"\naction = \"reject\"\n\n[upstream]\nresolver_ip = \"127.0.0.1\"\nport = {}\ntransport = \"udp\"\nquery_timeout_ms = 500\nmax_attempts = 1",
         upstream_addr.port()
     )
     .expect("write config");
@@ -110,6 +110,20 @@ fn shipped_binary_serves_udp_datagrams_and_tcp_frames() {
     let udp = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind UDP client");
     udp.set_read_timeout(Some(Duration::from_secs(3)))
         .expect("set UDP timeout");
+
+    let blocked_query = query(0x1000, "blocked.example.");
+    udp.send_to(&blocked_query, listener_addr)
+        .expect("send blocked UDP query");
+    let mut blocked_response = [0u8; 4096];
+    let (blocked_length, _) = udp
+        .recv_from(&mut blocked_response)
+        .expect("receive blocked UDP response");
+    let blocked_message =
+        parse_message(&blocked_response[..blocked_length]).expect("parse blocked UDP response");
+    assert_eq!(blocked_message.header.id, 0x1000);
+    assert_eq!(blocked_message.header.flags.rcode(), 5);
+    assert!(blocked_message.answers().next().is_none());
+
     let udp_query = query(0x1001, "udp.example.");
     udp.send_to(&udp_query, listener_addr)
         .expect("send UDP query");
