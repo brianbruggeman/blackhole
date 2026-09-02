@@ -36,8 +36,9 @@ below are future capabilities, grouped by the dependency layer they extend.
 ## Incumbent parity and extensions
 
 - Extend the bounded privacy-safe query-decision log with operator-selected
-  redaction and deletion-verification backends beyond the current metadata-only,
-  byte-bounded Proxima JSONL destination and bounded startup rotation.
+  deletion-verification backends beyond the current exact-file deletion,
+  byte-bounded Proxima JSONL destination, and bounded startup rotation. The
+  current `metadata` and `action_only` redaction modes are part of the baseline.
 - Extend the current bounded authenticated status UI into a full optional web
   UI with richer policy editing, client/group workflows, and operational
   diagnostics while preserving the existing authentication and response
