@@ -6136,7 +6136,7 @@ mod runtime {
                     } else if remote {
                         ("configured", 0)
                     } else {
-                        match load_blocklists(&[path.to_owned()]) {
+                        match load_blocklists(std::slice::from_ref(path)) {
                             Ok(source_rules) => ("ok", source_rules.len()),
                             Err(_) => ("invalid", 0),
                         }
