@@ -125,6 +125,9 @@ For configuration-driven per-device policy, use
 The named identity must be enabled, each source must also appear in
 `policy.blocklists`, and assigned sources are removed from the global snapshot;
 only requests carrying that adapter-owned identity receive those rules.
+The same bounded assignment map is inspectable at authenticated
+`GET /blocklists-by-identity` and replaceable with
+`POST /reload/blocklists-by-identity`.
 with bounded JSON CIDR arrays; it changes only the global ceiling exemption
 and is safe to retry.
 Set `[admission.ddos].persist_incidents = true` to persist temporary-blacklist

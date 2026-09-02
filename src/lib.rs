@@ -5117,6 +5117,43 @@ mod runtime {
             Ok(published)
         }
 
+        /// Atomically replace identity-scoped blocklist assignments and
+        /// publish the resulting bounded rule snapshot.
+        pub fn replace_blocklists_by_identity(
+            &self,
+            assignments: &BTreeMap<String, Vec<String>>,
+        ) -> Result<ReloadState, policy::PolicyError> {
+            let _reload = self.reload_lock.write().expect("reload lock");
+            let started = Instant::now();
+            if self
+                .blocklists_by_identity
+                .read(|current| current == assignments)
+            {
+                self.observe_reload_latency("blocklist_identities_unchanged", started);
+                return Ok(ReloadState::Unchanged);
+            }
+            let paths = self.blocklist_paths.snapshot();
+            let disabled = self.disabled_blocklist_paths.snapshot();
+            let groups = self.blocklist_groups.snapshot();
+            let replacement = load_blocklists_with_groups(
+                &paths,
+                &disabled,
+                groups.as_ref(),
+                self.client_groups.snapshot().as_ref(),
+                assignments,
+                self.client_identities.snapshot().as_ref(),
+            )?;
+            let published = self.replace_active_blocklist_rules_with_groups_locked(
+                started,
+                "blocklist_identities",
+                true,
+                replacement,
+            )?;
+            self.blocklists_by_identity_control
+                .replace(assignments.clone());
+            Ok(published)
+        }
+
         fn set_blocklist_sources_enabled(
             &self,
             paths: &[String],
@@ -8569,6 +8606,17 @@ mod runtime {
             serde_json::json!({
                 "groups": self.blocklist_groups.snapshot().as_ref(),
                 "count": self.blocklist_groups.read(BTreeMap::len),
+                "policy_generation": self.policy_generation.load(Ordering::Acquire),
+            })
+            .to_string()
+        }
+
+        /// Return the authenticated operator's bounded live identity-scoped
+        /// blocklist assignments without exposing source contents.
+        pub(crate) fn admin_blocklists_by_identity(&self) -> String {
+            serde_json::json!({
+                "identities": self.blocklists_by_identity.snapshot().as_ref(),
+                "count": self.blocklists_by_identity.read(BTreeMap::len),
                 "policy_generation": self.policy_generation.load(Ordering::Acquire),
             })
             .to_string()

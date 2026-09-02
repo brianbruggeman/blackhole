@@ -702,6 +702,9 @@ impl SendPipe for AdminHandler {
             ("GET", "/blocklists") => Ok(Response::ok(self.policy.admin_blocklists())),
             ("GET", "/allowlist") => Ok(Response::ok(self.policy.admin_allowlist())),
             ("GET", "/blocklist-groups") => Ok(Response::ok(self.policy.admin_blocklist_groups())),
+            ("GET", "/blocklists-by-identity") => {
+                Ok(Response::ok(self.policy.admin_blocklists_by_identity()))
+            }
             ("GET", "/policy-bundle") => Ok(Response::ok(self.policy.admin_policy_bundle())),
             ("GET", "/privacy/status") => Ok(Response::ok(self.policy.admin_privacy_status())),
             ("GET", "/rules") => Ok(Response::ok(self.policy.admin_rules())),
@@ -1214,6 +1217,36 @@ impl SendPipe for AdminHandler {
                     }
                 };
                 match self.policy.replace_blocklist_groups(&groups) {
+                    Ok(crate::snapshot::ReloadState::Published) => {
+                        Ok(Response::ok("{\"status\":\"reloaded\"}"))
+                    }
+                    Ok(crate::snapshot::ReloadState::Unchanged) => {
+                        Ok(Response::ok("{\"status\":\"unchanged\"}"))
+                    }
+                    Err(error) => Ok(Response::new(422).with_body(format!(
+                        "{{\"status\":\"error\",\"message\":{}}}",
+                        serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "null".into())
+                    ))),
+                }
+            }
+            ("POST", "/reload/blocklists-by-identity") => {
+                if request.payload.len() > MAX_POLICY_BODY_BYTES {
+                    return Ok(Response::new(413));
+                }
+                let assignments = match serde_json::from_slice::<
+                    std::collections::BTreeMap<String, Vec<String>>,
+                >(&request.payload)
+                {
+                    Ok(assignments) => assignments,
+                    Err(error) => {
+                        return Ok(Response::new(400).with_body(format!(
+                            "{{\"status\":\"error\",\"message\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "null".into())
+                        )));
+                    }
+                };
+                match self.policy.replace_blocklists_by_identity(&assignments) {
                     Ok(crate::snapshot::ReloadState::Published) => {
                         Ok(Response::ok("{\"status\":\"reloaded\"}"))
                     }
