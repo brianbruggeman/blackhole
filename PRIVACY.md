@@ -17,6 +17,9 @@ DNS edge and is a prerequisite for any future honeypot terminal.
   retention bound before enabling it. Blackhole enforces the configured
   `privacy.query_recording_max_bytes` ceiling and never supplies
   query names, client identity, credentials, or packet bytes to that sink.
+  Operators may set `privacy.query_recording_redaction = "action_only"` to
+  remove qtype and qclass before the shared event reaches either recording
+  destination or the in-memory query log.
 - The bounded fuzz corpus contains only synthetic/minimized wire samples and
   must not contain client identity or production payloads.
 - The capture ownership journal contains only the exact firewall plan needed

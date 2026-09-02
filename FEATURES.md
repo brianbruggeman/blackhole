@@ -176,7 +176,8 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   retaining counts for every action identity without DNS names, client
   metadata, or packet payloads; the same projection is shown in the admin UI.
 - An optional Proxima recording-sink hook emits only bounded decision metadata
-  (`action`, `qtype`, and `qclass`); DNS names, client identity, credentials,
+  (`action`, `qtype`, and `qclass` by default); the operator can select the
+  `action_only` redaction mode before the shared event reaches any sink. DNS names, client identity, credentials,
   and wire payloads are excluded from recording events. The convenience API
   wraps a supplied backend in Proxima's bounded queue, and the executable can
   append the same events to an operator-selected Proxima JSONL destination

@@ -968,6 +968,23 @@ mod runtime {
         /// Number of rotated durable recording files to retain.
         #[serde(default = "default_query_recording_max_files")]
         pub query_recording_max_files: usize,
+        /// Fields retained in query-decision events. `action_only` removes
+        /// question type and class before the event reaches any Proxima sink.
+        #[serde(default)]
+        pub query_recording_redaction: QueryRecordingRedaction,
+    }
+
+    #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+    #[serde(rename_all = "snake_case")]
+    pub enum QueryRecordingRedaction {
+        Metadata,
+        ActionOnly,
+    }
+
+    impl Default for QueryRecordingRedaction {
+        fn default() -> Self {
+            Self::Metadata
+        }
     }
 
     impl Default for PrivacyConfig {
@@ -980,6 +997,7 @@ mod runtime {
                 query_recording_max_bytes: default_query_recording_max_bytes(),
                 query_recording_rotation_enabled: false,
                 query_recording_max_files: default_query_recording_max_files(),
+                query_recording_redaction: QueryRecordingRedaction::default(),
             }
         }
     }
@@ -5549,6 +5567,19 @@ mod runtime {
             if self.recording.is_none() && self.query_log.is_none() {
                 return;
             }
+            let mut payload = serde_json::json!({
+                "action": action_label(action),
+                "qtype": query.qtype,
+                "qclass": query.qclass,
+            });
+            if self.config.privacy.query_recording_redaction == QueryRecordingRedaction::ActionOnly
+            {
+                let object = payload
+                    .as_object_mut()
+                    .expect("decision recording payload is an object");
+                object.remove("qtype");
+                object.remove("qclass");
+            }
             let event = RecordingEvent {
                 id: InteractionId::new(),
                 ts_ms: std::time::SystemTime::now()
@@ -5559,11 +5590,7 @@ mod runtime {
                 parent: None,
                 event: ProtocolEvent::Custom {
                     kind: "blackhole.dns_decision".into(),
-                    payload: serde_json::json!({
-                        "action": action_label(action),
-                        "qtype": query.qtype,
-                        "qclass": query.qclass,
-                    }),
+                    payload,
                 },
             };
             if let Some(query_log) = self.query_log.as_ref()
@@ -5800,6 +5827,10 @@ mod runtime {
                     .privacy
                     .query_recording_rotation_enabled,
                 "query_recording_max_files": self.config.privacy.query_recording_max_files,
+                "query_recording_redaction": match self.config.privacy.query_recording_redaction {
+                    QueryRecordingRedaction::Metadata => "metadata",
+                    QueryRecordingRedaction::ActionOnly => "action_only",
+                },
                 "payload_recording": "disabled",
                 "client_identity_recording": "disabled",
             })
@@ -10379,6 +10410,58 @@ mod runtime {
             assert_eq!(payload["qtype"], 1);
             assert_eq!(payload["qclass"], 1);
             assert!(!payload.to_string().contains("secret.example"));
+        }
+
+        #[test]
+        fn action_only_recording_redaction_reaches_both_log_sinks() {
+            use proxima::{RecordingEvent, RecordingSink};
+            use std::sync::{Arc, Mutex};
+
+            struct Collector(Arc<Mutex<Vec<RecordingEvent>>>);
+
+            impl RecordingSink for Collector {
+                fn append<'lifetime>(
+                    &'lifetime self,
+                    event: RecordingEvent,
+                ) -> proxima::RecordingAppendFuture<'lifetime> {
+                    let events = Arc::clone(&self.0);
+                    Box::pin(async move {
+                        events.lock().expect("recording lock").push(event);
+                        Ok(())
+                    })
+                }
+
+                fn flush<'lifetime>(&'lifetime self) -> proxima::RecordingAppendFuture<'lifetime> {
+                    Box::pin(async { Ok(()) })
+                }
+            }
+
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let mut config = Config::default();
+            config.privacy.query_log_enabled = true;
+            config.privacy.query_recording_redaction = QueryRecordingRedaction::ActionOnly;
+            let policy = Policy::new(config)
+                .expect("valid policy")
+                .with_recording_sink(Arc::new(Collector(Arc::clone(&events))));
+            let query = proxima_dns::DnsQuery {
+                id: 10,
+                recursion_desired: true,
+                name: "secret.example.".into(),
+                qtype: 28,
+                qclass: 1,
+            };
+
+            futures::executor::block_on(policy.record_decision(Action::Reject, &query));
+
+            let events = events.lock().expect("recording lock");
+            let proxima::ProtocolEvent::Custom { payload, .. } = &events[0].event else {
+                panic!("expected custom decision event");
+            };
+            assert_eq!(payload["action"], "reject");
+            assert!(payload.get("qtype").is_none());
+            assert!(payload.get("qclass").is_none());
+            assert_eq!(policy.query_log().expect("query log").snapshot().len(), 1);
+            assert_eq!(policy.admin_privacy_status().contains("action_only"), true);
         }
 
         #[test]
