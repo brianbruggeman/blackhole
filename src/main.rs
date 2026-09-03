@@ -1,6 +1,8 @@
 #![cfg(feature = "std")]
 
-use blackhole::admin::{authenticated_handle, validate_bind};
+use blackhole::admin::{
+    authenticated_handle, authenticated_handle_with_honeypot_token, validate_bind,
+};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use blackhole::linux_capture::{CaptureController, FileOwnershipStore};
 #[cfg(target_os = "linux")]
@@ -1160,7 +1162,7 @@ impl SendPipe for HostsReloadHandler {
 
 fn admin_endpoint(
     config: &blackhole::AdminConfig,
-) -> Result<Option<(SocketAddr, String)>, ProximaError> {
+) -> Result<Option<(SocketAddr, String, Option<String>)>, ProximaError> {
     match (&config.listen, &config.token) {
         (None, None) => Ok(None),
         (None, Some(_)) => Err(ProximaError::Config(
@@ -1174,7 +1176,18 @@ fn admin_endpoint(
                 .parse()
                 .map_err(|error| ProximaError::Config(format!("invalid admin.listen: {error}")))?;
             validate_bind(bind)?;
-            Ok(Some((bind, token.clone())))
+            if let Some(honeypot_token) = config.honeypot_token.as_deref()
+                && (honeypot_token.is_empty()
+                    || honeypot_token.len() > 4096
+                    || honeypot_token.bytes().any(|byte| byte <= 0x20)
+                    || honeypot_token == token)
+            {
+                return Err(ProximaError::Config(
+                    "admin.honeypot_token must be distinct, 1-4096 bytes, without whitespace"
+                        .into(),
+                ));
+            }
+            Ok(Some((bind, token.clone(), config.honeypot_token.clone())))
         }
     }
 }
@@ -1485,7 +1498,7 @@ async fn main() -> Result<(), ProximaError> {
             Arc::new(Policy::new(config).map_err(|error| {
                 ProximaError::Config(format!("invalid configuration: {error}"))
             })?);
-        if let Some((_, token)) = admin_endpoint {
+        if let Some((_, token, _)) = admin_endpoint {
             authenticated_handle(policy, token)?;
         }
         println!("configuration valid (listener bind: {bind})");
@@ -1581,8 +1594,12 @@ async fn main() -> Result<(), ProximaError> {
     } else {
         None
     };
-    let admin_server = if let Some((admin_bind, token)) = admin_endpoint {
-        let handle = authenticated_handle(Arc::clone(&policy), token)?;
+    let admin_server = if let Some((admin_bind, token, honeypot_token)) = admin_endpoint {
+        let handle = if let Some(honeypot_token) = honeypot_token {
+            authenticated_handle_with_honeypot_token(Arc::clone(&policy), token, honeypot_token)?
+        } else {
+            authenticated_handle(Arc::clone(&policy), token)?
+        };
         let server = match Listener::http(admin_bind).handle(handle).serve().await {
             Ok(server) => server,
             Err(error) => {

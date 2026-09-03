@@ -1386,6 +1386,10 @@ mod runtime {
         pub listen: Option<String>,
         /// Required bearer token when `listen` is configured.
         pub token: Option<String>,
+        /// Optional separate bearer token restricted to honeypot inspection
+        /// and clearing. When absent, the primary admin token protects those
+        /// routes as before.
+        pub honeypot_token: Option<String>,
     }
 
     #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]

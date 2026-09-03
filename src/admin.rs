@@ -327,12 +327,31 @@ pub fn validate_bind(bind: SocketAddr) -> Result<(), ProximaError> {
 /// It deliberately exposes no query data or configuration secrets.
 pub struct AdminHandler {
     policy: Arc<Policy>,
+    admin_token: Option<String>,
+    honeypot_token: Option<String>,
 }
 
 impl AdminHandler {
     #[must_use]
     pub fn new(policy: Arc<Policy>) -> Self {
-        Self { policy }
+        Self {
+            policy,
+            admin_token: None,
+            honeypot_token: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_honeypot_token(
+        policy: Arc<Policy>,
+        admin_token: String,
+        honeypot_token: String,
+    ) -> Self {
+        Self {
+            policy,
+            admin_token: Some(admin_token),
+            honeypot_token: Some(honeypot_token),
+        }
     }
 }
 
@@ -344,6 +363,16 @@ impl SendPipe for AdminHandler {
     async fn call(&self, request: Self::In) -> Result<Self::Out, Self::Err> {
         let method = request.method.as_str().unwrap_or("");
         let path = std::str::from_utf8(&request.path).unwrap_or("");
+        if path.starts_with("/honeypot") && self.honeypot_token.is_some() {
+            let supplied = request.metadata.get_str("authorization").unwrap_or("");
+            let admin = self.admin_token.as_deref().map_or("", |token| token);
+            let honeypot = self.honeypot_token.as_deref().map_or("", |token| token);
+            let allowed =
+                supplied == format!("Bearer {admin}") || supplied == format!("Bearer {honeypot}");
+            if !allowed {
+                return Ok(Response::new(403));
+            }
+        }
         match (method, path) {
             ("GET", "/") => {
                 Ok(Response::ok(ADMIN_UI).with_header("content-type", "text/html; charset=utf-8"))
@@ -1745,6 +1774,41 @@ pub fn authenticated_handle(
         inner: into_handle(AdminHandler::new(policy)),
         header: "authorization".into(),
         allow: BTreeSet::from([token]),
+        realm: Arc::from(b"blackhole-admin".as_slice()),
+        on_unauthorized_status: 401,
+        strip_prefix: Some("Bearer ".into()),
+    };
+    Ok(into_handle(auth))
+}
+
+/// Build an authenticated admin handler with a separate honeypot role token.
+/// The admin token retains full access; the honeypot token is admitted only
+/// for the honeypot inspection and clear routes.
+pub fn authenticated_handle_with_honeypot_token(
+    policy: Arc<Policy>,
+    admin_token: String,
+    honeypot_token: String,
+) -> Result<PipeHandle, ProximaError> {
+    if admin_token.is_empty()
+        || admin_token.len() > 4096
+        || admin_token.bytes().any(|byte| byte <= 0x20)
+        || honeypot_token.is_empty()
+        || honeypot_token.len() > 4096
+        || honeypot_token.bytes().any(|byte| byte <= 0x20)
+        || admin_token == honeypot_token
+    {
+        return Err(ProximaError::Config(
+            "admin and honeypot tokens must be distinct, 1-4096 bytes, without whitespace".into(),
+        ));
+    }
+    let auth = Auth {
+        inner: into_handle(AdminHandler::with_honeypot_token(
+            Arc::clone(&policy),
+            admin_token.clone(),
+            honeypot_token.clone(),
+        )),
+        header: "authorization".into(),
+        allow: BTreeSet::from([admin_token, honeypot_token]),
         realm: Arc::from(b"blackhole-admin".as_slice()),
         on_unauthorized_status: 401,
         strip_prefix: Some("Bearer ".into()),
