@@ -15,10 +15,11 @@ below are future capabilities, grouped by the dependency layer they extend.
 
 ## Policy and operator controls
 
-- Add a managed GeoIP/region/ASN data lifecycle and richer country policy
-  beyond the explicit operator-supplied map labels, SHA-256-pinned
-  bounded refresh, and last-good snapshot in the current baseline; uncertainty
-  must remain explicit.
+- Add a managed GeoIP/region/ASN database lifecycle beyond the current
+  operator-supplied map and locally supplied MaxMind database: bounded,
+  authenticated provider downloads, license/source metadata, SHA-256-pinned
+  publication, last-good recovery, and explicit uncertainty when the provider
+  data is unavailable.
 
 ## Interception and deployment
 
@@ -30,16 +31,17 @@ below are future capabilities, grouped by the dependency layer they extend.
 
 ## Incumbent parity and extensions
 
-- Close the remaining Pi-hole/AdGuard Home parity gaps that fit Blackhole's
-  explicit-action model: client-specific ordered upstream failover, and any
-  additional client/service controls confirmed by the incumbent comparison.
-  The current baseline already covers identity filtering, query logs,
-  statistics, cache, fallback action, named upstream, scoped profiles and
-  allowlists, global rate-limit-whitelist, per-identity query rate, response
-  budgets, and concurrency controls.
-- Add durable honeypot payload storage only after field-level redaction,
-  authenticated role-scoped access, crash-safe deletion verification, and
-  bounded credential retention are implemented.
+- Close additional Pi-hole/AdGuard Home parity gaps confirmed by the
+  incumbent comparison, while preserving Blackhole's explicit action model
+  and bounded fail-closed behavior. The current baseline already covers
+  identity filtering, query logs, statistics, cache, ordered upstream
+  failover, named upstreams, scoped profiles, allowlists, rate limits,
+  response budgets, and concurrency controls.
+- Add durable honeypot payload storage only after the current canonical
+  redaction and in-memory bounds are extended with role-scoped access,
+  crash-safe deletion verification, restart recovery, and bounded credential
+  retention. The durable store must reuse Proxima recording primitives and
+  remain opt-in.
 
 ## Reference sources
 
