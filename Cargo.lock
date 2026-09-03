@@ -269,6 +269,7 @@ dependencies = [
 name = "blackhole"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "bytes",
  "conflaguration",
  "futures",

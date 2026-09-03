@@ -93,6 +93,8 @@ pub mod snapshot;
 
 #[cfg(feature = "std")]
 mod runtime {
+    use crate::query::MAX_QUERY_BYTES;
+    use base64::Engine;
     use futures::StreamExt;
     use proxima::runtime::PrimeRuntime;
     use proxima::{
@@ -1698,12 +1700,21 @@ mod runtime {
         /// Enable the isolated metadata-only honeypot terminal.
         #[serde(default)]
         pub terminal_enabled: bool,
+        /// Explicit operator consent for retaining honeypot DNS payloads.
+        #[serde(default)]
+        pub terminal_payload_enabled: bool,
         /// Maximum retained terminal events.
         #[serde(default = "default_honeypot_terminal_max_entries")]
         pub terminal_max_entries: usize,
         /// Maximum terminal event age in seconds.
         #[serde(default = "default_honeypot_terminal_retention_secs")]
         pub terminal_retention_secs: u64,
+        /// Maximum wire bytes retained in one honeypot event.
+        #[serde(default = "default_honeypot_terminal_max_payload_bytes")]
+        pub terminal_max_payload_bytes: usize,
+        /// Maximum encoded payload bytes retained by the terminal.
+        #[serde(default = "default_honeypot_terminal_max_bytes")]
+        pub terminal_max_bytes: u64,
     }
     impl Default for HoneypotConfig {
         fn default() -> Self {
@@ -1712,8 +1723,11 @@ mod runtime {
                 ipv6: default_ipv6(),
                 ttl: default_ttl(),
                 terminal_enabled: false,
+                terminal_payload_enabled: false,
                 terminal_max_entries: default_honeypot_terminal_max_entries(),
                 terminal_retention_secs: default_honeypot_terminal_retention_secs(),
+                terminal_max_payload_bytes: default_honeypot_terminal_max_payload_bytes(),
+                terminal_max_bytes: default_honeypot_terminal_max_bytes(),
             }
         }
     }
@@ -1781,6 +1795,12 @@ mod runtime {
     }
     fn default_honeypot_terminal_retention_secs() -> u64 {
         3600
+    }
+    fn default_honeypot_terminal_max_payload_bytes() -> usize {
+        4096
+    }
+    fn default_honeypot_terminal_max_bytes() -> u64 {
+        4 * 1024 * 1024
     }
     fn default_action() -> Action {
         Action::Pass
@@ -3976,6 +3996,73 @@ mod runtime {
         }
     }
 
+    /// Isolated bounded honeypot event store. It deliberately accepts only
+    /// already-redacted DNS wire bytes and never receives adapter metadata.
+    struct HoneypotTerminal {
+        entries: Live<VecDeque<RecordingEvent>>,
+        control: LiveControl<VecDeque<RecordingEvent>>,
+        max_entries: usize,
+        retention: Duration,
+        max_bytes: u64,
+    }
+
+    impl HoneypotTerminal {
+        fn new(config: &HoneypotConfig) -> Self {
+            let (entries, control) = live(VecDeque::with_capacity(config.terminal_max_entries));
+            Self {
+                entries,
+                control,
+                max_entries: config.terminal_max_entries,
+                retention: Duration::from_secs(config.terminal_retention_secs),
+                max_bytes: config.terminal_max_bytes,
+            }
+        }
+
+        fn append(&self, event: RecordingEvent, encoded_bytes: u64) {
+            let cutoff = event
+                .ts_ms
+                .saturating_sub(self.retention.as_millis() as u64);
+            self.control.update(|current| {
+                let mut entries = current.clone();
+                while entries.front().is_some_and(|old| old.ts_ms < cutoff) {
+                    entries.pop_front();
+                }
+                let retained = entries.iter().fold(0u64, |total, old| {
+                    let bytes = match &old.event {
+                        ProtocolEvent::Custom { payload, .. } => payload
+                            .get("payload_base64")
+                            .and_then(serde_json::Value::as_str)
+                            .map_or(0, |value| value.len() as u64),
+                        _ => 0,
+                    };
+                    total.saturating_add(bytes)
+                });
+                if encoded_bytes > self.max_bytes
+                    || retained.saturating_add(encoded_bytes) > self.max_bytes
+                {
+                    return entries;
+                }
+                entries.push_back(event.clone());
+                while entries.len() > self.max_entries {
+                    entries.pop_front();
+                }
+                entries
+            });
+        }
+
+        fn snapshot(&self) -> Vec<RecordingEvent> {
+            self.entries
+                .read(|entries| entries.iter().cloned().collect())
+        }
+
+        fn clear(&self) -> usize {
+            let count = self.entries.read(VecDeque::len);
+            self.control
+                .replace(VecDeque::with_capacity(self.max_entries));
+            count
+        }
+    }
+
     struct NamedUpstream {
         upstream: DnsClientUpstream,
         slots: Arc<AtomicPermitPool>,
@@ -4154,7 +4241,7 @@ mod runtime {
         telemetry: Option<TelemetryHandle>,
         recording: Option<DynRecordingSink>,
         query_log: Option<Arc<QueryLog>>,
-        honeypot_terminal: Option<Arc<QueryLog>>,
+        honeypot_terminal: Option<Arc<HoneypotTerminal>>,
         query_recording_redaction: Live<QueryRecordingRedaction>,
         query_recording_redaction_control: LiveControl<QueryRecordingRedaction>,
         decision_counts: [AtomicU64; 9],
@@ -4458,10 +4545,21 @@ mod runtime {
             if config.honeypot.terminal_enabled
                 && (config.honeypot.terminal_max_entries == 0
                     || config.honeypot.terminal_max_entries > 65_536
-                    || config.honeypot.terminal_retention_secs == 0)
+                    || config.honeypot.terminal_retention_secs == 0
+                    || config.honeypot.terminal_max_payload_bytes == 0
+                    || config.honeypot.terminal_max_payload_bytes > MAX_QUERY_BYTES
+                    || config.honeypot.terminal_max_bytes == 0
+                    || config.honeypot.terminal_max_bytes > 64 * 1024 * 1024
+                    || (config.honeypot.terminal_payload_enabled
+                        && !config.honeypot.terminal_enabled))
             {
                 return Err(policy::PolicyError::InvalidAdmission {
                     reason: "enabled honeypot terminal bounds are invalid".into(),
+                });
+            }
+            if config.honeypot.terminal_payload_enabled && !config.honeypot.terminal_enabled {
+                return Err(policy::PolicyError::InvalidAdmission {
+                    reason: "honeypot payload retention requires the terminal to be enabled".into(),
                 });
             }
             if config
@@ -4619,12 +4717,10 @@ mod runtime {
                 .privacy
                 .query_log_enabled
                 .then(|| Arc::new(QueryLog::new(&config.privacy)));
-            let honeypot_terminal = config.honeypot.terminal_enabled.then(|| {
-                Arc::new(QueryLog::with_limits(
-                    config.honeypot.terminal_max_entries,
-                    config.honeypot.terminal_retention_secs,
-                ))
-            });
+            let honeypot_terminal = config
+                .honeypot
+                .terminal_enabled
+                .then(|| Arc::new(HoneypotTerminal::new(&config.honeypot)));
             let profiles = config.policy.profiles.clone();
             let client_groups = config.policy.client_groups.clone();
             let service_profiles_by_identity = config.policy.service_profiles_by_identity.clone();
@@ -8487,10 +8583,21 @@ mod runtime {
         /// terminal. Names, client addresses, credentials, and wire bytes are
         /// intentionally excluded; the terminal records only what kind of
         /// DNS interaction reached the honeypot action.
-        pub(crate) async fn record_honeypot(&self, query: &proxima_dns::DnsQuery, tcp: bool) {
+        pub(crate) async fn record_honeypot(
+            &self,
+            query: &proxima_dns::DnsQuery,
+            packet: &[u8],
+            tcp: bool,
+        ) {
             let Some(terminal) = self.honeypot_terminal.as_ref() else {
                 return;
             };
+            if !self.config.honeypot.terminal_payload_enabled {
+                return;
+            }
+            let packet = &packet[..packet
+                .len()
+                .min(self.config.honeypot.terminal_max_payload_bytes)];
             let event = RecordingEvent {
                 id: InteractionId::new(),
                 ts_ms: std::time::SystemTime::now()
@@ -8505,12 +8612,12 @@ mod runtime {
                         "qtype": query.qtype,
                         "qclass": query.qclass,
                         "transport": if tcp { "tcp" } else { "udp" },
+                        "payload_base64": base64::engine::general_purpose::STANDARD.encode(packet),
                     }),
                 },
             };
-            if terminal.append(event).await.is_err() {
-                self.observe_failure("honeypot_terminal_append");
-            }
+            let encoded_bytes = packet.len() as u64;
+            terminal.append(event, encoded_bytes);
         }
 
         pub(crate) async fn record_decision_for_client(
@@ -8791,6 +8898,7 @@ mod runtime {
                             "qtype": payload.get("qtype"),
                             "qclass": payload.get("qclass"),
                             "transport": payload.get("transport"),
+                            "payload_base64": payload.get("payload_base64"),
                         }))
                     }
                     _ => None,
@@ -8801,10 +8909,16 @@ mod runtime {
                 "retention_secs": self.config.honeypot.terminal_retention_secs,
                 "max_entries": self.config.honeypot.terminal_max_entries,
                 "events": events,
-                "payload": "disabled",
+                "payload": "bounded_base64",
                 "client_identity": "redacted",
             })
             .to_string()
+        }
+
+        pub(crate) fn clear_honeypot_terminal(&self) -> usize {
+            self.honeypot_terminal
+                .as_ref()
+                .map_or(0, |terminal| terminal.clear())
         }
 
         pub(crate) fn admin_privacy_status(&self) -> String {
@@ -10200,7 +10314,7 @@ mod runtime {
                 && let Some(action) = action
             {
                 if action == Action::Honeypot {
-                    self.record_honeypot(&query, false).await;
+                    self.record_honeypot(&query, &[], false).await;
                 }
                 if client.is_some() {
                     self.record_decision_for_client(action, &query, client)
@@ -15747,10 +15861,6 @@ mod runtime {
         #[test]
         fn enabled_honeypot_terminal_retains_bounded_redacted_events() {
             let mut config = Config::default();
-            config.honeypot.terminal_enabled = true;
-            config.honeypot.terminal_max_entries = 1;
-            config.honeypot.terminal_retention_secs = 60;
-            let policy = Policy::new(config).expect("valid honeypot terminal");
             let query = proxima_dns::DnsQuery {
                 id: 1,
                 recursion_desired: true,
@@ -15758,15 +15868,22 @@ mod runtime {
                 qtype: 1,
                 qclass: 1,
             };
-            futures::executor::block_on(policy.record_honeypot(&query, true));
-            futures::executor::block_on(policy.record_honeypot(&query, false));
+            config.honeypot.terminal_enabled = true;
+            config.honeypot.terminal_payload_enabled = true;
+            config.honeypot.terminal_max_entries = 1;
+            config.honeypot.terminal_retention_secs = 60;
+            config.honeypot.terminal_max_payload_bytes = 4;
+            let policy = Policy::new(config).expect("valid payload terminal");
+            futures::executor::block_on(policy.record_honeypot(&query, b"123456", true));
+            futures::executor::block_on(policy.record_honeypot(&query, b"abcd", false));
             let terminal: serde_json::Value =
                 serde_json::from_str(&policy.admin_honeypot_terminal()).expect("terminal JSON");
             assert_eq!(terminal["enabled"], true);
             assert_eq!(terminal["events"].as_array().expect("events").len(), 1);
             assert_eq!(terminal["events"][0]["transport"], "udp");
+            assert_eq!(terminal["events"][0]["payload_base64"], "YWJjZA==");
             assert!(terminal.to_string().find("secret.example").is_none());
-            assert_eq!(terminal["payload"], "disabled");
+            assert_eq!(terminal["payload"], "bounded_base64");
             assert_eq!(terminal["client_identity"], "redacted");
         }
 

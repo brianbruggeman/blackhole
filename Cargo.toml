@@ -18,6 +18,7 @@ crate-type = ["rlib", "cdylib"]
 default = ["std"]
 std = [
     "dep:bytes",
+    "dep:base64",
     "dep:conflaguration",
     "dep:futures",
     "dep:proxima",
@@ -53,6 +54,7 @@ doq = [
 
 [dependencies]
 bytes = { version = "1", optional = true }
+base64 = { version = "0.22", optional = true }
 futures = { version = "0.3", optional = true }
 proxima = { git = "https://github.com/brianbruggeman/proxima.git", rev = "03ea2c7d", default-features = false, features = ["dns-listener", "http1-native", "http-prime-deps", "serve-prime", "macros"], optional = true }
 proxima-core = { git = "https://github.com/brianbruggeman/proxima.git", rev = "03ea2c7d", default-features = false, features = ["live", "std"], version = "0.1.0", optional = true }
