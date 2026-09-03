@@ -1703,6 +1703,10 @@ mod runtime {
         /// Explicit operator consent for retaining honeypot DNS payloads.
         #[serde(default)]
         pub terminal_payload_enabled: bool,
+        /// Persist the already-redacted payload events through the configured
+        /// Proxima recording sink. Requires payload mode and a recording path.
+        #[serde(default)]
+        pub terminal_durable: bool,
         /// Maximum retained terminal events.
         #[serde(default = "default_honeypot_terminal_max_entries")]
         pub terminal_max_entries: usize,
@@ -1724,6 +1728,7 @@ mod runtime {
                 ttl: default_ttl(),
                 terminal_enabled: false,
                 terminal_payload_enabled: false,
+                terminal_durable: false,
                 terminal_max_entries: default_honeypot_terminal_max_entries(),
                 terminal_retention_secs: default_honeypot_terminal_retention_secs(),
                 terminal_max_payload_bytes: default_honeypot_terminal_max_payload_bytes(),
@@ -4574,6 +4579,16 @@ mod runtime {
             if config.honeypot.terminal_payload_enabled && !config.honeypot.terminal_enabled {
                 return Err(policy::PolicyError::InvalidAdmission {
                     reason: "honeypot payload retention requires the terminal to be enabled".into(),
+                });
+            }
+            if config.honeypot.terminal_durable
+                && (!config.honeypot.terminal_enabled
+                    || !config.honeypot.terminal_payload_enabled
+                    || config.privacy.query_recording_path.is_none())
+            {
+                return Err(policy::PolicyError::InvalidAdmission {
+                    reason: "durable honeypot retention requires payload mode and a recording path"
+                        .into(),
                 });
             }
             if config
@@ -8645,7 +8660,13 @@ mod runtime {
                     }),
                 },
             };
-            terminal.append(event, encoded_bytes);
+            terminal.append(event.clone(), encoded_bytes);
+            if self.config.honeypot.terminal_durable
+                && let Some(recording) = self.recording.as_ref()
+                && recording.append(event).await.is_err()
+            {
+                self.observe_failure("honeypot_recording");
+            }
         }
 
         pub(crate) async fn record_decision_for_client(
@@ -15987,6 +16008,25 @@ mod runtime {
         }
 
         #[test]
+        fn durable_honeypot_requires_the_bounded_recording_path() {
+            let config = HoneypotConfig {
+                terminal_enabled: true,
+                terminal_payload_enabled: true,
+                terminal_durable: true,
+                ..HoneypotConfig::default()
+            };
+            let full = Config {
+                honeypot: config,
+                ..Config::default()
+            };
+            let error = match Policy::new(full) {
+                Ok(_) => panic!("durable payload needs a path"),
+                Err(error) => error,
+            };
+            assert!(error.to_string().contains("recording path"));
+        }
+
+        #[test]
         fn upstream_rebinding_addresses_fail_closed_before_cache() {
             let policy = Policy::new(Config::default()).expect("valid policy");
             let query = proxima_dns::DnsQuery {
@@ -16495,6 +16535,56 @@ mod runtime {
             assert_eq!(payload["qtype"], 1);
             assert_eq!(payload["qclass"], 1);
             assert!(!payload.to_string().contains("secret.example"));
+        }
+
+        #[test]
+        fn durable_honeypot_reuses_the_proxima_recording_sink() {
+            use proxima::{RecordingEvent, RecordingSink};
+            use std::sync::{Arc, Mutex};
+
+            struct Collector(Arc<Mutex<Vec<RecordingEvent>>>);
+
+            impl RecordingSink for Collector {
+                fn append<'lifetime>(
+                    &'lifetime self,
+                    event: RecordingEvent,
+                ) -> proxima::RecordingAppendFuture<'lifetime> {
+                    let events = Arc::clone(&self.0);
+                    Box::pin(async move {
+                        events.lock().expect("recording lock").push(event);
+                        Ok(())
+                    })
+                }
+
+                fn flush<'lifetime>(&'lifetime self) -> proxima::RecordingAppendFuture<'lifetime> {
+                    Box::pin(async { Ok(()) })
+                }
+            }
+
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let mut config = Config::default();
+            config.honeypot.terminal_enabled = true;
+            config.honeypot.terminal_payload_enabled = true;
+            config.honeypot.terminal_durable = true;
+            config.privacy.query_recording_path = Some("honeypot.jsonl".into());
+            let policy = Policy::new(config)
+                .expect("valid durable honeypot")
+                .with_recording_sink(Arc::new(Collector(Arc::clone(&events))));
+            futures::executor::block_on(policy.record_honeypot(true, 1, 1, 17, false));
+
+            let events = events.lock().expect("recording lock");
+            assert_eq!(events.len(), 1);
+            let ProtocolEvent::Custom { kind, payload } = &events[0].event else {
+                panic!("expected custom honeypot event");
+            };
+            assert_eq!(kind, "blackhole.honeypot");
+            assert_eq!(payload["original_wire_bytes"], 17);
+            let encoded = payload["payload_base64"].as_str().expect("payload");
+            let packet =
+                base64::Engine::decode(&base64::engine::general_purpose::STANDARD, encoded)
+                    .expect("canonical payload");
+            assert_eq!(packet.len(), 17);
+            assert!(QueryView::parse(&packet).is_ok());
         }
 
         #[test]
