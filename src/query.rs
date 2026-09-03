@@ -7,7 +7,33 @@
 
 use proxima_protocols::dns::{Name, ParseError, parse_message};
 
+#[cfg(feature = "std")]
+use alloc::vec::Vec;
+
 pub const MAX_QUERY_BYTES: usize = 4096;
+
+/// Encode the minimal, identity-free payload retained by the honeypot
+/// terminal. The received name, transaction id, and all other sections are
+/// deliberately replaced before any payload crosses the retention boundary.
+#[cfg(feature = "std")]
+pub fn encode_redacted_honeypot_query(
+    recursion_desired: bool,
+    qtype: u16,
+    qclass: u16,
+) -> Result<Vec<u8>, proxima_protocols::dns::encode::EncodeError> {
+    let mut output = Vec::with_capacity(17);
+    proxima_protocols::dns::encode::encode_query(
+        0,
+        recursion_desired,
+        proxima_protocols::dns::encode::EncodeQuestion {
+            name: ".",
+            qtype,
+            qclass,
+        },
+        &mut output,
+    )?;
+    Ok(output)
+}
 
 /// A validated DNS query borrowing all name data from the caller's buffer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

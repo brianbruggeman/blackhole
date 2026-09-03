@@ -163,10 +163,18 @@ async fn decide_payload<'a>(
         _ => None,
     };
     let action = policy.action_for_view_with_client(view, client);
-    let query = view.to_owned();
     if action == crate::Action::Honeypot {
-        policy.record_honeypot(&query, packet, tcp).await;
+        policy
+            .record_honeypot(
+                view.recursion_desired,
+                view.qtype,
+                view.qclass,
+                packet.len(),
+                tcp,
+            )
+            .await;
     }
+    let query = view.to_owned();
     policy
         .record_decision_for_client(action, &query, client)
         .await;

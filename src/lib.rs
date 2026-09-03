@@ -8579,14 +8579,15 @@ mod runtime {
             self.record_decision_for_client(action, query, None).await;
         }
 
-        /// Append a bounded, metadata-only event to the isolated honeypot
-        /// terminal. Names, client addresses, credentials, and wire bytes are
-        /// intentionally excluded; the terminal records only what kind of
-        /// DNS interaction reached the honeypot action.
+        /// Append a bounded, redacted event to the isolated honeypot terminal.
+        /// The received name, client metadata, credentials, and wire bytes
+        /// never cross this boundary.
         pub(crate) async fn record_honeypot(
             &self,
-            query: &proxima_dns::DnsQuery,
-            packet: &[u8],
+            recursion_desired: bool,
+            qtype: u16,
+            qclass: u16,
+            original_wire_bytes: usize,
             tcp: bool,
         ) {
             let Some(terminal) = self.honeypot_terminal.as_ref() else {
@@ -8595,9 +8596,15 @@ mod runtime {
             if !self.config.honeypot.terminal_payload_enabled {
                 return;
             }
-            let packet = &packet[..packet
-                .len()
-                .min(self.config.honeypot.terminal_max_payload_bytes)];
+            let Ok(packet) =
+                crate::query::encode_redacted_honeypot_query(recursion_desired, qtype, qclass)
+            else {
+                return;
+            };
+            let encoded_bytes = packet.len() as u64;
+            if encoded_bytes > self.config.honeypot.terminal_max_payload_bytes as u64 {
+                return;
+            }
             let event = RecordingEvent {
                 id: InteractionId::new(),
                 ts_ms: std::time::SystemTime::now()
@@ -8609,14 +8616,14 @@ mod runtime {
                 event: ProtocolEvent::Custom {
                     kind: "blackhole.honeypot".into(),
                     payload: serde_json::json!({
-                        "qtype": query.qtype,
-                        "qclass": query.qclass,
+                        "qtype": qtype,
+                        "qclass": qclass,
                         "transport": if tcp { "tcp" } else { "udp" },
+                        "original_wire_bytes": original_wire_bytes,
                         "payload_base64": base64::engine::general_purpose::STANDARD.encode(packet),
                     }),
                 },
             };
-            let encoded_bytes = packet.len() as u64;
             terminal.append(event, encoded_bytes);
         }
 
@@ -10314,7 +10321,14 @@ mod runtime {
                 && let Some(action) = action
             {
                 if action == Action::Honeypot {
-                    self.record_honeypot(&query, &[], false).await;
+                    self.record_honeypot(
+                        query.recursion_desired,
+                        query.qtype,
+                        query.qclass,
+                        0,
+                        false,
+                    )
+                    .await;
                 }
                 if client.is_some() {
                     self.record_decision_for_client(action, &query, client)
@@ -15861,27 +15875,30 @@ mod runtime {
         #[test]
         fn enabled_honeypot_terminal_retains_bounded_redacted_events() {
             let mut config = Config::default();
-            let query = proxima_dns::DnsQuery {
-                id: 1,
-                recursion_desired: true,
-                name: "secret.example.".into(),
-                qtype: 1,
-                qclass: 1,
-            };
             config.honeypot.terminal_enabled = true;
             config.honeypot.terminal_payload_enabled = true;
             config.honeypot.terminal_max_entries = 1;
             config.honeypot.terminal_retention_secs = 60;
-            config.honeypot.terminal_max_payload_bytes = 4;
+            config.honeypot.terminal_max_payload_bytes = 64;
             let policy = Policy::new(config).expect("valid payload terminal");
-            futures::executor::block_on(policy.record_honeypot(&query, b"123456", true));
-            futures::executor::block_on(policy.record_honeypot(&query, b"abcd", false));
+            futures::executor::block_on(policy.record_honeypot(true, 1, 1, 6, true));
+            futures::executor::block_on(policy.record_honeypot(true, 1, 1, 4, false));
             let terminal: serde_json::Value =
                 serde_json::from_str(&policy.admin_honeypot_terminal()).expect("terminal JSON");
             assert_eq!(terminal["enabled"], true);
             assert_eq!(terminal["events"].as_array().expect("events").len(), 1);
             assert_eq!(terminal["events"][0]["transport"], "udp");
-            assert_eq!(terminal["events"][0]["payload_base64"], "YWJjZA==");
+            let payload = base64::Engine::decode(
+                &base64::engine::general_purpose::STANDARD,
+                terminal["events"][0]["payload_base64"]
+                    .as_str()
+                    .expect("payload"),
+            )
+            .expect("valid payload");
+            assert_eq!(payload.len(), 17);
+            let redacted = QueryView::parse(&payload).expect("redacted query");
+            assert_eq!(redacted.id, 0);
+            assert_eq!(redacted.name.to_dotted(), ".");
             assert!(terminal.to_string().find("secret.example").is_none());
             assert_eq!(terminal["payload"], "bounded_base64");
             assert_eq!(terminal["client_identity"], "redacted");
