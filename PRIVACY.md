@@ -75,7 +75,10 @@ with `POST /honeypot/clear`.
 The terminal enforces entry count, event age, per-payload, and aggregate
 encoded-payload byte limits. New records evict the oldest records needed to
 fit the aggregate bound, and expired records are pruned on append and read.
-The current payload terminal remains in-memory and is cleared on process exit.
+By default the payload terminal remains in-memory and is cleared on process
+exit. An explicit `honeypot.terminal_durable` setting may append the same
+redacted events to the configured bounded Proxima recording path; it requires
+payload consent and a recording path at startup.
 
 Before adding any durable payload-collection terminal, all of these must be
 implemented and verified:

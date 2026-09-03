@@ -113,6 +113,9 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   per-payload bytes, and total encoded bytes; oldest-first eviction;
   authenticated `/honeypot` inspection and clearing; and exclusion of names,
   client identity, credentials, and original wire bytes.
+- An explicit `honeypot.terminal_durable` mode reuses the configured bounded
+  Proxima recording sink for the same redacted events and fails closed unless
+  payload consent and a durable recording path are configured.
 - Configured upstream pass-through for `pass` and `observe`, after local
   rewrites; explicit `forward` remains a distinct fail-closed action.
 - Capture adapters carry the original destination through the existing

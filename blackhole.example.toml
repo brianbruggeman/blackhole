@@ -285,3 +285,6 @@ query_log_retention_secs = 86400
 ipv4 = "192.0.2.1"
 ipv6 = "2001:db8::1"
 ttl = 60
+# terminal_enabled = true
+# terminal_payload_enabled = true
+# terminal_durable = true # requires privacy.query_recording_path
