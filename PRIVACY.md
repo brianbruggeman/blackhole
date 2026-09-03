@@ -1,7 +1,7 @@
 # Blackhole privacy contract
 
 This contract describes what Blackhole may retain. It applies to the current
-DNS edge and is a prerequisite for any future honeypot terminal.
+DNS edge and its opt-in honeypot terminal.
 
 ## Current DNS edge
 
@@ -61,16 +61,24 @@ DNS edge and is a prerequisite for any future honeypot terminal.
   operator-managed CIDR configuration to an authenticated administrator; this
   is control-plane metadata, not telemetry, query logging, or payload storage.
 
-## Future terminal requirements
+## Current honeypot terminal
 
-The opt-in honeypot terminal stores bounded, base64-encoded DNS query payloads
-in the existing Proxima recording-event shape in a separate in-memory sink.
-It never stores DNS names separately, client addresses, or credentials. It is
-exposed through the authenticated loopback admin surface at `GET /honeypot`
-and can be cleared with `POST /honeypot/clear`.
+The opt-in honeypot terminal stores bounded events in a separate in-memory
+sink. Metadata mode records qtype, qclass, transport, and original wire length
+without a payload. Explicit payload mode stores only a newly encoded canonical
+DNS query with transaction ID zero, root QNAME (`.`), one question, and no
+other sections. It never stores the received DNS name, client address,
+credentials, or original wire bytes. The terminal is exposed through the
+authenticated loopback admin surface at `GET /honeypot` and can be cleared
+with `POST /honeypot/clear`.
 
-Before any future payload-collection terminal is enabled, all of these must
-be implemented and verified:
+The terminal enforces entry count, event age, per-payload, and aggregate
+encoded-payload byte limits. New records evict the oldest records needed to
+fit the aggregate bound, and expired records are pruned on append and read.
+The current payload terminal remains in-memory and is cleared on process exit.
+
+Before adding any durable payload-collection terminal, all of these must be
+implemented and verified:
 
 1. A documented retention period and a hard upper bound for every stored
    record, byte buffer, credential, and derived artifact.
@@ -86,5 +94,4 @@ be implemented and verified:
 6. Tests proving that disabled collection retains no payload and that every
    configured limit is enforced under overflow and restart conditions.
 
-The current payload terminal remains in-memory and intentionally has no
-durable payload sink until the controls above are complete.
+No durable honeypot payload sink exists until the controls above are complete.

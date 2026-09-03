@@ -108,9 +108,11 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   duplicate, unknown, or ambiguous scopes rejected before publication. Groups
   can be disabled without deleting their configured address and network scope.
 - Synthetic IPv4/IPv6 honeypot answers with configurable TTL.
-- An opt-in isolated honeypot payload terminal with bounded entry count, age,
-  per-payload bytes, and total bytes; authenticated `/honeypot` inspection and
-  clearing; and exclusion of client identity and credentials.
+- An opt-in isolated honeypot terminal with metadata-only mode by default and
+  explicit canonical redacted payload mode; bounded entry count, age,
+  per-payload bytes, and total encoded bytes; oldest-first eviction;
+  authenticated `/honeypot` inspection and clearing; and exclusion of names,
+  client identity, credentials, and original wire bytes.
 - Configured upstream pass-through for `pass` and `observe`, after local
   rewrites; explicit `forward` remains a distinct fail-closed action.
 - Capture adapters carry the original destination through the existing

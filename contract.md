@@ -11,7 +11,7 @@ Policy actions have one transport meaning at the DNS boundary:
 | `reject` | Return `REFUSED` (RCODE 5). |
 | `nxdomain` | Return `NXDOMAIN` (RCODE 3). |
 | `sink` | Return empty `NOERROR` (NODATA). |
-| `honeypot` | Return the configured synthetic A/AAAA address when the type supports it and, when explicitly enabled, append bounded metadata to the isolated honeypot terminal. |
+| `honeypot` | Return the configured synthetic A/AAAA address when the type supports it and, when explicitly enabled, append bounded metadata to the isolated honeypot terminal; payload mode stores only a canonical redacted root-question query. |
 | `forward` | Query the configured Proxima upstream, subject to bounds and fail-closed errors. |
 
 The optional DHCPv4 adapter advertises the configured resolver through option
