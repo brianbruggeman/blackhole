@@ -8669,6 +8669,98 @@ mod runtime {
             }
         }
 
+        /// Restore one previously persisted honeypot event into the bounded
+        /// terminal. The persisted representation is treated as untrusted:
+        /// only a canonical redacted query is accepted and adapter metadata
+        /// is never reconstructed.
+        pub fn restore_honeypot_event(&self, event: RecordingEvent) -> Result<bool, ProximaError> {
+            let Some(terminal) = self.honeypot_terminal.as_ref() else {
+                return Ok(false);
+            };
+            let RecordingEvent {
+                id,
+                ts_ms,
+                parent,
+                event: ProtocolEvent::Custom { kind, payload },
+            } = event
+            else {
+                return Ok(false);
+            };
+            if kind != "blackhole.honeypot" {
+                return Ok(false);
+            }
+            let qtype = payload
+                .get("qtype")
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|value| u16::try_from(value).ok())
+                .ok_or_else(|| ProximaError::Record("honeypot event has invalid qtype".into()))?;
+            let qclass = payload
+                .get("qclass")
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|value| u16::try_from(value).ok())
+                .ok_or_else(|| ProximaError::Record("honeypot event has invalid qclass".into()))?;
+            let transport = payload
+                .get("transport")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| {
+                    ProximaError::Record("honeypot event has invalid transport".into())
+                })?;
+            let tcp = match transport {
+                "tcp" => true,
+                "udp" => false,
+                _ => {
+                    return Err(ProximaError::Record(
+                        "honeypot event has invalid transport".into(),
+                    ));
+                }
+            };
+            let packet = payload
+                .get("payload_base64")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| ProximaError::Record("honeypot event has no payload".into()))?;
+            let packet = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, packet)
+                .map_err(|error| ProximaError::Record(format!("decode honeypot event: {error}")))?;
+            let view = crate::query::QueryView::parse(&packet).map_err(|error| {
+                ProximaError::Record(format!("validate honeypot event: {error}"))
+            })?;
+            if view.id != 0
+                || view.name.to_dotted() != "."
+                || view.qtype != qtype
+                || view.qclass != qclass
+            {
+                return Err(ProximaError::Record(
+                    "honeypot event is not canonical".into(),
+                ));
+            }
+            if packet.len() > self.config.honeypot.terminal_max_payload_bytes {
+                return Err(ProximaError::Record(
+                    "honeypot event exceeds payload bound".into(),
+                ));
+            }
+            let payload_base64 = base64::engine::general_purpose::STANDARD.encode(&packet);
+            let original_wire_bytes = payload
+                .get("original_wire_bytes")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            let restored = RecordingEvent {
+                id,
+                ts_ms,
+                parent,
+                event: ProtocolEvent::Custom {
+                    kind: "blackhole.honeypot".into(),
+                    payload: serde_json::json!({
+                        "qtype": qtype,
+                        "qclass": qclass,
+                        "transport": if tcp { "tcp" } else { "udp" },
+                        "original_wire_bytes": original_wire_bytes,
+                        "payload_base64": payload_base64,
+                    }),
+                },
+            };
+            terminal.append(restored, payload_base64.len() as u64);
+            Ok(true)
+        }
+
         pub(crate) async fn record_decision_for_client(
             &self,
             action: Action,

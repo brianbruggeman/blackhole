@@ -602,13 +602,63 @@ async fn restore_persisted_denylist(
     Ok(changes)
 }
 
+async fn restore_persisted_honeypot(
+    policy: &Policy,
+    path: &Path,
+    max_bytes: u64,
+) -> Result<usize, ProximaError> {
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => {
+            return Err(ProximaError::Record(format!(
+                "inspect honeypot recording {}: {error}",
+                path.display()
+            )));
+        }
+    };
+    if !metadata.is_file() {
+        return Err(ProximaError::Record(format!(
+            "honeypot recording {} is not a regular file",
+            path.display()
+        )));
+    }
+    if metadata.len() > max_bytes.min(MAX_REPLAY_BYTES) {
+        return Err(ProximaError::Record(format!(
+            "honeypot recording exceeds the {} byte bound",
+            max_bytes.min(MAX_REPLAY_BYTES)
+        )));
+    }
+    let runtime = Arc::new(PrimeRuntime::new(1)?);
+    let source = proxima::JsonlSource::new(path, runtime);
+    let mut stream = source.events();
+    let mut restored = 0usize;
+    let mut seen = 0usize;
+    while let Some(event) = stream.next().await {
+        seen = seen
+            .checked_add(1)
+            .ok_or_else(|| ProximaError::Record("honeypot event count overflow".into()))?;
+        if seen > 1_000_000 {
+            return Err(ProximaError::Record(
+                "honeypot recording exceeds the event bound".into(),
+            ));
+        }
+        if policy.restore_honeypot_event(event?)? {
+            restored = restored.saturating_add(1);
+        }
+    }
+    Ok(restored)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         count_replay_event, delete_query_recording, rotate_query_recording,
         validate_query_recording_path,
     };
-    use super::{restore_persisted_abuse, restore_persisted_denylist};
+    use super::{restore_persisted_abuse, restore_persisted_denylist, restore_persisted_honeypot};
+    use base64::Engine;
+    use blackhole::query::encode_redacted_honeypot_query;
     use blackhole::{Config, Policy};
     use std::collections::BTreeMap;
     use std::path::PathBuf;
@@ -725,6 +775,45 @@ mod tests {
                 .expect("missing denylist recording is empty"),
             0
         );
+    }
+
+    #[test]
+    fn startup_restores_only_canonical_honeypot_events() {
+        let directory = temporary_path("restore-honeypot");
+        std::fs::create_dir(&directory).expect("temporary directory");
+        let path = directory.join("honeypot.jsonl");
+        let packet = encode_redacted_honeypot_query(true, 1, 1).expect("canonical query");
+        let event = proxima::RecordingEvent {
+            id: proxima::InteractionId::new(),
+            ts_ms: 1,
+            parent: None,
+            event: proxima::ProtocolEvent::Custom {
+                kind: "blackhole.honeypot".into(),
+                payload: serde_json::json!({
+                    "qtype": 1,
+                    "qclass": 1,
+                    "transport": "udp",
+                    "original_wire_bytes": 23,
+                    "payload_base64": base64::engine::general_purpose::STANDARD.encode(packet),
+                }),
+            },
+        };
+        let mut line =
+            proxima::recording::jsonl::encode_jsonl_line(event).expect("encode honeypot event");
+        line.push(b'\n');
+        std::fs::write(&path, line).expect("write honeypot recording");
+        let mut config = Config::default();
+        config.honeypot.terminal_enabled = true;
+        config.honeypot.terminal_payload_enabled = true;
+        config.honeypot.terminal_durable = true;
+        config.privacy.query_recording_path = Some(path.to_string_lossy().into_owned());
+        let policy = Policy::new(config).expect("valid durable honeypot");
+        assert_eq!(
+            futures::executor::block_on(restore_persisted_honeypot(&policy, &path, 4_096))
+                .expect("restore honeypot recording"),
+            1
+        );
+        std::fs::remove_dir_all(directory).expect("remove temporary directory");
     }
 
     #[test]
@@ -1419,6 +1508,7 @@ async fn main() -> Result<(), ProximaError> {
     let query_recording_rotation_enabled = config.privacy.query_recording_rotation_enabled;
     let query_recording_max_files = config.privacy.query_recording_max_files;
     let persist_ddos_incidents = config.admission.ddos.persist_incidents;
+    let restore_honeypot = config.honeypot.terminal_durable;
     if let Some(path) = query_recording_path.as_deref() {
         validate_query_recording_path(path)?;
         if query_recording_rotation_enabled {
@@ -1453,6 +1543,13 @@ async fn main() -> Result<(), ProximaError> {
             restore_persisted_denylist(&policy, Path::new(path), query_recording_max_bytes).await?;
         if denylist_changes != 0 {
             println!("blackhole restored {denylist_changes} operator denylist change(s)");
+        }
+    }
+    if restore_honeypot && let Some(path) = query_recording_path.as_deref() {
+        let restored =
+            restore_persisted_honeypot(&policy, Path::new(path), query_recording_max_bytes).await?;
+        if restored != 0 {
+            println!("blackhole restored {restored} honeypot event(s)");
         }
     }
     if let Some(path) = query_recording_path {
