@@ -2925,40 +2925,70 @@ mod runtime {
             });
         }
         if let Some(geoip_path) = config.geoip_path.as_deref() {
-            let metadata = std::fs::metadata(geoip_path).map_err(|error| {
-                policy::PolicyError::InvalidCountryMap {
+            let bytes = if http_source_parts(geoip_path).is_some() {
+                let (bytes, remote_max_age_secs) = read_remote_bytes_with_timeout(
+                    geoip_path,
+                    MAX_COUNTRY_MAP_BYTES,
+                    REMOTE_SOURCE_TIMEOUT,
+                )
+                .map_err(|reason| policy::PolicyError::InvalidCountryMap {
                     path: geoip_path.into(),
-                    reason: error.to_string(),
-                }
-            })?;
-            if let Some(max_age_secs) = config.max_age_secs {
-                let modified = metadata.modified().map_err(|error| {
-                    policy::PolicyError::InvalidCountryMap {
-                        path: geoip_path.into(),
-                        reason: format!("cannot read GeoIP modification time: {error}"),
-                    }
+                    reason,
                 })?;
-                if !country_map_is_fresh(modified, std::time::SystemTime::now(), max_age_secs) {
+                if config.max_age_secs.is_some() && remote_max_age_secs.is_none() {
+                    return Err(policy::PolicyError::InvalidCountryMap {
+                        path: geoip_path.into(),
+                        reason: "hosted GeoIP databases require Cache-Control max-age when max_age_secs is configured".into(),
+                    });
+                }
+                if let (Some(configured), Some(advertised)) =
+                    (config.max_age_secs, remote_max_age_secs)
+                    && advertised > configured
+                {
                     return Err(policy::PolicyError::InvalidCountryMap {
                         path: geoip_path.into(),
                         reason: format!(
-                            "GeoIP database is older than configured {max_age_secs}s freshness bound"
+                            "hosted GeoIP max-age {advertised}s exceeds configured {configured}s"
                         ),
                     });
                 }
-            }
-            if metadata.len() > MAX_COUNTRY_MAP_BYTES {
-                return Err(policy::PolicyError::InvalidCountryMap {
-                    path: geoip_path.into(),
-                    reason: format!("file exceeds {MAX_COUNTRY_MAP_BYTES} bytes"),
-                });
-            }
-            let bytes = std::fs::read(geoip_path).map_err(|error| {
-                policy::PolicyError::InvalidCountryMap {
-                    path: geoip_path.into(),
-                    reason: error.to_string(),
+                bytes
+            } else {
+                let metadata = std::fs::metadata(geoip_path).map_err(|error| {
+                    policy::PolicyError::InvalidCountryMap {
+                        path: geoip_path.into(),
+                        reason: error.to_string(),
+                    }
+                })?;
+                if let Some(max_age_secs) = config.max_age_secs {
+                    let modified = metadata.modified().map_err(|error| {
+                        policy::PolicyError::InvalidCountryMap {
+                            path: geoip_path.into(),
+                            reason: format!("cannot read GeoIP modification time: {error}"),
+                        }
+                    })?;
+                    if !country_map_is_fresh(modified, std::time::SystemTime::now(), max_age_secs) {
+                        return Err(policy::PolicyError::InvalidCountryMap {
+                            path: geoip_path.into(),
+                            reason: format!(
+                                "GeoIP database is older than configured {max_age_secs}s freshness bound"
+                            ),
+                        });
+                    }
                 }
-            })?;
+                if metadata.len() > MAX_COUNTRY_MAP_BYTES {
+                    return Err(policy::PolicyError::InvalidCountryMap {
+                        path: geoip_path.into(),
+                        reason: format!("file exceeds {MAX_COUNTRY_MAP_BYTES} bytes"),
+                    });
+                }
+                std::fs::read(geoip_path).map_err(|error| {
+                    policy::PolicyError::InvalidCountryMap {
+                        path: geoip_path.into(),
+                        reason: error.to_string(),
+                    }
+                })?
+            };
             let sha256 = source_sha256(&bytes);
             if config
                 .expected_sha256
@@ -11414,6 +11444,40 @@ mod runtime {
                 Err(policy::PolicyError::InvalidCountryMap { reason, .. })
                     if reason.contains("invalid MaxMind database")
             ));
+        }
+
+        #[test]
+        fn hosted_geoip_database_uses_bounded_proxima_http_fetching() {
+            use std::io::Write;
+
+            let server =
+                std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind GeoIP fixture");
+            let address = server.local_addr().expect("GeoIP fixture address");
+            let thread = std::thread::spawn(move || {
+                let (mut stream, _) = server.accept().expect("accept GeoIP request");
+                let request = read_http_request(&mut stream);
+                assert!(
+                    std::str::from_utf8(&request)
+                        .expect("request is UTF-8")
+                        .contains("GET /geoip.mmdb HTTP/1.1")
+                );
+                let body = b"not a MaxMind database";
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nCache-Control: max-age=60\r\nConnection: close\r\n\r\n",
+                    body.len()
+                )
+                .expect("write GeoIP headers");
+                stream.write_all(body).expect("write GeoIP body");
+            });
+            let mut config = Config::default();
+            config.country_policy.geoip_path = Some(format!("http://{address}/geoip.mmdb"));
+            assert!(matches!(
+                Policy::new(config),
+                Err(policy::PolicyError::InvalidCountryMap { reason, .. })
+                    if reason.contains("invalid MaxMind database")
+            ));
+            thread.join().expect("join GeoIP fixture");
         }
 
         #[test]
