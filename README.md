@@ -226,6 +226,9 @@ Named service profiles are also compiled into the authoritative rule table;
 each profile supplies a bounded domain set and action.
 The optional country policy accepts an operator-supplied local file or bounded
 HTTP(S) `COUNTRY CIDR [REGION] [ASN]` map;
+`country_policy.geoip_path` can instead point at a bounded local MaxMind
+GeoIP2/GeoLite2 Country or City database; country and first subdivision labels
+are resolved at request time and ASN selectors use the database's ASN record.
 `country_policy.last_good_path` enables an optional local, atomically replaced
 last-good map snapshot for recovery from a failed source refresh.
 `country_policy.reload_interval_secs` enables bounded background refresh, where

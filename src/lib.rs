@@ -848,6 +848,11 @@ mod runtime {
         /// Operator-supplied lines of `COUNTRY CIDR`; no database is bundled.
         #[serde(default)]
         pub map_path: Option<String>,
+        /// Optional MaxMind GeoIP2/GeoLite2 City or Country database. When
+        /// configured, the database supplies country and region labels while
+        /// the existing bounded selectors remain authoritative.
+        #[serde(default)]
+        pub geoip_path: Option<String>,
         /// Optional local path for an atomically refreshed last-good source
         /// snapshot used when the primary map cannot be loaded.
         #[serde(default)]
@@ -907,6 +912,7 @@ mod runtime {
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct CountryPolicy {
         entries: Vec<CountryEntry>,
+        geoip: Option<Arc<GeoIpDatabase>>,
         source_fingerprint: u64,
         source_sha256: String,
         last_good_active: bool,
@@ -927,38 +933,79 @@ mod runtime {
                 .max_by_key(|entry| entry.network.prefix())
         }
 
+        fn classification(&self, client: IpAddr) -> Option<(String, Option<String>, Option<u32>)> {
+            if let Some(database) = self.geoip.as_ref()
+                && let Some(classification) = database.lookup(client)
+            {
+                return Some(classification);
+            }
+            self.entry_for(client)
+                .map(|entry| (entry.country.clone(), entry.region.clone(), entry.asn))
+        }
+
         fn denied(&self, client: IpAddr) -> bool {
-            match self.entry_for(client) {
-                Some(entry) => {
-                    self.deny.contains(&entry.country)
-                        || entry
-                            .region
-                            .as_ref()
-                            .is_some_and(|region| self.deny_regions.contains(region))
-                        || entry.asn.is_some_and(|asn| self.deny_asns.contains(&asn))
+            match self.classification(client) {
+                Some((country, region, asn)) => {
+                    self.deny.contains(&country)
+                        || region.is_some_and(|region| self.deny_regions.contains(&region))
+                        || asn.is_some_and(|asn| self.deny_asns.contains(&asn))
                 }
                 None => self.unmapped_action == CountryUnmappedAction::Deny,
             }
         }
 
         fn observed(&self, client: IpAddr) -> bool {
-            match self.entry_for(client) {
-                Some(entry) => {
-                    self.observe.contains(&entry.country)
-                        || entry
-                            .region
-                            .as_ref()
-                            .is_some_and(|region| self.observe_regions.contains(region))
-                        || entry
-                            .asn
-                            .is_some_and(|asn| self.observe_asns.contains(&asn))
+            match self.classification(client) {
+                Some((country, region, asn)) => {
+                    self.observe.contains(&country)
+                        || region.is_some_and(|region| self.observe_regions.contains(&region))
+                        || asn.is_some_and(|asn| self.observe_asns.contains(&asn))
                 }
                 None => self.unmapped_action == CountryUnmappedAction::Observe,
             }
         }
 
-        fn country_for(&self, client: IpAddr) -> Option<&str> {
-            self.entry_for(client).map(|entry| entry.country.as_str())
+        fn country_for(&self, client: IpAddr) -> Option<String> {
+            self.classification(client).map(|(country, _, _)| country)
+        }
+    }
+
+    #[derive(Debug)]
+    struct GeoIpDatabase {
+        reader: maxminddb::Reader<Vec<u8>>,
+        sha256: String,
+    }
+
+    impl PartialEq for GeoIpDatabase {
+        fn eq(&self, other: &Self) -> bool {
+            self.sha256 == other.sha256
+        }
+    }
+
+    impl Eq for GeoIpDatabase {}
+
+    impl GeoIpDatabase {
+        fn lookup(&self, client: IpAddr) -> Option<(String, Option<String>, Option<u32>)> {
+            let result = self
+                .reader
+                .lookup(client)
+                .ok()?
+                .decode::<maxminddb::geoip2::City>()
+                .ok()??;
+            let country = result.country.iso_code?.to_ascii_uppercase();
+            let region = result
+                .subdivisions
+                .first()
+                .and_then(|subdivision| subdivision.iso_code)
+                .map(str::to_ascii_uppercase);
+            let asn = self
+                .reader
+                .lookup(client)
+                .ok()?
+                .decode::<maxminddb::geoip2::Asn>()
+                .ok()??
+                .autonomous_system_number;
+            Some((country, region, asn))
         }
     }
 
@@ -2642,6 +2689,7 @@ mod runtime {
                 }
                 let mut fallback = config.clone();
                 fallback.map_path = Some(last_good_path.to_owned());
+                fallback.geoip_path = None;
                 fallback.last_good_path = None;
                 load_country_policy_from_source(&fallback)
                     .map(|(mut policy, _)| {
@@ -2746,6 +2794,7 @@ mod runtime {
             });
         }
         if config.map_path.is_none()
+            && config.geoip_path.is_none()
             && config.deny.is_empty()
             && config.observe.is_empty()
             && config.deny_regions.is_empty()
@@ -2756,14 +2805,14 @@ mod runtime {
         {
             return Ok((None, None));
         }
-        let path =
-            config
-                .map_path
-                .as_deref()
-                .ok_or_else(|| policy::PolicyError::InvalidCountryMap {
-                    path: "<none>".into(),
-                    reason: "map_path is required when country rules are configured".into(),
-                })?;
+        let path = config
+            .map_path
+            .as_deref()
+            .or(config.geoip_path.as_deref())
+            .ok_or_else(|| policy::PolicyError::InvalidCountryMap {
+                path: "<none>".into(),
+                reason: "map_path is required when country rules are configured".into(),
+            })?;
         let deny: BTreeSet<String> = config
             .deny
             .iter()
@@ -2845,6 +2894,76 @@ mod runtime {
                 path: path.into(),
                 reason: "expected_sha256 must be exactly 64 hexadecimal digits".into(),
             });
+        }
+        if let Some(geoip_path) = config.geoip_path.as_deref() {
+            let metadata = std::fs::metadata(geoip_path).map_err(|error| {
+                policy::PolicyError::InvalidCountryMap {
+                    path: geoip_path.into(),
+                    reason: error.to_string(),
+                }
+            })?;
+            if let Some(max_age_secs) = config.max_age_secs {
+                let modified = metadata.modified().map_err(|error| {
+                    policy::PolicyError::InvalidCountryMap {
+                        path: geoip_path.into(),
+                        reason: format!("cannot read GeoIP modification time: {error}"),
+                    }
+                })?;
+                if !country_map_is_fresh(modified, std::time::SystemTime::now(), max_age_secs) {
+                    return Err(policy::PolicyError::InvalidCountryMap {
+                        path: geoip_path.into(),
+                        reason: format!(
+                            "GeoIP database is older than configured {max_age_secs}s freshness bound"
+                        ),
+                    });
+                }
+            }
+            if metadata.len() > MAX_COUNTRY_MAP_BYTES {
+                return Err(policy::PolicyError::InvalidCountryMap {
+                    path: geoip_path.into(),
+                    reason: format!("file exceeds {MAX_COUNTRY_MAP_BYTES} bytes"),
+                });
+            }
+            let bytes = std::fs::read(geoip_path).map_err(|error| {
+                policy::PolicyError::InvalidCountryMap {
+                    path: geoip_path.into(),
+                    reason: error.to_string(),
+                }
+            })?;
+            let sha256 = source_sha256(&bytes);
+            if config
+                .expected_sha256
+                .as_deref()
+                .is_some_and(|expected| !expected.eq_ignore_ascii_case(&sha256))
+            {
+                return Err(policy::PolicyError::InvalidCountryMap {
+                    path: geoip_path.into(),
+                    reason: "GeoIP database SHA-256 does not match expected_sha256".into(),
+                });
+            }
+            let reader = maxminddb::Reader::from_source(bytes.clone()).map_err(|error| {
+                policy::PolicyError::InvalidCountryMap {
+                    path: geoip_path.into(),
+                    reason: format!("invalid MaxMind database: {error}"),
+                }
+            })?;
+            return Ok((
+                Some(CountryPolicy {
+                    entries: Vec::new(),
+                    geoip: Some(Arc::new(GeoIpDatabase { reader, sha256 })),
+                    source_fingerprint: source_fingerprint(&bytes),
+                    source_sha256: source_sha256(&bytes),
+                    last_good_active: false,
+                    unmapped_action: config.unmapped_action,
+                    deny,
+                    observe,
+                    deny_regions,
+                    observe_regions,
+                    deny_asns,
+                    observe_asns,
+                }),
+                Some(bytes),
+            ));
         }
         let contents = if http_source_parts(path).is_some() {
             let (bytes, remote_max_age_secs) =
@@ -3039,6 +3158,7 @@ mod runtime {
         Ok((
             Some(CountryPolicy {
                 entries,
+                geoip: None,
                 source_fingerprint: source_fingerprint(contents.as_bytes()),
                 source_sha256: contents_sha256,
                 last_good_active: false,
@@ -10033,7 +10153,7 @@ mod runtime {
                 if let Some(country) = country_policy.country_for(client)
                     && country_policy.observed(client)
                 {
-                    self.observe_country(country);
+                    self.observe_country(&country);
                 } else if country_policy.observed(client) {
                     self.observe_country("UNMAPPED");
                 }
@@ -11012,6 +11132,19 @@ mod runtime {
                 Policy::new(too_long),
                 Err(policy::PolicyError::InvalidBlocklist { reason, .. })
                     if reason.contains("path exceeds")
+            ));
+        }
+
+        #[test]
+        fn geoip_database_is_loaded_from_a_bounded_local_source() {
+            let file = tempfile::NamedTempFile::new().expect("GeoIP fixture");
+            std::fs::write(file.path(), b"not a MaxMind database").expect("write GeoIP fixture");
+            let mut config = Config::default();
+            config.country_policy.geoip_path = Some(file.path().display().to_string());
+            assert!(matches!(
+                Policy::new(config),
+                Err(policy::PolicyError::InvalidCountryMap { reason, .. })
+                    if reason.contains("invalid MaxMind database")
             ));
         }
 
@@ -12843,6 +12976,7 @@ mod runtime {
             let config = Config {
                 country_policy: CountryPolicyConfig {
                     map_path: Some(path.to_string_lossy().into_owned()),
+                    geoip_path: None,
                     last_good_path: None,
                     unmapped_action: CountryUnmappedAction::Pass,
                     expected_sha256: None,
@@ -13173,6 +13307,7 @@ mod runtime {
             let config = Config {
                 country_policy: CountryPolicyConfig {
                     map_path: Some(path.to_string_lossy().into_owned()),
+                    geoip_path: None,
                     last_good_path: None,
                     unmapped_action: CountryUnmappedAction::Pass,
                     expected_sha256: None,
