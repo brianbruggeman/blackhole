@@ -4018,6 +4018,16 @@ mod runtime {
             }
         }
 
+        fn event_bytes(event: &RecordingEvent) -> u64 {
+            match &event.event {
+                ProtocolEvent::Custom { payload, .. } => payload
+                    .get("payload_base64")
+                    .and_then(serde_json::Value::as_str)
+                    .map_or(0, |value| value.len() as u64),
+                _ => 0,
+            }
+        }
+
         fn append(&self, event: RecordingEvent, encoded_bytes: u64) {
             let cutoff = event
                 .ts_ms
@@ -4027,23 +4037,16 @@ mod runtime {
                 while entries.front().is_some_and(|old| old.ts_ms < cutoff) {
                     entries.pop_front();
                 }
-                let retained = entries.iter().fold(0u64, |total, old| {
-                    let bytes = match &old.event {
-                        ProtocolEvent::Custom { payload, .. } => payload
-                            .get("payload_base64")
-                            .and_then(serde_json::Value::as_str)
-                            .map_or(0, |value| value.len() as u64),
-                        _ => 0,
-                    };
-                    total.saturating_add(bytes)
-                });
-                if encoded_bytes > self.max_bytes
-                    || retained.saturating_add(encoded_bytes) > self.max_bytes
-                {
+                if encoded_bytes > self.max_bytes {
                     return entries;
                 }
                 entries.push_back(event.clone());
                 while entries.len() > self.max_entries {
+                    entries.pop_front();
+                }
+                while entries.len() > 1
+                    && entries.iter().map(Self::event_bytes).sum::<u64>() > self.max_bytes
+                {
                     entries.pop_front();
                 }
                 entries
@@ -4051,6 +4054,17 @@ mod runtime {
         }
 
         fn snapshot(&self) -> Vec<RecordingEvent> {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |duration| duration.as_millis() as u64);
+            let cutoff = now_ms.saturating_sub(self.retention.as_millis() as u64);
+            self.control.update(|current| {
+                let mut entries = current.clone();
+                while entries.front().is_some_and(|event| event.ts_ms < cutoff) {
+                    entries.pop_front();
+                }
+                entries
+            });
             self.entries
                 .read(|entries| entries.iter().cloned().collect())
         }
@@ -8593,18 +8607,25 @@ mod runtime {
             let Some(terminal) = self.honeypot_terminal.as_ref() else {
                 return;
             };
-            if !self.config.honeypot.terminal_payload_enabled {
-                return;
-            }
-            let Ok(packet) =
-                crate::query::encode_redacted_honeypot_query(recursion_desired, qtype, qclass)
-            else {
-                return;
+            let packet = if self.config.honeypot.terminal_payload_enabled {
+                let Ok(packet) =
+                    crate::query::encode_redacted_honeypot_query(recursion_desired, qtype, qclass)
+                else {
+                    return;
+                };
+                if packet.len() > self.config.honeypot.terminal_max_payload_bytes {
+                    return;
+                }
+                Some(packet)
+            } else {
+                None
             };
-            let encoded_bytes = packet.len() as u64;
-            if encoded_bytes > self.config.honeypot.terminal_max_payload_bytes as u64 {
-                return;
-            }
+            let payload_base64 = packet
+                .as_ref()
+                .map(|packet| base64::engine::general_purpose::STANDARD.encode(packet));
+            let encoded_bytes = payload_base64
+                .as_ref()
+                .map_or(0, |payload| payload.len() as u64);
             let event = RecordingEvent {
                 id: InteractionId::new(),
                 ts_ms: std::time::SystemTime::now()
@@ -8620,7 +8641,7 @@ mod runtime {
                         "qclass": qclass,
                         "transport": if tcp { "tcp" } else { "udp" },
                         "original_wire_bytes": original_wire_bytes,
-                        "payload_base64": base64::engine::general_purpose::STANDARD.encode(packet),
+                        "payload_base64": payload_base64,
                     }),
                 },
             };
@@ -8905,6 +8926,7 @@ mod runtime {
                             "qtype": payload.get("qtype"),
                             "qclass": payload.get("qclass"),
                             "transport": payload.get("transport"),
+                            "original_wire_bytes": payload.get("original_wire_bytes"),
                             "payload_base64": payload.get("payload_base64"),
                         }))
                     }
@@ -15902,6 +15924,43 @@ mod runtime {
             assert!(terminal.to_string().find("secret.example").is_none());
             assert_eq!(terminal["payload"], "bounded_base64");
             assert_eq!(terminal["client_identity"], "redacted");
+        }
+
+        #[test]
+        fn honeypot_terminal_evicts_by_payload_budget() {
+            let mut config = Config::default();
+            config.honeypot.terminal_enabled = true;
+            config.honeypot.terminal_payload_enabled = true;
+            config.honeypot.terminal_max_entries = 8;
+            config.honeypot.terminal_retention_secs = 60;
+            config.honeypot.terminal_max_payload_bytes = 64;
+            config.honeypot.terminal_max_bytes = 25;
+            let policy = Policy::new(config).expect("valid payload terminal");
+            futures::executor::block_on(policy.record_honeypot(true, 1, 1, 12, false));
+            futures::executor::block_on(policy.record_honeypot(true, 28, 1, 13, false));
+            let terminal: serde_json::Value =
+                serde_json::from_str(&policy.admin_honeypot_terminal()).expect("terminal JSON");
+            let events = terminal["events"].as_array().expect("events");
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0]["qtype"], 28);
+            assert_eq!(events[0]["original_wire_bytes"], 13);
+        }
+
+        #[test]
+        fn honeypot_terminal_metadata_mode_retains_no_payload() {
+            let mut config = Config::default();
+            config.honeypot.terminal_enabled = true;
+            config.honeypot.terminal_payload_enabled = false;
+            config.honeypot.terminal_max_entries = 8;
+            config.honeypot.terminal_retention_secs = 60;
+            let policy = Policy::new(config).expect("valid metadata terminal");
+            futures::executor::block_on(policy.record_honeypot(false, 16, 1, 22, true));
+            let terminal: serde_json::Value =
+                serde_json::from_str(&policy.admin_honeypot_terminal()).expect("terminal JSON");
+            assert_eq!(terminal["events"].as_array().expect("events").len(), 1);
+            assert_eq!(terminal["events"][0]["qtype"], 16);
+            assert_eq!(terminal["events"][0]["original_wire_bytes"], 22);
+            assert!(terminal["events"][0]["payload_base64"].is_null());
         }
 
         #[test]
