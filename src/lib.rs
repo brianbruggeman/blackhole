@@ -15964,6 +15964,28 @@ mod runtime {
         }
 
         #[test]
+        fn honeypot_terminal_prunes_expired_events_on_snapshot() {
+            let config = HoneypotConfig {
+                terminal_retention_secs: 1,
+                ..HoneypotConfig::default()
+            };
+            let terminal = HoneypotTerminal::new(&config);
+            terminal.append(
+                RecordingEvent {
+                    id: InteractionId::new(),
+                    ts_ms: 0,
+                    parent: None,
+                    event: ProtocolEvent::Custom {
+                        kind: "blackhole.honeypot".into(),
+                        payload: serde_json::json!({"qtype": 1}),
+                    },
+                },
+                0,
+            );
+            assert!(terminal.snapshot().is_empty());
+        }
+
+        #[test]
         fn upstream_rebinding_addresses_fail_closed_before_cache() {
             let policy = Policy::new(Config::default()).expect("valid policy");
             let query = proxima_dns::DnsQuery {
