@@ -254,7 +254,7 @@ verified today; planned capabilities belong in [ROADMAP.md](ROADMAP.md).
   exposing the configured CIDRs.
 - Optional country deny and observe-only (“snitch”) policy from a bounded,
   operator-supplied local or hosted HTTP(S) country/CIDR map with optional region and ASN labels;
-  a bounded local MaxMind GeoIP2/GeoLite2 Country or City database may provide
+  a bounded local or hosted MaxMind GeoIP2/GeoLite2 Country or City database may provide
   country, subdivision, and ASN classification instead.
   longest-prefix entries win and the classification is not treated as exact
   identity. Region and ASN selectors are explicit map-label policy, not a

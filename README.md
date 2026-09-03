@@ -226,8 +226,8 @@ Named service profiles are also compiled into the authoritative rule table;
 each profile supplies a bounded domain set and action.
 The optional country policy accepts an operator-supplied local file or bounded
 HTTP(S) `COUNTRY CIDR [REGION] [ASN]` map;
-`country_policy.geoip_path` can instead point at a bounded local MaxMind
-GeoIP2/GeoLite2 Country or City database; country and first subdivision labels
+`country_policy.geoip_path` can instead point at a bounded local or hosted
+HTTP(S) MaxMind GeoIP2/GeoLite2 Country or City database; country and first subdivision labels
 are resolved at request time and ASN selectors use the database's ASN record.
 `country_policy.last_good_path` enables an optional local, atomically replaced
 last-good map snapshot for recovery from a failed source refresh.
@@ -235,7 +235,7 @@ last-good map snapshot for recovery from a failed source refresh.
 unchanged content is not republished and failed refreshes retain the last good
 map. Local files may use `max_age_secs`; that bound also applies when a
 last-good snapshot is used after a failed refresh, so stale recovery fails
-closed. Hosted refreshes use Proxima's bounded 30-second timeout for connection,
+closed. Hosted map and GeoIP refreshes use Proxima's bounded 30-second timeout for connection,
 response headers, and the complete response body, and fail closed when that
 deadline or the byte bound is exceeded. When `max_age_secs` is configured for a
 hosted map, the response must provide a valid `Cache-Control: max-age` contract;
