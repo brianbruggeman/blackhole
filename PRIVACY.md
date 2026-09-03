@@ -78,7 +78,10 @@ fit the aggregate bound, and expired records are pruned on append and read.
 By default the payload terminal remains in-memory and is cleared on process
 exit. An explicit `honeypot.terminal_durable` setting may append the same
 redacted events to the configured bounded Proxima recording path; it requires
-payload consent and a recording path at startup.
+payload consent and a recording path at startup. On startup, the existing
+Proxima JSONL source is read under the same byte and event bounds; only
+canonical redacted honeypot events are restored into the bounded terminal, and
+restoration never re-appends them.
 
 Before adding any durable payload-collection terminal, all of these must be
 implemented and verified:
@@ -97,4 +100,6 @@ implemented and verified:
 6. Tests proving that disabled collection retains no payload and that every
    configured limit is enforced under overflow and restart conditions.
 
-No durable honeypot payload sink exists until the controls above are complete.
+Role-scoped access and bounded credential retention remain prerequisites for
+accepting sensitive honeypot payloads; the current durable mode stores only
+the canonical redacted query described above.
