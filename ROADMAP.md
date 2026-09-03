@@ -38,10 +38,10 @@ below are future capabilities, grouped by the dependency layer they extend.
   failover, named upstreams, scoped profiles, allowlists, rate limits,
   response budgets, and concurrency controls.
 - Complete durable honeypot payload storage by extending the current opt-in
-  canonical redaction, bounds, Proxima recording path, restart recovery, and
-  deletion verification with role-scoped access and bounded credential
-  retention. The durable store must continue to reuse Proxima recording
-  primitives and remain opt-in.
+  canonical redaction, bounds, Proxima recording path, restart recovery,
+  deletion verification, and separate honeypot role token with a durable
+  deletion audit and explicit credential-retention policy. The durable store
+  must continue to reuse Proxima recording primitives and remain opt-in.
 
 ## Reference sources
 
