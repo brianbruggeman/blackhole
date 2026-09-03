@@ -402,7 +402,7 @@ jobs:
         continue-on-error: true
         run: |
           set -o pipefail
-          timeout 600s cargo +nightly fuzz run --locked query_view -- -runs=1000 2>&1 | tee fuzz-gate.txt
+          timeout 600s cargo +nightly fuzz run query_view -- -runs=1000 2>&1 | tee fuzz-gate.txt
       - name: record fuzz provenance
         if: always()
         run: |
