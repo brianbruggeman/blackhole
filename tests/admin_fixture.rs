@@ -3,7 +3,7 @@ use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
-use blackhole::admin::authenticated_handle;
+use blackhole::admin::authenticated_handle_with_honeypot_token;
 use blackhole::{ClientGroupConfig, Config, Policy, ServiceProfileConfig};
 use futures::io::{AsyncReadExt, AsyncWriteExt};
 use proxima::StreamUpstreamExt;
@@ -84,8 +84,12 @@ async fn admin_http_listener_enforces_bearer_auth() {
         qclasses: Vec::new(),
     }];
     let policy = Arc::new(Policy::new(config).expect("default policy"));
-    let handle = authenticated_handle(Arc::clone(&policy), "integration-secret".into())
-        .expect("admin handle");
+    let handle = authenticated_handle_with_honeypot_token(
+        Arc::clone(&policy),
+        "integration-secret".into(),
+        "honeypot-secret".into(),
+    )
+    .expect("admin handle");
     let addr = admin_addr();
     let server = Listener::http(addr)
         .handle(handle)
@@ -109,6 +113,20 @@ async fn admin_http_listener_enforces_bearer_auth() {
     let authorized = String::from_utf8_lossy(&authorized);
     assert!(authorized.starts_with("HTTP/1.1 200"));
     assert!(authorized.contains("{\"status\":\"ok\"}"));
+    let role_denied = request(addr, "GET", "/status", Some("Bearer honeypot-secret"), None)
+        .await
+        .expect("honeypot role denial response");
+    assert!(String::from_utf8_lossy(&role_denied).starts_with("HTTP/1.1 403"));
+    let role_allowed = request(
+        addr,
+        "GET",
+        "/honeypot",
+        Some("Bearer honeypot-secret"),
+        None,
+    )
+    .await
+    .expect("honeypot role response");
+    assert!(String::from_utf8_lossy(&role_allowed).starts_with("HTTP/1.1 200"));
     let ui = request(addr, "GET", "/", Some("Bearer integration-secret"), None)
         .await
         .expect("status UI response");

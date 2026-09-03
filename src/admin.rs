@@ -363,12 +363,12 @@ impl SendPipe for AdminHandler {
     async fn call(&self, request: Self::In) -> Result<Self::Out, Self::Err> {
         let method = request.method.as_str().unwrap_or("");
         let path = std::str::from_utf8(&request.path).unwrap_or("");
-        if path.starts_with("/honeypot") && self.honeypot_token.is_some() {
+        if let Some(honeypot_token) = self.honeypot_token.as_deref() {
             let supplied = request.metadata.get_str("authorization").unwrap_or("");
             let admin = self.admin_token.as_deref().map_or("", |token| token);
-            let honeypot = self.honeypot_token.as_deref().map_or("", |token| token);
-            let allowed =
-                supplied == format!("Bearer {admin}") || supplied == format!("Bearer {honeypot}");
+            let admin_access = supplied == format!("Bearer {admin}");
+            let honeypot_access = supplied == format!("Bearer {honeypot_token}");
+            let allowed = admin_access || (honeypot_access && path.starts_with("/honeypot"));
             if !allowed {
                 return Ok(Response::new(403));
             }

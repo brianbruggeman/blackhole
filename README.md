@@ -330,6 +330,8 @@ metadata, or packet payloads.
 [admin]
 listen = "127.0.0.1:8081"
 token = "a-long-random-secret"
+# Optional role token restricted to GET/POST /honeypot routes.
+# honeypot_token = "a-separate-honeypot-secret"
 ```
 
 It provides an authenticated bounded status UI at `GET /` that links the
