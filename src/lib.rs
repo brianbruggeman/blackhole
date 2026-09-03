@@ -10607,8 +10607,9 @@ mod runtime {
     /// Build the bounded DNS-only honeypot answer.
     ///
     /// This deliberately has no access to request payloads, client metadata,
-    /// storage, or transport state. A future payload terminal must be a
-    /// separate opt-in component and cannot be reached through this action.
+    /// storage, or transport state. Payload retention is a separate opt-in
+    /// component reached only by the listener adapter after this answer is
+    /// selected.
     fn synthetic_honeypot_answer(name: &str, qtype: u16, config: &HoneypotConfig) -> DnsAnswer {
         let record = match qtype {
             1 => Some(DnsAnswerRecord {
